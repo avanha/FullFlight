@@ -356,6 +356,30 @@ highlightGroup = null;
   watch.kind = was.kind; watch.ident = was.ident; watch.callsign = was.callsign; watch.tail = 'B-LRM';
   await t.refresh();
 
+  // 8h. position messages are listed at their report time, not their arrival time
+  const sample = [
+    {id: 10, t: '2026-10-30T18:34:45Z', pos_t: '2026-10-30T18:37:54Z', lat: -4.76, lon: 140.64, kind: 'miam', summary: 'REP081', raw: 'r', label: 'MA', rx_count: 1},
+    {id: 11, t: '2026-10-30T18:35:21Z', kind: 'cpdlc', summary: 'CPDLC downlink: WILCO', raw: 'r', label: 'BA', rx_count: 1},
+    {id: 12, t: '2026-10-30T18:31:16Z', pos_t: '2026-10-30T18:34:31Z', lat: -4.54, lon: 140.25, kind: 'adsc', summary: 'ADS-C report', raw: 'r', label: 'B6', rx_count: 1},
+    {id: 13, t: '2026-10-30T18:40:00Z', pos_t: '2026-10-30T18:40:20Z', lat: -5.0, lon: 141.0, kind: 'adsc', summary: 'ADS-C report', raw: 'r', label: 'B6', rx_count: 1},
+  ];
+  t.renderMessages(sample);
+  const timeOf = id => t.rows.get(id).children[0];
+  assert.strictEqual(timeOf(10).textContent, '10-30 18:37:54Z', 'REP081 shows its report time (arrived 18:34:45)');
+  assert.strictEqual(timeOf(12).textContent, '10-30 18:34:31Z', 'ADS-C shows its report time (arrived 18:31:16)');
+  assert.strictEqual(timeOf(11).textContent, '10-30 18:35:21Z', 'a message with no position keeps its arrival time');
+  assert.strictEqual(timeOf(10).className, 'rt'); assert.strictEqual(timeOf(11).className, '');
+  // listed newest first by the time shown: 18:40:20, 18:37:54, 18:35:21, 18:34:31 (by arrival it would be 13, 11, 10, 12)
+  const order = byId['#msgs'].children.filter(c => c.className && c.className.startsWith('msg')).map(c => [...t.rows].find(([, el]) => el === c)[0]);
+  assert.strictEqual(JSON.stringify(order), '[13,10,11,12]', 'ordered by the displayed time');
+  timeOf(10).onmouseenter();
+  assert.match(timeOf(10).title, /report time 18:37:54Z\narrived 18:34:45Z \(report is 3m09s after arrival\)/);
+  timeOf(11).onmouseenter();
+  assert.match(timeOf(11.0).title, /^\d+[smhd] ago$|ago$/); assert.ok(!timeOf(11).title.includes('report time'));
+  timeOf(13).onmouseenter();
+  assert.ok(timeOf(13).title.includes('arrived 18:40:00Z') && !timeOf(13).title.includes('report is'), 'a 20 s difference is not worth a note');
+  await t.showTrack(t.watches()[0], false);   // back to the real data
+
   // 9. a watch with no aircraft yet clears the map without error
   await t.showTrack({id: 9, hex: ''}, true);
   assert.match(byId['#msgs'].innerHTML, /No messages yet/);

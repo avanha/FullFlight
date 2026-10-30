@@ -28,6 +28,7 @@
   h4 { margin: 14px 0 4px; }
   #msgs .msg { padding: 5px 4px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 12px; }
   #msgs .msg time { color: #666; font-family: ui-monospace, monospace; margin-right: 6px; }
+  #msgs time.rt { border-bottom: 1px dotted #888; cursor: help; }
   #msgs .kind { background: #eef; border-radius: 3px; padding: 0 4px; margin-right: 4px; font-size: 11px; }
   #msgs .warn { color: #b60; cursor: help; margin-left: 4px; }
   #msgs pre { white-space: pre-wrap; word-break: break-all; background: #f6f6f6; padding: 6px; margin: 4px 0 0; font-size: 11px; }
@@ -341,6 +342,14 @@ async function showTrack(w, focus) {
 }
 
 // ---- message list ---------------------------------------------------------
+// A position message is listed at the time the report itself carries, which can differ from when
+// airframes.io logged it (this station's messages arrive about 3 minutes before the time inside them).
+const reportTime = m => (m.lat != null && m.pos_t) ? m.pos_t : m.t;
+function dur(sec) {
+  if (sec >= 3600) return `${Math.floor(sec / 3600)}h${String(Math.floor(sec % 3600 / 60)).padStart(2, '0')}m`;
+  return `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, '0')}s`;
+}
+
 let showUndecoded = false, lastMsgs = [], selectedMsg = null;
 const expanded = new Set();   // message ids whose details are open; survives refreshes
 const rows = new Map();       // message id -> its row
@@ -376,12 +385,19 @@ function renderMessages(msgs) {
     a.onclick = e => { e.preventDefault(); showUndecoded = !showUndecoded; renderMessages(lastMsgs); applyHighlight(); };
     toggle.append(a, document.createTextNode(' (airline-specific data and message fragments)'));
   }
-  box.replaceChildren(...(hidden ? [toggle] : []), ...shown.slice().reverse().map(m => {
+  box.replaceChildren(...(hidden ? [toggle] : []), ...shown.slice().sort((a, b) => new Date(reportTime(b)) - new Date(reportTime(a)) || b.id - a.id).map(m => {
     const d = document.createElement('div');
     d.className = 'msg' + (m.lat != null ? ' hasloc' : '');
     const t = document.createElement('time');
-    t.textContent = new Date(m.t).toISOString().slice(5, 19).replace('T', ' ') + 'Z';
-    t.onmouseenter = () => { t.title = ago(m.t); };  // computed on hover so it is never stale
+    const rt = reportTime(m);
+    t.textContent = new Date(rt).toISOString().slice(5, 19).replace('T', ' ') + 'Z';
+    if (rt !== m.t) t.className = 'rt';   // dotted underline: this is the report time, not the arrival time
+    t.onmouseenter = () => {              // computed on hover so it is never stale
+      if (rt === m.t) { t.title = ago(m.t); return; }
+      const lag = Math.round((new Date(rt) - new Date(m.t)) / 1000);
+      t.title = [ago(rt), `report time ${fmtTime(rt)}`, `arrived ${fmtTime(m.t)}` +
+        (Math.abs(lag) >= 60 ? ` (report is ${dur(Math.abs(lag))} ${lag > 0 ? 'after' : 'before'} arrival)` : '')].join('\n');
+    };
     const k = document.createElement('span');
     k.className = 'kind';
     k.textContent = m.kind.replace('_', ' ');

@@ -109,7 +109,7 @@ legend to switch them on and off. A track is broken, not bridged, across a long
 silence (ADS-B 20 min, ADS-C 90, CPDLC 150, REP081 90, FMS 60) or an impossible
 jump (over 700 kt), and positions flagged impossible are left out. Click a message that
 has a position (orange bar on its left) to ring it on the map and show its popup
-(only one popup is ever open); the map pans only if it is out of view. Hover a message's time for its age.
+(only one popup is ever open); the map pans only if it is out of view. Position messages are listed at the time the report carries, with a dotted underline, and the list is ordered by the time shown; hover for both times and the gap between them (one station logs about 3 minutes before the time inside its messages). Other messages show when they arrived. Hover any message time for its age.
 The aircraft is drawn as a plane turned to its track; hovering it shows altitude,
 climb/descent trend, ground speed and track. `make uitest` (needs node) drives the
 page script against a fake DOM.
