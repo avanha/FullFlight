@@ -109,6 +109,24 @@ complete answer (a position under 20 s old and a callsign) stops the search, so 
 source costs nothing while the first has the aircraft. A source that errors is skipped while
 another answers.
 
+## Flights
+
+An aircraft's history is divided into the flights it flew (`GET /api/flights/{hex}`), so a plane with
+a week of data does not show as a tangle. A flight is a run of sightings of one flight number
+(callsigns on ADS-B and flight numbers in message prefixes, in either form, `CPA113` = `CX113`),
+split wherever the number is not seen for six hours, so the same number on two days is two flights.
+Stray one-off numbers are folded away. Positions attach to the flight they fall in or within an hour
+of. Positions that name no flight but cluster are shown as an *unidentified* flight rather than lost,
+and pieces of one flight that report the same REP081 route are joined (a flight whose number was only
+logged for its last hours is still one flight).
+
+The **Flights** selector under the watch list chooses what the map and message list show: the **most
+recent flight** (the default), **all flights**, or any one. In the all-flights view each flight is
+drawn on its own (a line never joins two flights), older ones fainter and flagged with their flight
+number and date, and the message list has a heading above each flight's messages. Clicking a heading or
+a flag shows just that flight and fits the map to it. The plane and the projection appear only for the
+flight in progress. The choice of most recent / all is remembered; a particular flight is not.
+
 ## Waypoints named in CPDLC reports
 
 A CPDLC position report names the fix just passed, the next fix (with its ETA) and the one after,

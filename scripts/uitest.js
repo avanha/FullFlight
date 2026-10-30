@@ -48,6 +48,8 @@ const L = {
   divIcon: o => o, featureGroup: () => ({ getBounds: () => ({}) }),
 };
 // --- the server ---
+const flightData = [];   // what /api/flights returns; empty unless a test sets it
+const storage = {};
 const watch = {id: 1, kind: 'tail', ident: 'B-LRM', start: '2026-10-30T10:00:00Z', end: '2026-11-01T00:00:00Z', status: 'tracking',
   hex: '780AB8', tail: 'B-LRM', type: 'A359', last_pos: {t: new Date().toISOString(), kind: 'ADS-B', lat: 40, lon: -100}};
 const pts = [{t: '2026-10-30T16:00:00Z', lat: 40, lon: -101, alt_ft: 35000, gs: 470, track: 90, vrate: 0, callsign: 'CPA843', source: 'adsb.lol'},
@@ -60,12 +62,13 @@ const msgs = [
   {id: 4, t: '2026-10-30T15:30:00Z', kind: 'unknown', summary: 'Undecoded H1', raw: 'r4', label: 'H1', rx_count: 1, undecoded: true},
 ];
 global.fetch = async url => {
-  const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : null;
+  const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : url.startsWith('/api/flights') ? flightData : null;
   return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(body)) };   // a fresh copy each time, like a real response
 };
 let intervals = [];
 const ctx = { document, L, fetch, console, Date, Number, Math, Set, Map, setInterval: (f, ms) => intervals.push([f, ms]), FormData: class {},
   setTimeout: f => { calls.timers.push(f); }, window: {isSecureContext: true},
+  localStorage: {getItem: k => (k in storage ? storage[k] : null), setItem: (k, v) => { storage[k] = String(v); }},
   navigator: {clipboard: {writeText: async t => { calls.copied.push(t); }}} };
 ctx.global = ctx;
 vm.createContext(ctx);
@@ -73,7 +76,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {predGroup, projection, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -636,7 +639,7 @@ highlightGroup = null;
   assert.ok(tf[0].startsWith('Where the flight computer expects it to be in 37 min') && tf.includes('ETA 18:37:00Z (+37 min)'), tf.join(' | '));
   // a nameless waypoint says why
   t.rows.get(71).onclick();
-  assert.ok(lines(predDots()[0].tooltip).includes('the report gives coordinates only'));
+  assert.ok(lines(predDots()[0].tooltip).includes('(coordinates only)'));
   assert.ok(lines(predDots()[0].tooltip)[0] === 'predicted next waypoint', 'no name, no dash');
   // a point that predicts nothing: the predictions go away
   t.rows.get(72).onclick();
@@ -664,6 +667,131 @@ highlightGroup = null;
   assert.strictEqual(rowText(70), 'ADS-C report 70 · next OLGAN, then KAPPU', 'a route whose waypoints we can name');
   assert.strictEqual(rowText(71), 'ADS-C report 71', 'nothing added when the names are not known');
   assert.strictEqual(rowText(73), 'CPDLC position report', 'the CPDLC summary already carries its names (from the decoder)');
+
+  // ===== 8r. flights: most recent by default, all of them on request ==============================
+  const seg = (id, flight, start, end, extra = {}) => ({id, flight, callsign: flight && 'CPA' + flight.slice(2), start, end, messages: 10, positions: 5, identified: !!flight, latest: false, ...extra});
+  const OLD = seg('CX840@1', 'CX840', '2026-10-29T10:00:00Z', '2026-10-29T16:00:00Z', {from: 'VHHH', to: 'KJFK', messages: 40});
+  const NEW = seg('CX843@2', 'CX843', '2026-10-30T10:00:00Z', '2026-10-30T20:00:00Z', {from: 'KJFK', to: 'VHHH', messages: 67, latest: true, from_name: 'John F Kennedy Intl', to_name: 'Hong Kong Intl'});
+  const bp = (day, hh, mm, lon) => ({t: `2026-10-${day}T${hh}:${mm}:00Z`, lat: 10, lon, alt_ft: 36000, gs: 480, track: 90, source: 'adsb.lol'});
+  const FPTS = [bp(29, 11, '00', 10.0), bp(29, 11, '02', 10.2), bp(29, 11, '04', 10.4),     // the older flight
+                bp(30, '02', '00', 50.0),                                                     // between flights: belongs to neither
+                bp(30, 11, '00', 20.0), bp(30, 11, '02', 20.2), bp(30, 11, '04', 20.4)];   // the latest
+  const fmsg = (id, day, hh, lon, extra = {}) => ({id, t: `2026-10-${day}T${hh}:00:00Z`, pos_t: `2026-10-${day}T${hh}:00:00Z`, kind: 'adsc', summary: 'ADS-C ' + id, raw: 'r', label: 'B6', rx_count: 1, lat: 11, lon, ...extra});
+  const FMSGS = [fmsg(301, 29, 12, 11.0, {gs: 480, trk: 90}), fmsg(302, 30, 12, 21.0, {gs: 480, trk: 90}), {id: 303, t: '2026-10-30T05:00:00Z', kind: 'cpdlc', summary: 'CPDLC WILCO', raw: 'r', label: 'BA', rx_count: 1}];
+  const lonsOf = r => r.lines.filter(l => l.o.color === COLORS.adsb).map(l => l.ll.map(p => p[1]));
+  const flagsOf = r => r.markers.filter(m => m.o.icon && m.o.icon.className === 'fflag-wrap');
+  const planes = r => r.markers.filter(m => m.o.icon && m.o.icon.className === 'plane');
+  const heads = () => byId['#msgs'].children.filter(c => c.className && c.className.startsWith('fhead')).map(c => c.textContent);
+  const rowIds = () => [...t.rows.keys()];
+  const withFlights = async (segs, fn) => {
+    flightData.splice(0, flightData.length, ...segs);
+    delete storage.flightChoice;
+    try { return await fn(); }
+    finally { flightData.splice(0); t.chooseFlight('recent'); await new Promise(res => setTimeout(res, 20)); delete storage.flightChoice; }
+  };
+  const settle = () => new Promise(res => setTimeout(res, 20));
+  const atTime = async (iso, fn) => { const real = Date.now; Date.now = () => Date.parse(iso); try { return await fn(); } finally { Date.now = real; } };
+  const drawF = async (focus = true) => draw(FPTS, FMSGS, focus);
+
+  await withFlights([OLD, NEW], async () => {
+    // --- the default: the most recent flight only
+    t.chooseFlight('recent'); await settle();
+    r = await drawF();
+    assert.strictEqual(t.flightChoice, 'recent');
+    assert.strictEqual(JSON.stringify(lonsOf(r)), '[[20,20.2,20.4]]', 'only the latest flight\'s ADS-B points, as one line');
+    assert.strictEqual(r.circles.filter(c => c.o.radius === 4).length, 1, 'only its message position');
+    assert.ok(planes(r).length === 1, 'the plane is there: this is the flight in progress');
+    assert.strictEqual(flagsOf(r).length, 1);
+    assert.strictEqual(flagsOf(r)[0].o.icon.html.textContent, 'CX843 · 30 Oct');
+    assert.ok(flagsOf(r)[0].o.icon.html.className.includes('latest'));
+    assert.strictEqual(JSON.stringify(rowIds()), '[302]', 'the list holds the latest flight\'s messages, not the older flight\'s or the ground chatter');
+    assert.strictEqual(JSON.stringify(heads()), JSON.stringify(['CX843 · 30 Oct · KJFK→VHHH · 67 msgs']));
+    // the selector
+    const sel = byId['#flightsel'];
+    assert.strictEqual(JSON.stringify(sel.children.map(o => o.value)), '["recent","all","CX843@2","CX840@1"]', 'most recent, all, then each flight newest first');
+    assert.strictEqual(sel.children[0].textContent, 'most recent: CX843 · 30 Oct · KJFK→VHHH');
+    assert.strictEqual(sel.children[3].textContent, 'CX840 · 29 Oct · VHHH→KJFK');
+    assert.strictEqual(sel.value, 'recent'); assert.strictEqual(sel.disabled, false);
+    // flag tooltip
+    const ft = lines(flagsOf(r)[0].tooltip);
+    assert.ok(ft[0] === 'CX843 · 30 Oct · KJFK→VHHH' && ft.includes('John F Kennedy Intl → Hong Kong Intl') && ft.includes('67 messages, 5 positions'), ft.join(' | '));
+    assert.ok(!ft.some(l => /click to show only/.test(l)), 'already the only one shown');
+
+    // --- all flights: both, the older fainter, flagged, with a heading above each flight's messages
+    t.chooseFlight('all'); await settle();
+    assert.strictEqual(storage.flightChoice, 'all', 'the choice is remembered');
+    r = await drawF();
+    assert.strictEqual(JSON.stringify(lonsOf(r)), '[[10,10.2,10.4],[20,20.2,20.4]]', 'two lines, one per flight; the stray point joins neither');
+    const ops = r.lines.filter(l => l.o.color === COLORS.adsb).map(l => l.o.opacity);
+    assert.strictEqual(JSON.stringify(ops), '[0.35,0.9]', 'the older flight is fainter');
+    const dotsOp = r.circles.filter(c => c.o.radius === 4).map(c => c.o.opacity);
+    assert.strictEqual(JSON.stringify(dotsOp), '[0.4,1]', 'and so are its dots');
+    assert.strictEqual(flagsOf(r).length, 2);
+    assert.ok(planes(r).length === 1, 'the plane is the aircraft\'s current position');
+    assert.strictEqual(JSON.stringify(heads()), JSON.stringify(['CX843 · 30 Oct · KJFK→VHHH · 67 msgs', 'not matched to a flight', 'CX840 · 29 Oct · VHHH→KJFK · 40 msgs']));
+    assert.strictEqual(JSON.stringify(rowIds().sort()), '[301,302,303]');
+    assert.ok(lines(flagsOf(r)[0].tooltip).some(l => /click to show only this flight/.test(l)));
+    // headings and flags are ways to pick a flight
+    const oldHead = byId['#msgs'].children.filter(c => c.className === 'fhead').at(-1);
+    oldHead.onclick(); await settle();
+    assert.strictEqual(t.flightChoice, 'CX840@1', 'clicking a flight\'s heading shows only that flight');
+    assert.strictEqual(storage.flightChoice, 'all', 'a particular flight is not remembered');
+
+    // --- an older flight: only its points; no plane, no projection; the map fits it
+    //     (checked with the clock set five minutes after that flight's last report, when a projection WOULD be drawn)
+    const fits = calls.fitBounds;
+    t.chooseFlight('all'); await settle();
+    await atTime('2026-10-30T12:05:00Z', async () => { await drawF(); });
+    assert.ok(t.projGroup.items.length > 0, 'control: with the latest flight shown and fresh, a projection is drawn');
+    t.chooseFlight('CX840@1'); await settle();
+    await atTime('2026-10-29T12:05:00Z', async () => { r = await drawF('flight'); });
+    assert.strictEqual(JSON.stringify(lonsOf(r)), '[[10,10.2,10.4]]');
+    assert.strictEqual(planes(r).length, 0, 'no plane on a flight that is over');
+    assert.strictEqual(t.projGroup.items.length, 0, 'and nothing projected');
+    assert.strictEqual(calls.fitBounds, fits + 1, 'fits the map to the flight');
+    assert.strictEqual(JSON.stringify(rowIds()), '[301]');
+    assert.ok(!flagsOf(r)[0].o.icon.html.className.includes('latest'));
+    assert.strictEqual(byId['#flightsel'].value, 'CX840@1');
+
+    // --- flags pick a flight too
+    t.chooseFlight('all'); await settle();
+    r = await drawF();
+    flagsOf(r).find(m => m.o.icon.html.textContent.startsWith('CX840')).handlers.click(); await settle();
+    assert.strictEqual(t.flightChoice, 'CX840@1');
+
+    // --- a choice that has gone away falls back to the most recent flight
+    t.chooseFlight('NOSUCH@0'); await settle();
+    r = await drawF();
+    assert.strictEqual(JSON.stringify(lonsOf(r)), '[[20,20.2,20.4]]');
+    assert.strictEqual(byId['#flightsel'].value, 'recent');
+  });
+
+  // which flight a time belongs to
+  await withFlights([OLD, NEW], async () => {
+    t.chooseFlight('all'); await settle(); await drawF();
+    const ms = iso => Date.parse(iso);
+    assert.strictEqual(t.segOf(ms('2026-10-29T12:00:00Z')), 0, 'inside the older flight');
+    assert.strictEqual(t.segOf(ms('2026-10-30T10:10:00Z')), 1, 'inside the latest');
+    assert.strictEqual(t.segOf(ms('2026-10-29T16:15:00Z')), 0, 'a quarter hour after it ended is still that flight');
+    assert.strictEqual(t.segOf(ms('2026-10-29T17:00:00Z')), -1, 'but an hour after is the ground');
+    assert.strictEqual(t.segOf(ms('2026-10-30T02:00:00Z')), -1, 'between flights');
+    assert.strictEqual(t.segOf(NaN), -1, 'a time we cannot read belongs to no flight');
+    assert.strictEqual(t.segOf(Date.parse('2026-10-30T2:00:00Z')), -1, 'a malformed time string is not read as "the first flight"');
+  });
+
+  // flights flown back to back are never one line, even if their points are only minutes apart
+  await withFlights([seg('A@1', 'CX100', '2026-10-30T10:00:00Z', '2026-10-30T12:00:00Z'), seg('B@2', 'CX101', '2026-10-30T12:10:00Z', '2026-10-30T14:00:00Z', {latest: true})], async () => {
+    t.chooseFlight('all'); await settle();
+    r = await draw([bp(30, 11, '50', 30.0), bp(30, 11, '55', 30.1), bp(30, 12, '15', 30.2), bp(30, 12, '20', 30.3)], [], false);
+    assert.strictEqual(JSON.stringify(lonsOf(r)), '[[30,30.1],[30.2,30.3]]', 'two lines');
+  });
+
+  // no flights identified yet: no filtering, a disabled selector saying so
+  r = await draw(FPTS, FMSGS, false);
+  assert.strictEqual(byId['#flightsel'].disabled, true);
+  assert.strictEqual(byId['#flightsel'].children[0].textContent, 'no flights identified yet');
+  assert.strictEqual(lonsOf(r).length >= 1, true, 'everything is drawn when there are no flights to choose between');
+  assert.strictEqual(heads().length, 0, 'and no headings');
 
   // 9. a watch with no aircraft yet clears the map without error
   await t.showTrack({id: 9, hex: ''}, true);

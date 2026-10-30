@@ -36,6 +36,11 @@
   #msgs .msg.sel { background: #fff3bf; }
   #msgs .msg.hasloc { border-left: 3px solid #d60; }
   .plane { background: none; border: none; }
+  .fhead { margin: 8px 0 2px; padding: 3px 5px; background: #eef2f7; border-left: 3px solid #1d3557; font-size: 12px; cursor: pointer; }
+  .fhead.none { background: none; border-left-color: #bbb; color: #888; cursor: default; }
+  .fflag-wrap { background: none; border: none; }
+  .fflag { position: absolute; transform: translate(6px, -50%); background: #1d3557; color: #fff; font: 11px system-ui, sans-serif; padding: 1px 5px; border-radius: 3px; white-space: nowrap; cursor: pointer; }
+  .fflag.latest { background: #c00; }
   .wpt-wrap { background: none; border: none; }
   .wpt { width: 8px; height: 8px; margin: 3px; transform: rotate(45deg); background: #fff; border: 2px solid #1d3557; box-sizing: content-box; }
   .wpt.est { border-style: dashed; border-color: #6b7a8f; background: transparent; opacity: .9; }
@@ -56,6 +61,7 @@
   <p class="hint">Flight + date waits for takeoff; an optional destination (IATA or ICAO) ends the watch on arrival there instead of after a long ground stop. A tail or hex tracks now until the end time (default 36 h).</p>
   <div id="err"></div>
   <ul id="list"></ul>
+  <p class="hint" style="margin:8px 0 0"><label>Flights: <select id="flightsel" style="max-width:100%"><option value="recent">no flights identified yet</option></select></label></p>
   <p class="hint" style="margin:8px 0 0"><label>Projection: look ahead
     <select id="ahead"><option value="0">off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></label>
     <span title="Dead reckoning from the newest fix. Never from a fix over an hour old, never more than 90 minutes from the fix, never past a known destination.">ⓘ</span></p>
@@ -398,6 +404,68 @@ function drawProjection() {
     p.capped ? 'limited to 90 minutes from the last fix' : '', p.basis));
 }
 
+// ---- flights ----------------------------------------------------------------------------
+// The server divides an aircraft's history into flights (see /api/flights). A point belongs to the
+// flight whose time span it falls in (within FLIGHT_TOL), so a plane like B-LRM with a week of history
+// can show just its current flight, or all of them with the older ones faded and flagged.
+const FLIGHT_TOL = 20 * 60000;
+let flightSegs = [], flightChoice = 'recent';   // 'recent', 'all', or a flight's id
+try { const v = localStorage.getItem('flightChoice'); if (v === 'all' || v === 'recent') flightChoice = v; } catch (e) { /* default */ }
+const dayLabel = ms => new Date(ms).toUTCString().slice(5, 11);   // "30 Oct"
+const segLabel = s => `${s.flight || 'unidentified'} \u00b7 ${dayLabel(s.startMs)}${s.from || s.to ? ` \u00b7 ${s.from || '?'}\u2192${s.to || '?'}` : ''}`;
+// null means everything. A choice that no longer exists falls back to the most recent flight.
+function chosenFlight() {
+  if (!flightSegs.length || flightChoice === 'all') return null;
+  return flightSegs.find(s => s.id === flightChoice) || flightSegs[flightSegs.length - 1];
+}
+// The index of the flight a time belongs to, or -1 (on the ground between flights, or unmatched).
+function segOf(ms) {
+  if (Number.isNaN(ms)) return -1;   // a time we cannot read belongs to no flight
+  let best = -1, bestD = Infinity;
+  flightSegs.forEach((s, i) => {
+    const d = ms < s.startMs ? s.startMs - ms : ms > s.endMs ? ms - s.endMs : 0;
+    if (d <= FLIGHT_TOL && d < bestD) { best = i; bestD = d; }
+  });
+  return best;
+}
+const isOlder = ms => !chosenFlight() && flightSegs.length > 1 && segOf(ms) !== flightSegs.length - 1;   // faded in the all-flights view
+
+function syncFlightSelector() {
+  const sel = $('#flightsel');
+  const opts = flightSegs.length
+    ? [['recent', `most recent: ${segLabel(flightSegs[flightSegs.length - 1])}`], ['all', `all flights (${flightSegs.length})`],
+       ...flightSegs.slice().reverse().map(s => [s.id, segLabel(s)])]
+    : [['recent', 'no flights identified yet']];
+  sel.replaceChildren(...opts.map(([v, text]) => { const o = document.createElement('option'); o.value = v; o.textContent = text; return o; }));
+  sel.value = opts.some(([v]) => v === flightChoice) ? flightChoice : 'recent';
+  sel.disabled = !flightSegs.length;
+}
+function chooseFlight(v) {
+  flightChoice = v;
+  if (v === 'all' || v === 'recent') { try { localStorage.setItem('flightChoice', v); } catch (e) { /* not saved: fine */ } }
+  const w = watches.find(x => x.id === selected);
+  if (w) showTrack(w, v === 'recent' || v === 'all' ? true : 'flight');   // a particular flight: fit the map to it
+}
+
+// A label at the start of each flight on the map, so it is clear which points belong together.
+function drawFlightFlags(pts, msgs, chosen) {
+  const first = new Map();
+  const consider = (lat, lon, ms) => { const i = segOf(ms); if (i >= 0 && (!first.has(i) || ms < first.get(i).ms)) first.set(i, {lat, lon, ms}); };
+  pts.forEach(p => consider(p.lat, p.lon, Date.parse(p.t)));
+  msgs.forEach(m => { if (m.lat != null && !m.suspect) consider(m.lat, m.lon, Date.parse(reportTime(m))); });
+  for (const [i, f] of first) {
+    const sg = flightSegs[i];
+    if (chosen && sg !== chosen) continue;
+    const el = document.createElement('div');
+    el.className = 'fflag' + (sg.latest ? ' latest' : '');
+    el.textContent = `${sg.flight || 'unidentified'} \u00b7 ${dayLabel(sg.startMs)}`;
+    L.marker(ll(f.lat, f.lon), {icon: L.divIcon({className: 'fflag-wrap', iconSize: [0, 0], html: el}), zIndexOffset: 400}).addTo(layer)
+      .bindTooltip(tip(segLabel(sg), `${fmt(sg.start)} to ${fmt(sg.end)}`, [sg.from_name, sg.to_name].filter(Boolean).join(' \u2192 '),
+        `${sg.messages} messages, ${sg.positions} positions`, chosen ? '' : 'click to show only this flight'))
+      .on('click', () => chooseFlight(sg.id));
+  }
+}
+
 const markers = new Map();   // message id -> its marker on the map
 let showSeq = 0;             // discards the result of a slower, superseded request
 function distNM(lat1, lon1, lat2, lon2) {
@@ -444,8 +512,18 @@ function latestFix(pts, msgs) {
 async function showTrack(w, focus) {
   if (!w.hex) { layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); lastData = null; drawProjection(); markers.clear(); renderMessages([]); return; }
   const seq = ++showSeq;
-  const [pts, msgs] = await Promise.all([api(`/api/track/${w.hex}?hours=96`), api(`/api/messages/${w.hex}?hours=96`)]);
+  let [pts, msgs, segs] = await Promise.all([api(`/api/track/${w.hex}?hours=96`), api(`/api/messages/${w.hex}?hours=96`), api(`/api/flights/${w.hex}?hours=96`)]);
   if (seq !== showSeq) return;
+  flightSegs = segs.map(sg => ({...sg, startMs: Date.parse(sg.start), endMs: Date.parse(sg.end)}));
+  syncFlightSelector();
+  // One flight chosen: only its points and messages are shown.
+  const chosen = chosenFlight();
+  if (chosen) {
+    const inFlight = ms => ms >= chosen.startMs - FLIGHT_TOL && ms <= chosen.endMs + FLIGHT_TOL;
+    pts = pts.filter(p => inFlight(Date.parse(p.t)));
+    msgs = msgs.filter(m => inFlight(Date.parse(reportTime(m))));
+  }
+  const current = !chosen || chosen.latest;   // the plane and the projection only make sense for the flight in progress
   if (focus || lonRef === null) { const f0 = latestFix(pts, msgs); lonRef = f0 ? f0.lon : (lonRef ?? 0); }
   layer.clearLayers();
   Object.values(SOURCES).forEach(src => src.group.clearLayers());
@@ -456,9 +534,15 @@ async function showTrack(w, focus) {
   // A track per source. Lines run through each source's positions in time order, skipping ones flagged impossible.
   const drawTrack = (key, fixes) => {
     const src = SOURCES[key];
-    for (const seg of segments(fixes, src.gapMin)) {
-      for (const part of trackParts(seg)) {
-        L.polyline(part, {color: src.color, weight: src.weight, dashArray: src.dash, opacity: .9}).addTo(src.group);
+    // flight by flight: a line never joins two flights, and the older ones are drawn fainter
+    const byFlight = new Map();
+    for (const f of fixes) { const i = flightSegs.length > 1 && !chosen ? segOf(f.t) : 0; if (!byFlight.has(i)) byFlight.set(i, []); byFlight.get(i).push(f); }
+    for (const [i, group] of byFlight) {
+      const faded = flightSegs.length > 1 && !chosen && i !== flightSegs.length - 1;
+      for (const seg of segments(group, src.gapMin)) {
+        for (const part of trackParts(seg)) {
+          L.polyline(part, {color: src.color, weight: src.weight, dashArray: src.dash, opacity: faded ? .35 : .9}).addTo(src.group);
+        }
       }
     }
   };
@@ -472,7 +556,8 @@ async function showTrack(w, focus) {
     const src = SOURCES[m.kind];
     const mk = L.circleMarker(ll(m.lat, m.lon), {
       radius: 4, weight: 1, color: m.suspect ? '#888' : (src ? src.color : '#e8590c'),
-      fillOpacity: m.time_unverified ? .2 : .8, dashArray: m.time_unverified ? '2 2' : null,
+      opacity: isOlder(Date.parse(reportTime(m))) ? .4 : 1,
+      fillOpacity: m.time_unverified ? .2 : isOlder(Date.parse(reportTime(m))) ? .3 : .8, dashArray: m.time_unverified ? '2 2' : null,
     }).addTo(src ? src.group : layer);
     mk.bindTooltip(tip(m.summary, fmt(m.pos_t || m.t), motionLine(m), wxLine(m), m.suspect ? '⚠ ' + m.suspect : '', m.time_unverified ? '⏱ time unverified' : ''));
     mk.on('click', () => pickMessage(m.id));   // clicking a dot selects its message in the list
@@ -481,11 +566,12 @@ async function showTrack(w, focus) {
   }
   for (const [kind, fixes] of Object.entries(byKind)) drawTrack(kind, fixes);
   drawWaypoints(msgs);
+  drawFlightFlags(pts, msgs, chosen);
 
   // The aircraft: a plane at its newest trustworthy fix, from ADS-B or from a datalink report. (Not
   // simply the last ADS-B point: that can be hours older than a report, e.g. once it is mid-ocean.)
   // A plane standing on a report is that report: clicking it selects the message.
-  const cur = latestFix(pts, msgs);
+  const cur = current ? latestFix(pts, msgs) : null;
   if (cur && cur.kind === 'adsb') {
     L.marker(ll(cur.lat, cur.lon), {icon: planeIcon(cur.ref.track), zIndexOffset: 1000}).addTo(layer)
       .bindTooltip(aircraftTip(w, pts));
@@ -496,12 +582,15 @@ async function showTrack(w, focus) {
       .on('click', () => pickMessage(m.id));
   }
 
-  lastData = {w, pts, msgs};
+  lastData = current ? {w, pts, msgs} : null;
   drawProjection();
   renderMessages(msgs);
   applyHighlight();
   // Choosing a target: centre and zoom on its newest fix. (A refresh leaves the view alone.)
-  if (focus) {
+  if (focus === 'flight') {
+    const pointsOf = [...pts.map(p => ll(p.lat, p.lon)), ...msgs.filter(m => m.lat != null && !m.suspect).map(m => ll(m.lat, m.lon))];
+    if (pointsOf.length) map.fitBounds(pointsOf, {maxZoom: 8, padding: [30, 30]});
+  } else if (focus) {
     const f = latestFix(pts, msgs);
     if (f) map.setView(ll(f.lat, f.lon), FOCUS_ZOOM);
   }
@@ -541,7 +630,7 @@ function drawPredictions() {
     for (const p of route) {
       L.circleMarker(ll(p.lat, p.lon), {radius: 5, color: c, weight: 2, fillColor: '#fff', fillOpacity: 1}).addTo(predGroup).bindTooltip(tip(
         `${p.name ? p.name + ' \u2014 ' : ''}predicted ${p.kind === 'next' ? 'next waypoint' : 'waypoint after next'}`, etaText(m, p.eta_sec),
-        p.name ? (p.name_src === 'learned' ? 'name matched from CPDLC reports' : 'name from the 2013 navigation database') : 'the report gives coordinates only',
+        p.name ? (p.name_src === 'learned' ? 'name matched from CPDLC reports' : 'name from the 2013 navigation database') : '(coordinates only)',
         `predicted by the report of ${fmt(m.pos_t || m.t)}`));
     }
   }
@@ -589,6 +678,22 @@ function applyHighlight(pan) {
   if (mk) mk.openTooltip();
 }
 
+// A heading above each flight's messages (all-flights view) or above the one chosen.
+function flightHeader(i) {
+  const d = document.createElement('div');
+  if (i < 0) {
+    d.className = 'fhead none';
+    d.textContent = 'not matched to a flight';
+    return d;
+  }
+  const sg = flightSegs[i];
+  d.className = 'fhead';
+  d.textContent = `${segLabel(sg)} \u00b7 ${sg.messages} msgs`;
+  d.title = `${fmt(sg.start)} to ${fmt(sg.end)}${sg.latest ? ' (most recent)' : ''}`;
+  d.onclick = () => chooseFlight(sg.id);
+  return d;
+}
+
 function renderMessages(msgs) {
   lastMsgs = msgs;
   rows.clear();
@@ -605,7 +710,16 @@ function renderMessages(msgs) {
     a.onclick = e => { e.preventDefault(); showUndecoded = !showUndecoded; renderMessages(lastMsgs); applyHighlight(); };
     toggle.append(a, document.createTextNode(' (airline-specific data and message fragments)'));
   }
-  box.replaceChildren(...(hidden ? [toggle] : []), ...shown.slice().sort((a, b) => new Date(reportTime(b)) - new Date(reportTime(a)) || b.id - a.id).map(m => {
+  const sorted = shown.slice().sort((a, b) => new Date(reportTime(b)) - new Date(reportTime(a)) || b.id - a.id);
+  const only = chosenFlight();
+  let lastSeg;   // headings: one above everything for a chosen flight, one per flight in the all view
+  const withHeaders = (rows) => flightSegs.length === 0 ? rows : only ? [flightHeader(flightSegs.indexOf(only)), ...rows] : rows.flatMap((row, k) => {
+    const i = segOf(Date.parse(reportTime(sorted[k])));
+    if (k > 0 && i === lastSeg) return [row];
+    lastSeg = i;
+    return [flightHeader(i), row];
+  });
+  box.replaceChildren(...(hidden ? [toggle] : []), ...withHeaders(sorted.map(m => {
     const d = document.createElement('div');
     d.className = 'msg' + (m.lat != null ? ' hasloc' : '');
     const t = document.createElement('time');
@@ -644,7 +758,7 @@ function renderMessages(msgs) {
     };
     rows.set(m.id, d);
     return d;
-  }));
+  })));
 }
 
 $('#add').onsubmit = async e => {
@@ -659,6 +773,10 @@ $('#add').onsubmit = async e => {
   } catch (err) { $('#err').textContent = err.message; }
 };
 
+{
+  const sel = $('#flightsel');
+  sel.onchange = () => chooseFlight(sel.value);
+}
 function setAhead(v) {
   aheadMin = v;
   try { localStorage.setItem('aheadMin', String(v)); } catch (e) { /* not saved: fine */ }
