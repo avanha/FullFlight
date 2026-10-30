@@ -28,7 +28,7 @@ const document = {
   createTextNode: t => ({text: t}),
 };
 // --- a recording Leaflet ---
-const calls = { legendExtra: null, exec: [], copied: [], timers: [], lines: [], legend: null, addLayer: 0, fitBounds: 0, setView: [], panTo: [], markers: [], circles: [], polylines: 0, tooltipsOpened: 0, highlightAdds: [] };
+const calls = { mounted: [], legendExtra: null, exec: [], copied: [], timers: [], lines: [], legend: null, addLayer: 0, fitBounds: 0, setView: [], panTo: [], markers: [], circles: [], polylines: 0, tooltipsOpened: 0, highlightAdds: [] };
 const allLayers = [];
 class Layer { on(ev, fn) { (this.handlers ||= {})[ev] = fn; return this; }
   constructor(){ this.items = []; this.open = false; allLayers.push(this); } addTo(t) { this.target = t; this.onMap = (t === mapObj); t.items && t.items.push(this); if (t === highlightGroup) calls.highlightAdds.push(this); return this; }
@@ -62,7 +62,9 @@ const msgs = [
   {id: 4, t: '2026-10-30T15:30:00Z', kind: 'unknown', summary: 'Undecoded H1', raw: 'r4', label: 'H1', rx_count: 1, undecoded: true},
 ];
 let postReply = null, lastPostBody = null;
+const fetchLog = [];
 global.fetch = async (url, opts) => {
+  fetchLog.push(url);
   if (opts && opts.method === 'POST') { lastPostBody = JSON.parse(opts.body); return { status: postReply.status, ok: postReply.status < 400, json: async () => postReply.body }; }
   const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : url.startsWith('/api/flights') ? flightData : null;
   return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(body)) };   // a fresh copy each time, like a real response
@@ -70,6 +72,7 @@ global.fetch = async (url, opts) => {
 let intervals = [];
 const ctx = { document, L, fetch, console, Date, Number, Math, Set, Map, setInterval: (f, ms) => intervals.push([f, ms]), FormData: class { constructor(form) { this.v = (form && form.values) || {}; } get(k) { return this.v[k] ?? ''; } },
   setTimeout: f => { calls.timers.push(f); }, window: {isSecureContext: true},
+  mountNotes: (container, hex, opts) => { calls.mounted.push({container, hex, opts}); },
   localStorage: {getItem: k => (k in storage ? storage[k] : null), setItem: (k, v) => { storage[k] = String(v); }},
   navigator: {clipboard: {writeText: async t => { calls.copied.push(t); }}} };
 ctx.global = ctx;
@@ -826,6 +829,55 @@ highlightGroup = null;
   watch.kind = 'tail'; delete watch.date; await t.refresh(); assert.strictEqual(chipOf().textContent, 'registration');
   watch.kind = 'hex'; await t.refresh(); assert.strictEqual(chipOf().textContent, 'hex');
   watch.kind = 'tail'; watch.ident = 'B-LRM'; await t.refresh();
+
+  // ===== 8t. notes: an icon on each watch, a side panel behind it ====================================
+  const noteBtn = () => byId['#list'].children[0].querySelector('.notebtn');
+  const NOTEHEX = watch.hex;
+  delete watch.notes; delete watch.last_note; await t.refresh();
+  assert.strictEqual(noteBtn().hidden, false, 'an aircraft can be annotated');
+  assert.strictEqual(noteBtn().className, 'notebtn empty', 'faint when there are no notes');
+  assert.strictEqual(noteBtn().textContent, '\u{1F4DD}');
+  assert.strictEqual(noteBtn().title, 'Add a note about this airframe');
+  watch.notes = 1; watch.last_note = 'The plane Yen took from SEA to HKG on 2026-10-27'; await t.refresh();
+  assert.strictEqual(noteBtn().className, 'notebtn', 'solid when there are');
+  assert.strictEqual(noteBtn().textContent, '\u{1F4DD} 1');
+  assert.strictEqual(noteBtn().title, 'The plane Yen took from SEA to HKG on 2026-10-27\n\n(1 note: click to read, add or edit)', 'the newest note on hover');
+  watch.notes = 3; await t.refresh();
+  assert.strictEqual(noteBtn().textContent, '\u{1F4DD} 3');
+  assert.ok(noteBtn().title.endsWith('(3 notes: click to read, add or edit)'));
+  // no aircraft yet (a callsign still waiting for takeoff): nothing to attach a note to
+  const savedHex = watch.hex; delete watch.hex; await t.refresh();
+  assert.strictEqual(noteBtn().hidden, true, 'no icon without an aircraft');
+  watch.hex = savedHex; await t.refresh();
+
+  // clicking opens the panel without also selecting the watch
+  const panel = document.querySelector('#notespanel');
+  panel.hidden = true;
+  let stoppedClick = false;
+  const mounted0 = calls.mounted.length;
+  noteBtn().onclick({stopPropagation() { stoppedClick = true; }});
+  assert.ok(stoppedClick, 'does not also select the watch');
+  assert.strictEqual(panel.hidden, false);
+  assert.strictEqual(document.querySelector('#notestitle').textContent, 'Notes · B-LRM · A359');
+  assert.strictEqual(calls.mounted.length, mounted0 + 1);
+  const mt = calls.mounted.at(-1);
+  assert.strictEqual(mt.hex, NOTEHEX);
+  assert.strictEqual(mt.container, document.querySelector('#notesbody'));
+  // a change in the panel refreshes the watch list, so the count follows
+  const fetchedBefore = fetchLog.filter(u => u.startsWith('/api/watches')).length;
+  watch.notes = 4;
+  await mt.opts.onChange([]); await settle();
+  assert.ok(fetchLog.filter(u => u.startsWith('/api/watches')).length > fetchedBefore, 'the list is reloaded');
+  assert.strictEqual(noteBtn().textContent, '\u{1F4DD} 4');
+  // closing
+  document.querySelector('#notesclose').onclick();
+  assert.strictEqual(panel.hidden, true);
+  // a title falls back to the hex when the registration is not known
+  const savedTail = watch.tail, savedType = watch.type; delete watch.tail; delete watch.type; await t.refresh();
+  noteBtn().onclick({stopPropagation() {}});
+  assert.strictEqual(document.querySelector('#notestitle').textContent, 'Notes · ' + NOTEHEX);
+  watch.tail = savedTail; watch.type = savedType; delete watch.notes; delete watch.last_note; await t.refresh();
+  document.querySelector('#notesclose').onclick();
 
   // 9. a watch with no aircraft yet clears the map without error
   await t.showTrack({id: 9, hex: ''}, true);

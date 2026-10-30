@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Airframes</title>
+<link rel="stylesheet" href="notes.css">
+<style>
+  body { margin: 0; font: 14px system-ui, sans-serif; color: #222; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid #ccc; background: #f4f6fa; }
+  header h2 { margin: 0; font-size: 18px; }
+  header a { color: #1d4ed8; text-decoration: none; }
+  header input[type=search] { padding: 5px 8px; min-width: 200px; }
+  #count { color: #555; margin-left: auto; }
+  main { padding: 0 16px 24px; overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+  th { text-align: left; font-size: 12px; color: #555; padding: 6px 8px; border-bottom: 2px solid #ccc; white-space: nowrap; }
+  td { padding: 7px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
+  td.hex { font-family: ui-monospace, monospace; }
+  td small { display: block; color: #777; }
+  .watching { color: #070; font-weight: 600; }
+  .gone { color: #999; }
+  td.notes { min-width: 220px; }
+  button.notecell { border: none; background: none; cursor: pointer; text-align: left; padding: 0; font: inherit; }
+  button.notecell.empty { opacity: .4; }
+  button.notecell:hover { text-decoration: underline; }
+  .preview { display: block; color: #444; font-style: italic; margin-top: 2px; max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #empty { color: #777; padding: 20px 8px; }
+  tr.open td { background: #fffbe6; }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">&larr; Map</a>
+  <h2>Airframes</h2>
+  <input id="q" type="search" placeholder="Search registration, hex, type or note" autocomplete="off">
+  <label><input id="onlynotes" type="checkbox"> only with notes</label>
+  <label>Sort <select id="sort">
+    <option value="seen">last seen</option><option value="tail">registration</option><option value="notes">notes first</option>
+  </select></label>
+  <span id="count"></span>
+</header>
+<main>
+  <table>
+    <thead><tr><th>Registration</th><th>Hex</th><th>Type</th><th>Last seen</th><th>First seen</th><th></th><th>Notes</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div id="empty" hidden></div>
+  <p style="color:#777;font-size:12px">An airframe with any note is never purged. Notes belong to the aircraft (its hex), so they stay with it if its registration changes.</p>
+</main>
+<div id="notespanel" hidden>
+  <div class="nphead"><b id="notestitle"></b><button id="notesclose" title="Close">&#10005;</button></div>
+  <div id="notesbody"></div>
+</div>
+<script src="notes.js"></script>
+<script>
+// ---- the airframes page ----------------------------------------------------------------
+const $ = s => document.querySelector(s);
+let all = [], openHex = null;
+const fmt = t => new Date(t).toISOString().slice(0, 16).replace('T', ' ') + 'Z';
+function ago(t) {
+  const s = Math.max(0, Math.round((Date.now() - new Date(t)) / 1000));
+  if (s < 90) return s + 's ago';
+  if (s < 5400) return Math.round(s / 60) + 'm ago';
+  if (s < 48 * 3600) return (s / 3600).toFixed(1).replace(/\.0$/, '') + 'h ago';
+  return Math.round(s / 86400) + 'd ago';
+}
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+
+async function load() {
+  const r = await fetch('/api/airframes');
+  all = await r.json();
+  render();
+}
+
+// The airframes to show, after the search and the "only with notes" filter, in the chosen order.
+function visible() {
+  const q = $('#q').value.trim().toLowerCase();
+  const onlyNotes = $('#onlynotes').checked;
+  const hay = a => [a.hex, a.type, a.last_note, ...(a.tails || []).map(t => t.tail)].filter(Boolean).join(' ').toLowerCase();
+  const list = all.filter(a => (!onlyNotes || a.notes > 0) && (!q || hay(a).includes(q)));
+  const seen = a => (a.last_seen ? Date.parse(a.last_seen) : 0);
+  const order = {
+    seen: (a, b) => seen(b) - seen(a) || a.hex.localeCompare(b.hex),
+    tail: (a, b) => (a.tail || '￿').localeCompare(b.tail || '￿') || a.hex.localeCompare(b.hex),
+    notes: (a, b) => b.notes - a.notes || seen(b) - seen(a),
+  }[$('#sort').value];
+  return list.sort(order);
+}
+
+function noteCell(a) {
+  const td = el('td', 'notes');
+  const b = el('button', 'notecell' + (a.notes ? '' : ' empty'), a.notes ? `\u{1F4DD} ${a.notes} note${a.notes > 1 ? 's' : ''}` : '\u{1F4DD} add a note');
+  b.title = a.notes ? 'Read, add or edit notes' : 'Add a note about this airframe';
+  b.onclick = () => openNotes(a);
+  td.append(b);
+  if (a.last_note) td.append(el('span', 'preview', a.last_note));
+  return td;
+}
+
+function row(a) {
+  const tr = el('tr', a.hex === openHex ? 'open' : '');
+  const reg = el('td');
+  reg.append(document.createTextNode(a.tail || '—'));
+  const others = (a.tails || []).slice(1).map(t => t.tail);
+  if (others.length) reg.append(el('small', '', 'also ' + others.join(', ')));
+  const seen = el('td', '', a.last_seen ? ago(a.last_seen) : '—');
+  if (a.last_seen) seen.title = fmt(a.last_seen);
+  const first = el('td', '', a.first_seen ? fmt(a.first_seen).slice(0, 10) : '—');
+  const watching = el('td', a.watched ? 'watching' : 'gone', a.watched ? 'watching' : '');
+  tr.append(reg, el('td', 'hex', a.hex), el('td', '', a.type || ''), seen, first, watching, noteCell(a));
+  return tr;
+}
+
+function render() {
+  const list = visible();
+  $('#rows').replaceChildren(...list.map(row));
+  const withNotes = all.filter(a => a.notes > 0).length;
+  $('#count').textContent = `${list.length} of ${all.length} airframes · ${withNotes} with notes`;
+  const empty = $('#empty');
+  empty.hidden = list.length > 0;
+  empty.textContent = all.length ? 'No airframe matches.' : 'No airframes yet: they appear once an aircraft has been watched.';
+}
+
+function openNotes(a) {
+  openHex = a.hex;
+  $('#notestitle').textContent = `Notes · ${a.tail || a.hex}${a.type ? ' · ' + a.type : ''}`;
+  $('#notespanel').hidden = false;
+  mountNotes($('#notesbody'), a.hex, {onChange: () => load()});   // counts and previews in the table follow
+  render();
+}
+
+$('#notesclose').onclick = () => { $('#notespanel').hidden = true; openHex = null; render(); };
+$('#q').oninput = render;
+$('#onlynotes').onchange = render;
+$('#sort').onchange = render;
+load();
+setInterval(load, 30000);
+</script>
+</body>
+</html>

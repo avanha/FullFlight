@@ -114,6 +114,25 @@ complete answer (a position under 20 s old and a callsign) stops the search, so 
 source costs nothing while the first has the aircraft. A source that errors is skipped while
 another answers.
 
+## Airframes and notes
+
+`/airframes.html` lists every aircraft we know of (searchable, sortable, filterable to those with notes):
+its current registration and any earlier ones, hex, type, when first and last seen, whether it is on a
+watch, and a preview of its newest note. An aircraft known only from a watch or a note is listed too.
+
+You can write any number of **notes** about an airframe (`This was the plane Yen took from SEA to HKG on
+2026-10-27`), each with its own date, and edit or delete them later. They attach to the hex, the aircraft,
+so they stay with it when its registration changes. On the map page every watch with an aircraft has a 📝
+icon (faint with none, a count with some; hover for the newest note) that opens a side panel to read, add,
+edit and delete its notes; the airframes page opens the same panel. Ctrl/Cmd+Enter adds or saves.
+
+**An airframe with any note is never purged.** That is enforced by the database itself (a trigger refuses
+to delete such an airframe, even for a blanket `DELETE FROM airframe`), so it holds for any future
+clean-up too. Nothing in the app deletes airframes today. Deleting an airframe's last note makes it
+purgeable again.
+
+API: `GET /api/airframes`, and `GET`/`POST /api/airframes/{hex}/notes`, `PUT`/`DELETE .../notes/{id}`.
+
 ## Flights
 
 An aircraft's history is divided into the flights it flew (`GET /api/flights/{hex}`), so a plane with

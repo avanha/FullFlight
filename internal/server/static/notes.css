@@ -1,0 +1,19 @@
+/* The side panel of notes about one airframe, used on the map page and the airframes page. */
+#notespanel { position: fixed; top: 0; right: 0; bottom: 0; width: 360px; max-width: 100vw; z-index: 2000;
+  display: flex; flex-direction: column; background: #fff; border-left: 1px solid #aaa; box-shadow: -2px 0 8px rgba(0,0,0,.25);
+  font: 14px system-ui, sans-serif; }
+#notespanel[hidden] { display: none; }
+#notespanel .nphead { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid #ddd; background: #f4f6fa; }
+#notespanel #notesclose { border: none; background: none; font-size: 16px; cursor: pointer; }
+#notesbody { padding: 10px 12px; overflow: auto; flex: 1; }
+.noteadd { margin-bottom: 12px; }
+.noteinput { width: 100%; box-sizing: border-box; font: inherit; padding: 6px; resize: vertical; }
+.notebtn2 { margin-top: 4px; padding: 3px 12px; }
+.noteerr { color: #b00; min-height: 1.1em; font-size: 13px; }
+.noteempty { color: #888; padding: 6px 0; }
+.note { padding: 8px 0; border-top: 1px solid #eee; }
+.notewhen { color: #666; font-size: 12px; font-family: ui-monospace, monospace; }
+.notebody { white-space: pre-wrap; word-break: break-word; margin: 3px 0; }
+.notebar { display: flex; gap: 10px; align-items: center; }
+.notelink { border: none; background: none; color: #1d4ed8; cursor: pointer; padding: 0; font-size: 12px; }
+.notelink:hover { text-decoration: underline; }

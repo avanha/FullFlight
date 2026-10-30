@@ -12,6 +12,7 @@ build:
 .PHONY: uitest
 uitest:
 	node scripts/uitest.js
+	node scripts/uitest-notes.js
 
 # Download the optional waypoint database (GPL, 2013; see the README).
 .PHONY: navdata

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FullFlight</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="notes.css">
 <style>
   body { margin: 0; font: 14px system-ui, sans-serif; display: grid; grid-template-columns: 340px 1fr; height: 100vh; }
   aside { padding: 12px; overflow: auto; border-right: 1px solid #ccc; }
@@ -36,6 +37,11 @@
   #msgs .msg.sel { background: #fff3bf; }
   #msgs .msg.hasloc { border-left: 3px solid #d60; }
   .plane { background: none; border: none; }
+  .navlink { font-size: 12px; font-weight: normal; margin-left: 8px; color: #1d4ed8; text-decoration: none; }
+  .notebtn { float: right; border: none; background: none; cursor: pointer; font-size: 12px; padding: 0 4px; }
+  .notebtn.empty { opacity: .35; }
+  .notebtn:hover { opacity: 1; }
+  .notebtn[hidden] { display: none; }
   .kindchip { font-weight: normal; font-size: 10px; margin-left: 5px; padding: 0 4px; border-radius: 3px; background: #e8eefc; color: #345; }
   .fhead { margin: 8px 0 2px; padding: 3px 5px; background: #eef2f7; border-left: 3px solid #1d3557; font-size: 12px; cursor: pointer; }
   .fhead.none { background: none; border-left-color: #bbb; color: #888; cursor: default; }
@@ -53,7 +59,7 @@
 </head>
 <body>
 <aside>
-  <h3 style="margin-top:0">FullFlight</h3>
+  <h3 style="margin-top:0">FullFlight <a href="/airframes.html" class="navlink" title="Every aircraft we know of, with your notes">Airframes</a></h3>
   <form id="add">
     <input name="input" placeholder="UA869 2026-10-31 [SFO]   or   CPA113   or   B-LRM   or   780AB8" required autocomplete="off">
     <input name="until" type="datetime-local" title="Optional end (tail/hex only; default 36 h)">
@@ -72,7 +78,12 @@
 </aside>
 <div id="map"></div>
 <div id="clock" title="Current time, UTC"></div>
+<div id="notespanel" hidden>
+  <div class="nphead"><b id="notestitle"></b><button id="notesclose" title="Close">&#10005;</button></div>
+  <div id="notesbody"></div>
+</div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="notes.js"></script>
 <script>
 const map = L.map('map').setView([30, -40], 3);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 18, attribution: '&copy; OpenStreetMap'}).addTo(map);
@@ -185,8 +196,15 @@ async function refresh() {
     // A tail or hex watch follows the aircraft from flight to flight, so its callsign is shown on its own
     // line, with an age; only a flight watch has a fixed callsign. On a flight or hex watch the tail gets a
     // copy button, so an aircraft first followed by callsign can be re-added by registration.
-    li.innerHTML = `<button class="del" title="Remove">✕</button><b></b> <span class="${w.status}">${w.status}</span><small></small>`;
+    li.innerHTML = `<button class="del" title="Remove">✕</button><button class="notebtn"></button><b></b> <span class="${w.status}">${w.status}</span><small></small>`;
     li.querySelector('b').textContent = title;
+    // Notes about the aircraft: a faint icon when there are none, a count when there are. Needs a hex (an aircraft).
+    const nb = li.querySelector('.notebtn');
+    nb.hidden = !w.hex;
+    nb.className = 'notebtn' + (w.notes ? '' : ' empty');
+    nb.textContent = w.notes ? `\u{1F4DD} ${w.notes}` : '\u{1F4DD}';
+    nb.title = w.notes ? `${w.last_note}\n\n(${w.notes} note${w.notes > 1 ? 's' : ''}: click to read, add or edit)` : 'Add a note about this airframe';
+    nb.onclick = e => { e.stopPropagation(); openNotes(w); };
     // How the app read what was typed, so a misreading (a callsign taken for a registration) shows at a glance.
     const chip = document.createElement('span');
     chip.className = 'kindchip';
@@ -235,6 +253,14 @@ async function refresh() {
     return li;
   }));
 }
+
+// The side panel of notes for one aircraft; the counts on the watch list follow when notes change.
+function openNotes(w) {
+  $('#notestitle').textContent = `Notes \u00b7 ${w.tail || w.hex}${w.type ? ' \u00b7 ' + w.type : ''}`;
+  $('#notespanel').hidden = false;
+  mountNotes($('#notesbody'), w.hex, {onChange: () => refresh()});
+}
+$('#notesclose').onclick = () => { $('#notespanel').hidden = true; };
 
 // Tooltip content as DOM nodes: message text comes off the radio and must never be parsed as HTML.
 function wxLine(m) {
