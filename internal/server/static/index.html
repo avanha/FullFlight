@@ -20,6 +20,15 @@
   li small { color: #666; display: block; }
   .waiting { color: #a60; } .tracking { color: #070; } .done, .expired { color: #888; }
   button.del { float: right; }
+  h4 { margin: 14px 0 4px; }
+  #msgs .msg { padding: 5px 4px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 12px; }
+  #msgs .msg time { color: #666; font-family: ui-monospace, monospace; margin-right: 6px; }
+  #msgs .kind { background: #eef; border-radius: 3px; padding: 0 4px; margin-right: 4px; font-size: 11px; }
+  #msgs .warn { color: #b60; cursor: help; margin-left: 4px; }
+  #msgs pre { white-space: pre-wrap; word-break: break-all; background: #f6f6f6; padding: 6px; margin: 4px 0 0; font-size: 11px; }
+  #msgs .empty { color: #888; padding: 4px; }
+  #clock { position: fixed; top: 8px; right: 8px; z-index: 1000; padding: 3px 8px; border-radius: 4px;
+           background: rgba(255,255,255,.9); border: 1px solid #aaa; font: 13px ui-monospace, monospace; }
   @media (max-width: 700px) { body { grid-template-columns: 1fr; grid-template-rows: auto 50vh; height: auto; } }
 </style>
 </head>
@@ -34,8 +43,11 @@
   <p class="hint">Flight + date waits for takeoff; an optional destination (IATA or ICAO) ends the watch on arrival there instead of after a long ground stop. A tail or hex tracks now until the end time (default 36 h).</p>
   <div id="err"></div>
   <ul id="list"></ul>
+  <h4>Messages</h4>
+  <div id="msgs"><div class="empty">Select a watch that has an aircraft.</div></div>
 </aside>
 <div id="map"></div>
+<div id="clock" title="Current time, UTC"></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
 const map = L.map('map').setView([30, -40], 3);
@@ -69,16 +81,71 @@ async function refresh() {
   }));
 }
 
+// Tooltip content as DOM nodes: message text comes off the radio and must never be parsed as HTML.
+function tip(...lines) {
+  const d = document.createElement('div');
+  d.append(...lines.filter(Boolean).map(l => { const r = document.createElement('div'); r.textContent = l; return r; }));
+  return d;
+}
+
 async function showTrack(w) {
   layer.clearLayers();
-  if (!w.hex) return;
-  const pts = await api(`/api/track/${w.hex}?hours=96`);
-  if (!pts.length) return;
-  const line = L.polyline(pts.map(p => [p.lat, p.lon]), {color: '#06c', weight: 3}).addTo(layer);
-  const last = pts[pts.length - 1];
-  L.circleMarker([last.lat, last.lon], {radius: 6, color: '#c00'}).addTo(layer)
-    .bindTooltip(`${last.callsign || w.hex} ${last.alt_ft ?? '?'} ft ${fmt(last.t)}`);
-  map.fitBounds(line.getBounds(), {maxZoom: 8, padding: [30, 30]});
+  if (!w.hex) { renderMessages([]); return; }
+  const [pts, msgs] = await Promise.all([api(`/api/track/${w.hex}?hours=96`), api(`/api/messages/${w.hex}?hours=96`)]);
+  const group = [];
+  if (pts.length) {
+    group.push(L.polyline(pts.map(p => [p.lat, p.lon]), {color: '#06c', weight: 3}).addTo(layer));
+    const last = pts[pts.length - 1];
+    L.circleMarker([last.lat, last.lon], {radius: 6, color: '#c00'}).addTo(layer)
+      .bindTooltip(tip(`${last.callsign || w.hex} ${last.alt_ft ?? '?'} ft`, fmt(last.t)));
+  }
+  // Positions reported in ADS-C / REP081 messages: orange, grey if they look wrong.
+  for (const m of msgs) {
+    if (m.lat == null) continue;
+    const mk = L.circleMarker([m.lat, m.lon], {radius: 4, weight: 1, color: m.suspect ? '#888' : '#d60', fillOpacity: .8}).addTo(layer);
+    mk.bindTooltip(tip(m.summary, fmt(m.pos_t || m.t), m.suspect ? '⚠ ' + m.suspect : ''));
+    if (!m.suspect) group.push(mk);
+  }
+  // Predicted route from the newest ADS-C report that has one.
+  const withRoute = msgs.filter(m => m.route && m.lat != null && !m.suspect).pop();
+  if (withRoute) {
+    const line = [[withRoute.lat, withRoute.lon], ...withRoute.route.map(p => [p.Lat, p.Lon])];
+    L.polyline(line, {color: '#d60', weight: 2, dashArray: '6 6'}).addTo(layer);
+    withRoute.route.forEach(p => L.circleMarker([p.Lat, p.Lon], {radius: 3, color: '#d60', fillColor: '#fff', fillOpacity: 1}).addTo(layer)
+      .bindTooltip(tip('predicted waypoint', p.ETASec != null ? `ETA +${Math.round(p.ETASec / 60)} min from ${fmt(withRoute.pos_t || withRoute.t)}` : '')));
+  }
+  renderMessages(msgs);
+  if (group.length) map.fitBounds(L.featureGroup(group).getBounds(), {maxZoom: 8, padding: [30, 30]});
+}
+
+function renderMessages(msgs) {
+  const box = $('#msgs');
+  if (!msgs.length) { box.innerHTML = '<div class="empty">No messages yet.</div>'; return; }
+  box.replaceChildren(...msgs.slice().reverse().map(m => {
+    const d = document.createElement('div');
+    d.className = 'msg';
+    const t = document.createElement('time');
+    t.textContent = new Date(m.t).toISOString().slice(5, 19).replace('T', ' ') + 'Z';
+    const k = document.createElement('span');
+    k.className = 'kind';
+    k.textContent = m.kind.replace('_', ' ');
+    d.append(t, k, document.createTextNode(m.summary));
+    for (const [flag, why] of [['⚠', m.mismatch], ['?', m.suspect]]) {
+      if (!why) continue;
+      const w = document.createElement('span');
+      w.className = 'warn'; w.textContent = flag; w.title = why;
+      d.append(w);
+    }
+    const pre = document.createElement('pre');
+    pre.hidden = true;
+    pre.textContent = [m.detail && m.detail !== m.summary ? m.detail : '',
+      m.mismatch ? 'airframes.io disagrees: ' + m.mismatch : '', m.suspect ? 'position suspect: ' + m.suspect : '',
+      `label ${m.label}${m.dir ? ', ' + m.dir : ''}${m.station ? ', ' + m.station : ''}${m.rx_count > 1 ? `, heard ${m.rx_count}x` : ''}`,
+      'raw: ' + m.raw].filter(Boolean).join('\n\n');
+    d.append(pre);
+    d.onclick = () => { pre.hidden = !pre.hidden; };
+    return d;
+  }));
 }
 
 $('#add').onsubmit = async e => {
@@ -92,6 +159,10 @@ $('#add').onsubmit = async e => {
     refresh();
   } catch (err) { $('#err').textContent = err.message; }
 };
+
+function tick() { $('#clock').textContent = new Date().toISOString().slice(0, 19).replace('T', ' ') + 'Z'; }
+tick();
+setInterval(tick, 1000);
 
 refresh();
 setInterval(() => { refresh().then(() => { const w = watches.find(x => x.id === selected); if (w) showTrack(w); }); }, 30000);

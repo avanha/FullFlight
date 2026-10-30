@@ -35,6 +35,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/watches/{id}", s.deleteWatch)
 	mux.HandleFunc("GET /api/track/{hex}", s.track)
 	mux.HandleFunc("GET /api/airframes", s.airframes)
+	mux.HandleFunc("GET /api/messages/{hex}", s.messages)
 	return s.auth(mux)
 }
 
@@ -209,6 +210,63 @@ func (s *Server) airframes(w http.ResponseWriter, r *http.Request) {
 	out := make([]row, 0, len(as))
 	for _, a := range as {
 		out = append(out, row{a.Hex, a.Tail, a.Type, a.Source, a.FirstSeen, a.LastSeen})
+	}
+	writeJSON(w, 200, out)
+}
+
+type messageJSON struct {
+	ID        int64      `json:"id"`
+	T         time.Time  `json:"t"`
+	Label     string     `json:"label"`
+	Kind      string     `json:"kind"`
+	Direction string     `json:"dir,omitempty"`
+	Summary   string     `json:"summary"`
+	Detail    string     `json:"detail,omitempty"`
+	Raw       string     `json:"raw"`
+	Tail      string     `json:"tail,omitempty"`
+	Flight    string     `json:"flight,omitempty"`
+	Callsign  string     `json:"callsign,omitempty"`
+	Station   string     `json:"station,omitempty"`
+	RxCount   int        `json:"rx_count"`
+	Lat       *float64   `json:"lat,omitempty"`
+	Lon       *float64   `json:"lon,omitempty"`
+	AltFt     *float64   `json:"alt_ft,omitempty"`
+	PosT      *time.Time `json:"pos_t,omitempty"`
+	Suspect   string     `json:"suspect,omitempty"`
+	Mismatch  string     `json:"mismatch,omitempty"`
+	AFTail    string     `json:"af_tail,omitempty"`
+	AFFlight  string     `json:"af_flight,omitempty"`
+	Route     any        `json:"route,omitempty"`
+}
+
+// messages returns an aircraft's decoded datalink messages, oldest first.
+// Query: hours (default 48, max 336), limit (default 300, max 1000).
+func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
+	hex := strings.ToUpper(r.PathValue("hex"))
+	q := r.URL.Query()
+	hours, limit := 48, 300
+	if h, err := strconv.Atoi(q.Get("hours")); err == nil && h > 0 && h <= 24*14 {
+		hours = h
+	}
+	if l, err := strconv.Atoi(q.Get("limit")); err == nil && l > 0 && l <= 1000 {
+		limit = l
+	}
+	now := s.now()
+	ms, err := s.Store.Messages(hex, now.Add(-time.Duration(hours)*time.Hour), now.Add(time.Minute), limit)
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	out := make([]messageJSON, 0, len(ms))
+	for _, m := range ms {
+		j := messageJSON{ID: m.ID, T: m.T, Label: m.Label, Kind: m.Kind, Direction: m.Direction, Summary: m.Summary,
+			Detail: m.Detail, Raw: m.Text, Tail: m.Tail, Flight: m.Flight, Callsign: m.Callsign, Station: m.Station,
+			RxCount: m.RxCount, Lat: m.Lat, Lon: m.Lon, AltFt: m.AltFt, PosT: m.PosT, Suspect: m.Suspect,
+			Mismatch: m.Mismatch, AFTail: m.AFTail, AFFlight: m.AFFlight}
+		if m.Route != "" {
+			json.Unmarshal([]byte(m.Route), &j.Route)
+		}
+		out = append(out, j)
 	}
 	writeJSON(w, 200, out)
 }

@@ -61,6 +61,47 @@ var migrations = []string{
 	 ) WITHOUT ROWID;
 	 CREATE INDEX airframe_tail ON airframe (tail);`,
 	`ALTER TABLE watch ADD COLUMN dest TEXT NOT NULL DEFAULT '';`,
+	`CREATE TABLE message (
+		id          INTEGER PRIMARY KEY,   -- airframes.io message id
+		hex         TEXT NOT NULL,         -- the aircraft we fetched it for
+		ts          INTEGER NOT NULL,      -- receive time, unix seconds UTC
+		label       TEXT NOT NULL DEFAULT '',
+		block_id    TEXT NOT NULL DEFAULT '',
+		msg_num     TEXT NOT NULL DEFAULT '',
+		direction   TEXT NOT NULL DEFAULT '',
+		source_type TEXT NOT NULL DEFAULT '',
+		station     TEXT NOT NULL DEFAULT '',
+		freq        REAL,
+		text        TEXT NOT NULL,         -- raw, exactly as received
+		dup_key     TEXT NOT NULL,
+		rx_count    INTEGER NOT NULL DEFAULT 1,
+		-- our decode
+		kind        TEXT NOT NULL DEFAULT '',
+		tail        TEXT NOT NULL DEFAULT '',
+		callsign    TEXT NOT NULL DEFAULT '',
+		flight      TEXT NOT NULL DEFAULT '',
+		summary     TEXT NOT NULL DEFAULT '',
+		detail      TEXT NOT NULL DEFAULT '',
+		decoded     TEXT NOT NULL DEFAULT '',   -- JSON: libacars tree + our fields
+		route       TEXT NOT NULL DEFAULT '',   -- JSON: ADS-C predicted waypoints
+		lat         REAL,
+		lon         REAL,
+		alt_ft      REAL,
+		pos_ts      INTEGER,
+		suspect     TEXT NOT NULL DEFAULT '',   -- why the position looks wrong, if it does
+		-- airframes.io's own opinion, kept apart from ours
+		af_tail     TEXT NOT NULL DEFAULT '',
+		af_flight   TEXT NOT NULL DEFAULT '',
+		af_dep      TEXT NOT NULL DEFAULT '',
+		af_dest     TEXT NOT NULL DEFAULT '',
+		mismatch    TEXT NOT NULL DEFAULT ''
+	);
+	CREATE INDEX message_hex_ts ON message (hex, ts);
+	CREATE INDEX message_dup ON message (dup_key, ts);
+	CREATE TABLE fetch_state (
+		hex        TEXT PRIMARY KEY,
+		fetched_to INTEGER NOT NULL   -- the end of the last successful fetch, unix seconds
+	) WITHOUT ROWID;`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.

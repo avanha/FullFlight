@@ -44,6 +44,11 @@ type Result struct {
 	Identity Identity
 	Tree     map[string]any // libacars output, nil if libacars decoded nothing
 	Fields   map[string]any // our own hand-parsed fields
+
+	Summary string     // one line for a timeline
+	Text    string     // multi-line human-readable decode (libacars text, else Summary)
+	Pos     *Pos       // a reported position, if the message carries one
+	Route   []Waypoint // ADS-C predicted route, if any
 }
 
 var (
@@ -138,12 +143,14 @@ func Decode(m Message) (Result, error) {
 		r.Dir = dir
 	}
 
-	var err error
 	switch r.Kind {
 	case KindADSC, KindCPDLC, KindMIAM:
-		r.Tree, err = DecodeApps(r.Label, body, r.Dir)
+		d, err := DecodeAppsFull(r.Label, body, r.Dir)
 		if err != nil {
 			return r, err
+		}
+		if d != nil {
+			r.Tree, r.Text = d.Tree, d.Text
 		}
 		if arinc, ok := r.Tree["arinc622"].(map[string]any); ok {
 			if a, _ := arinc["air_addr"].(string); a != "" {
@@ -161,7 +168,12 @@ func Decode(m Message) (Result, error) {
 			}
 			if rep, ok := ParseREP081(body); ok {
 				r.Fields["rep081"] = rep
+				alt := float64(rep.AltFt)
+				r.Pos = &Pos{Lat: rep.Lat, Lon: rep.Lon, AltFt: &alt, Secs: float64(rep.SecsInMonth), Basis: BasisMonth}
 			}
+		}
+		if r.Kind == KindADSC {
+			r.Pos, r.Route = adscPosition(r.Tree)
 		}
 	case KindAFN:
 		parseAFN(body, &r)
@@ -169,6 +181,10 @@ func Decode(m Message) (Result, error) {
 		parseDATIS(body, &r)
 	case KindMedia:
 		parseMedia(body, &r)
+	}
+	r.Summary = summarize(r)
+	if r.Text == "" {
+		r.Text = r.Summary
 	}
 	return r, nil
 }

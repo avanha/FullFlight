@@ -87,6 +87,38 @@ func TestWatchDestinationAPI(t *testing.T) {
 	}
 }
 
+func TestMessagesEndpoint(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 14, 0, 0, 0, time.UTC)
+	lat, lon := 27.6, 152.6
+	pt := now.Add(-time.Hour - 2*time.Second)
+	for i, ago := range []time.Duration{3 * time.Hour, time.Hour} { // inserted out of order is fine
+		st.AddMessage(store.Message{ID: int64(i + 1), Hex: "780AB8", T: now.Add(-ago), Label: "B6", Text: "t" + string(rune('a'+i)),
+			Kind: "adsc", Summary: "ADS-C report", Lat: &lat, Lon: &lon, PosT: &pt, Route: `[{"Lat":26.9,"Lon":150}]`,
+			Mismatch: "tail: x"})
+	}
+	st.AddMessage(store.Message{ID: 9, Hex: "780AB8", T: now.Add(-100 * time.Hour), Label: "SA", Text: "old"}) // outside 48 h
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+
+	code, body := do(t, "GET", ts.URL+"/api/messages/780ab8", "")
+	if code != 200 || strings.Count(body, `"raw"`) != 2 || strings.Index(body, `"raw":"ta"`) > strings.Index(body, `"raw":"tb"`) {
+		t.Fatalf("%d %s", code, body)
+	}
+	for _, want := range []string{`"summary":"ADS-C report"`, `"route":[{"Lat":26.9,"Lon":150}]`, `"mismatch":"tail: x"`, `"lat":27.6`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %s in %s", want, body)
+		}
+	}
+	if _, body = do(t, "GET", ts.URL+"/api/messages/780AB8?hours=200", ""); strings.Count(body, `"raw"`) != 3 {
+		t.Errorf("hours=200: %s", body)
+	}
+	if _, body = do(t, "GET", ts.URL+"/api/messages/780AB8?limit=1", ""); strings.Count(body, `"raw"`) != 1 || !strings.Contains(body, `"raw":"tb"`) {
+		t.Errorf("limit=1 should keep the newest: %s", body)
+	}
+}
+
 func TestAirframesEndpoint(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()

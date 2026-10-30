@@ -41,8 +41,25 @@ with an IATA code, embedded from `internal/airports/airports.csv`.
 Every hex/tail pairing ever seen (from ADS-B or airframes.io) is kept in the
 `airframe` table forever, independent of watches; see `GET /api/airframes`.
 
+## Datalink messages
+
+For every aircraft on an open watch (once its hex is known) the app pulls
+messages from airframes.io: 7 days of history on first sight, then every 3
+minutes with a 30 minute overlap to catch late uploads. Each is decoded by us
+from the raw text (libacars plus hand parsers), never from airframes.io's own
+fields. Those are kept as `af_*` hints, and a disagreement (tail, flight number,
+or a tail that belongs to a different hex) shows as a warning badge. A message
+heard by several stations is stored once (`rx_count`). ADS-C and REP081
+positions are placed in time from their embedded timestamps, drawn on the map
+in orange, and marked suspect when they imply more than 700 kt against the
+nearest other fix. The newest ADS-C predicted route is drawn dashed.
+
+`GET /api/messages/{hex}?hours=48&limit=300` returns them, oldest first.
+
 ## Status
 
-Done: watchlist, ADS-B poller with source fallback, SQLite track log, message
-decoder (libacars + hand parsers), web UI with map. Not yet: airframes.io
-message fetcher and its UI, flight segmentation, systemd/reverse-proxy docs.
+Done: watchlist, ADS-B poller with source fallback, SQLite track log, permanent
+hex/tail table, message fetcher and decoder, web UI with map, message timeline
+and UTC clock. Not yet: CPDLC position reports on the map, flight segmentation
+by tail/flight/date, MIAM continuation blocks (shown as "not decoded"),
+ADS-C predicted-vs-actual ETA error, SSE live updates, systemd/reverse-proxy docs.

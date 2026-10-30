@@ -290,3 +290,44 @@ func TestPlausible(t *testing.T) {
 		t.Error("Seattle→Tokyo in 10 min should be flagged")
 	}
 }
+
+func TestSummariesAndPositions(t *testing.T) {
+	f, r := load(t, "adsc_takeoff_sea")
+	if r.Pos == nil || r.Pos.Basis != BasisHour || r.Pos.Lat < 47.41 || r.Pos.Lat > 47.42 {
+		t.Fatalf("pos = %+v", r.Pos)
+	}
+	if got, want := r.Pos.At(f.Received), time.Date(2026, 10, 27, 19, 9, 30, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("At = %v, want %v", got, want)
+	}
+	if !strings.Contains(r.Summary, "ADS-C report 47.419N 122.308W") || !strings.Contains(r.Summary, "1868 ft") {
+		t.Errorf("summary = %q", r.Summary)
+	}
+	if !strings.Contains(r.Text, "Basic report") {
+		t.Errorf("text = %q", r.Text)
+	}
+
+	_, r = load(t, "adsc_periodic")
+	if len(r.Route) != 2 || r.Route[0].Lat < 26.99 || r.Route[0].ETASec == nil || *r.Route[0].ETASec != 1088 {
+		t.Errorf("route = %+v", r.Route)
+	}
+
+	_, r = load(t, "rep081_handoff")
+	if r.Pos == nil || r.Pos.Basis != BasisMonth || *r.Pos.AltFt != 39000 {
+		t.Fatalf("rep081 pos = %+v", r.Pos)
+	}
+	if !strings.HasPrefix(r.Summary, "REP081 VHHH→YSSY 16.919S 142.488E FL390") {
+		t.Errorf("summary = %q", r.Summary)
+	}
+
+	want := map[string]string{
+		"cpdlc_wilco":       "CPDLC downlink: WILCO",
+		"afn_contact":       "AFN contact advisory: log on to OAKODYA, CPA833",
+		"media_established": "Link established: satcom at 12:40:56Z (available: VHF ACARS, satcom)",
+		"datis_arrival":     "D-ATIS arrival request for VHHH",
+	}
+	for name, w := range want {
+		if _, r := load(t, name); r.Summary != w {
+			t.Errorf("%s: summary = %q, want %q", name, r.Summary, w)
+		}
+	}
+}

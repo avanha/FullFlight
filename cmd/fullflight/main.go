@@ -16,6 +16,7 @@ import (
 	"github.com/avanha/fullflight/internal/adsb"
 	"github.com/avanha/fullflight/internal/airframes"
 	"github.com/avanha/fullflight/internal/config"
+	"github.com/avanha/fullflight/internal/datalink"
 	"github.com/avanha/fullflight/internal/poller"
 	"github.com/avanha/fullflight/internal/server"
 	"github.com/avanha/fullflight/internal/store"
@@ -62,6 +63,9 @@ func main() {
 		Airframes: airframes.NewClient(), WaitingEvery: cfg.Poll.Waiting, TrackingEvery: cfg.Poll.Tracking,
 		StopoverGrace: cfg.Poll.StopoverGrace}
 	go p.Run(ctx)
+
+	fetcher := &datalink.Fetcher{Store: st, Source: airframes.NewClient(), Log: log}
+	go fetcher.Run(ctx)
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
