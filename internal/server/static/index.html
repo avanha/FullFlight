@@ -379,7 +379,8 @@ function projection(w, pts, msgs, nowMs, ahead = aheadMin) {
   const cands = [
     ...pts.map(p => ({lat: p.lat, lon: p.lon, t: Date.parse(p.t), gs: p.gs, trk: p.track, ground: !!p.on_ground, src: p.source || 'ADS-B'})),
     ...msgs.filter(m => m.lat != null && !m.suspect && !m.time_unverified).map(m =>
-      ({lat: m.lat, lon: m.lon, t: Date.parse(m.pos_t || m.t), gs: m.gs, trk: m.trk, ground: false, src: SOURCES[m.kind] ? SOURCES[m.kind].name : m.kind})),
+      ({lat: m.lat, lon: m.lon, t: Date.parse(m.pos_t || m.t), gs: m.gs, trk: m.trk, ground: false, src: SOURCES[m.kind] ? SOURCES[m.kind].name : m.kind,
+        next: (m.route || []).find(r => r.kind === 'next' && r.eta_sec > 0)})),
   ].sort((a, b) => a.t - b.t);
   const L0 = cands[cands.length - 1];
   if (!L0 || L0.ground) return null;
@@ -387,7 +388,19 @@ function projection(w, pts, msgs, nowMs, ahead = aheadMin) {
   if (ageMin > PROJ.maxFixAgeMin || ageMin < -2) return null;
   let gs = L0.gs, trk = L0.trk, basis = `its reported ${Math.round(L0.gs)} kt on track ${Math.round(L0.trk)}°`;
   if (gs == null || trk == null) {
-    // The fix gave no speed or track: take them from the move since the previous fix.
+    // The fix gave no speed or track. An ADS-C report that names its next waypoint and when it will be
+    // there gives both: head for it, at the speed that gets there on time.
+    const N = L0.next;
+    if (N) {
+      const g = distNM(L0.lat, L0.lon, N.lat, N.lon) / (N.eta_sec / 3600);
+      if (g >= PROJ.minGs && g <= PROJ.maxGs) {
+        gs = g; trk = bearingTo(L0.lat, L0.lon, N.lat, N.lon);
+        basis = `${Math.round(gs)} kt on track ${Math.round(trk)}°, towards ${N.name || 'its next waypoint'} (ETA ${Math.round(N.eta_sec / 60)} min after the fix)`;
+      }
+    }
+  }
+  if (gs == null || trk == null) {
+    // Else take them from the move since the previous fix.
     const P = [...cands].reverse().find(c => c !== L0 && L0.t - c.t >= 60000 && L0.t - c.t <= 45 * 60000);
     if (!P) return null;
     gs = distNM(P.lat, P.lon, L0.lat, L0.lon) / ((L0.t - P.t) / 3600000);

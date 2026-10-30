@@ -540,6 +540,15 @@ highlightGroup = null;
   assert.ok(t.projection(W, [ap(10, 0, 0)], [], NOW), 'uses the selected look-ahead by default');
   // the newest TRUSTWORTHY fix is the basis: a later suspect or time-unverified datalink position is ignored
   const dl = (minAgo, lat, lon, extra = {}) => ({id: 200 + minAgo, t: iso(minAgo), pos_t: iso(minAgo), kind: 'adsc', summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, gs: 480, trk: 90, ...extra});
+  // an ADS-C report with no speed or track still projects when it names its next waypoint and the time to it (B-LRD)
+  const nx = (lat, lon, eta, extra = {}) => ({lat, lon, eta_sec: eta, kind: 'next', name: 'ISTEM', ...extra});
+  pr = t.projection(W, [], [dl(7, -19.831, 156.228, {gs: undefined, trk: undefined, route: [nx(-24.598, 160.383, 2571), {lat: -27.1, lon: 163, kind: 'next+1'}]})], NOW, 30);
+  assert.ok(pr, 'projects from the next waypoint');
+  assert.ok(Math.abs(pr.trk - 141) < 2 && Math.abs(pr.gs - 515) < 8, `track ${pr.trk} speed ${pr.gs}`);
+  assert.ok(pr.basis.includes('towards ISTEM'), pr.basis);
+  // no ETA, or an ETA that implies an impossible speed: fall back to the previous fix, else nothing
+  assert.strictEqual(t.projection(W, [], [dl(7, -19.8, 156.2, {gs: undefined, trk: undefined, route: [nx(-24.6, 160.4, 0)]})], NOW, 30), null);
+  assert.strictEqual(t.projection(W, [], [dl(7, -19.8, 156.2, {gs: undefined, trk: undefined, route: [nx(-24.6, 160.4, 60)]})], NOW, 30), null);
   pr = t.projection(W, [ap(20, 0, 0)], [dl(5, 40, 40, {suspect: 'x'}), dl(4, 41, 41, {time_unverified: true})], NOW, 30);
   assert.strictEqual(pr.fix.lat, 0, 'ignored the bad fixes and projected from the ADS-B one');
   pr = t.projection(W, [ap(20, 0, 0)], [dl(5, 0, 1.0)], NOW, 30);
