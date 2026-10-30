@@ -679,6 +679,7 @@ async function showTrack(w, focus) {
     // A target not yet matched to an aircraft has nothing to show, and nothing of the previous target may stay.
     ++showSeq;   // a fetch for the previous target still in flight must not draw over this
     layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); planGroup.clearLayers(); highlight.clearLayers();
+    Object.values(SOURCES).forEach(src => src.group.clearLayers());   // the report dots and each source's track
     lastData = null; lastTrack = {pts: [], msgs: []}; drawProjection(); markers.clear(); renderMessages([]);
     flightSegs = []; syncFlightSelector();
     $('#notespanel').hidden = true;
