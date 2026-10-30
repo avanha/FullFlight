@@ -137,11 +137,18 @@ type TailSeen struct {
 
 // KnownAirframe is everything we hold about one aircraft, by its hex address.
 type KnownAirframe struct {
-	Hex       string
-	Tails     []TailSeen // newest first; empty for a hex we only know from a watch or a note
-	Type      string     // the newest non-empty type
-	FirstSeen time.Time  // zero if no airframe row
-	LastSeen  time.Time
+	Hex   string
+	Tails []TailSeen // newest first; empty for a hex we only know from a watch or a note
+	Type  string     // the newest non-empty type
+
+	// When we first and last received anything from the aircraft, ADS-B or datalink: from the data
+	// itself, not from the airframe table, whose times only record when a registration was looked up or
+	// sighted (throttled) and never move for an aircraft heard only by datalink. Zero if never heard.
+	FirstSeen    time.Time
+	LastSeen     time.Time
+	LastADSB     time.Time
+	LastDatalink time.Time
+
 	Watched   bool // on an open watch
 	Notes     int
 	LastNote  string
@@ -177,12 +184,6 @@ func (s *Store) KnownAirframes() ([]KnownAirframe, error) {
 		a.Tails = append(a.Tails, t)
 		if a.Type == "" {
 			a.Type = t.Type // rows come newest first
-		}
-		if a.FirstSeen.IsZero() || t.FirstSeen.Before(a.FirstSeen) {
-			a.FirstSeen = t.FirstSeen
-		}
-		if t.LastSeen.After(a.LastSeen) {
-			a.LastSeen = t.LastSeen
 		}
 	}
 	rows.Close()
@@ -225,6 +226,43 @@ func (s *Store) KnownAirframes() ([]KnownAirframe, error) {
 		if a := byHex[h]; a != nil {
 			a.Positions = n
 		}
+	}); err != nil {
+		return nil, err
+	}
+	// when it was actually heard from
+	heard := func(q string, f func(a *KnownAirframe, first, last time.Time)) error {
+		rs, err := s.db.Query(q)
+		if err != nil {
+			return err
+		}
+		defer rs.Close()
+		for rs.Next() {
+			var h string
+			var lo, hi int64
+			if err := rs.Scan(&h, &lo, &hi); err != nil {
+				return err
+			}
+			f(get(h), time.Unix(lo, 0).UTC(), time.Unix(hi, 0).UTC())
+		}
+		return rs.Err()
+	}
+	widen := func(a *KnownAirframe, first, last time.Time) {
+		if a.FirstSeen.IsZero() || first.Before(a.FirstSeen) {
+			a.FirstSeen = first
+		}
+		if last.After(a.LastSeen) {
+			a.LastSeen = last
+		}
+	}
+	if err := heard(`SELECT hex, MIN(ts), MAX(ts) FROM position GROUP BY hex`, func(a *KnownAirframe, first, last time.Time) {
+		a.LastADSB = last
+		widen(a, first, last)
+	}); err != nil {
+		return nil, err
+	}
+	if err := heard(`SELECT hex, MIN(ts), MAX(ts) FROM message GROUP BY hex`, func(a *KnownAirframe, first, last time.Time) {
+		a.LastDatalink = last
+		widen(a, first, last)
 	}); err != nil {
 		return nil, err
 	}

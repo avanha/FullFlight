@@ -117,7 +117,7 @@ another answers.
 ## Airframes and notes
 
 `/airframes.html` lists every aircraft we know of (searchable, sortable, filterable to those with notes):
-its current registration and any earlier ones, hex, type, when first and last seen, whether it is on a
+its current registration and any earlier ones, hex, type, when first and last heard from, whether it is on a
 watch, and a preview of its newest note. An aircraft known only from a watch or a note is listed too.
 
 You can write any number of **notes** about an airframe (`This was the plane Yen took from SEA to HKG on
@@ -131,7 +131,25 @@ to delete such an airframe, even for a blanket `DELETE FROM airframe`), so it ho
 clean-up too. Nothing in the app deletes airframes today. Deleting an airframe's last note makes it
 purgeable again.
 
+"Seen" means heard from: the oldest and newest ADS-B position or datalink message we hold for the aircraft
+(hover the time for the ADS-B and datalink times separately). Looking up a registration at airframes.io does
+not count, and an aircraft with no traffic shows "never heard".
+
 API: `GET /api/airframes`, and `GET`/`POST /api/airframes/{hex}/notes`, `PUT`/`DELETE .../notes/{id}`.
+
+## Storage and purging
+
+Everything is kept by default. Measured: about 1.7 KB per datalink message (decoded text included) and
+about 90 bytes per ADS-B position; a busy long-haul aircraft is roughly 100-300 KB per day tracked, so
+on-demand use is tens of MB a month, not gigabytes.
+
+    fullflight -stats                              # size, rows per table, oldest/newest, biggest aircraft
+    fullflight -purge-older-than 90                # dry run: what would go
+    fullflight -purge-older-than 90 -confirm       # delete it, then compact the file
+
+A purge deletes positions and messages older than N days (at least 1) and finished watches. It never touches
+an aircraft that has a note, the `airframe` list, notes, waypoints or fetch state. Stop the server first for a
+real purge. Decoded detail can be rebuilt with `-redecode`.
 
 ## Flights
 

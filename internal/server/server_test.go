@@ -625,6 +625,7 @@ func TestNotesAreVisibleOnWatchesAndTheAirframeList(t *testing.T) {
 	st.AddWatch(e2)
 	st.RecordAirframe(store.Airframe{Hex: "780AB8", Tail: "B-LRM", Type: "A359", Source: "x", LastSeen: now})
 	st.RecordAirframe(store.Airframe{Hex: "780AB8", Tail: "B-OLD", Source: "x", LastSeen: now.Add(-100 * time.Hour)})
+	st.AddMessage(store.Message{ID: 1, Hex: "780AB8", T: now.Add(-time.Hour), Label: "BA", Text: "x"}) // heard from, so listed first
 	st.AddNote("780AB8", "first", now)
 	st.AddNote("780AB8", strings.Repeat("long ", 100), now.Add(time.Minute)) // newest, 500 characters
 	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())

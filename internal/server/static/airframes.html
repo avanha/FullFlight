@@ -104,8 +104,11 @@ function row(a) {
   reg.append(document.createTextNode(a.tail || '—'));
   const others = (a.tails || []).slice(1).map(t => t.tail);
   if (others.length) reg.append(el('small', '', 'also ' + others.join(', ')));
-  const seen = el('td', '', a.last_seen ? ago(a.last_seen) : '—');
-  if (a.last_seen) seen.title = fmt(a.last_seen);
+  const seen = el('td', '', a.last_seen ? ago(a.last_seen) : 'never heard');
+  if (a.last_seen) {
+    seen.title = 'Last heard ' + fmt(a.last_seen) + '\nADS-B: ' + (a.last_adsb ? fmt(a.last_adsb) : 'none') +
+      '\nDatalink: ' + (a.last_datalink ? fmt(a.last_datalink) : 'none');
+  }
   const first = el('td', '', a.first_seen ? fmt(a.first_seen).slice(0, 10) : '—');
   const watching = el('td', a.watched ? 'watching' : 'gone', a.watched ? 'watching' : '');
   tr.append(reg, el('td', 'hex', a.hex), el('td', '', a.type || ''), seen, first, watching, noteCell(a));

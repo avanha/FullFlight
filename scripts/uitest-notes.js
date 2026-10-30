@@ -155,7 +155,7 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   w = newWorld();
   const iso = h => new Date(w.clock - h * 3600e3).toISOString();
   w.airframes = [
-    {hex: '780AB8', tail: 'B-LRM', tails: [{tail: 'B-LRM'}, {tail: 'B-OLD'}], type: 'A359', last_seen: iso(2), first_seen: iso(500), watched: true, notes: 2, last_note: 'Second note about the bird strike', messages: 400, positions: 100},
+    {hex: '780AB8', tail: 'B-LRM', tails: [{tail: 'B-LRM'}, {tail: 'B-OLD'}], type: 'A359', last_seen: iso(2), last_adsb: iso(2), last_datalink: iso(40), first_seen: iso(500), watched: true, notes: 2, last_note: 'Second note about the bird strike', messages: 400, positions: 100},
     {hex: '780AA4', tail: 'B-LRD', tails: [{tail: 'B-LRD'}], type: 'A359', last_seen: iso(30), first_seen: iso(400), notes: 0, messages: 500, positions: 50},
     {hex: 'ABB601', notes: 1, last_note: 'Seen once at Denver', messages: 0, positions: 0},    // known only from a note: no tail, never seen
   ];
@@ -175,7 +175,8 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   assert.strictEqual(text(cell(r0, 0)), 'B-LRMalso B-OLD', 'current registration, and the others it has had');
   assert.strictEqual(cell(r0, 2).textContent, 'A359');
   assert.strictEqual(cell(r0, 3).textContent, '2h ago');
-  assert.strictEqual(cell(r0, 3).title, '2026-10-30 10:00Z');
+  assert.strictEqual(cell(r0, 3).title, 'Last heard 2026-10-30 10:00Z\nADS-B: 2026-10-30 10:00Z\nDatalink: 2026-10-28 20:00Z', 'ADS-B and datalink times in the tooltip');
+  assert.strictEqual(cell(rows()[2], 3).textContent, 'never heard');
   assert.strictEqual(cell(r0, 5).textContent, 'watching');
   assert.strictEqual(cell(r0, 6).children[0].textContent, '\u{1F4DD} 2 notes');
   assert.strictEqual(cell(r0, 6).children[1].textContent, 'Second note about the bird strike', 'a preview of the newest note');
@@ -183,7 +184,7 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   assert.ok(cell(rows()[1], 6).children[0].className.includes('empty'));
   assert.strictEqual(cell(rows()[1], 5).textContent, '', 'not watching');
   assert.strictEqual(text(cell(rows()[2], 0)), '—', 'no registration known');
-  assert.strictEqual(cell(rows()[2], 3).textContent, '—');
+  assert.strictEqual(cell(rows()[2], 3).textContent, 'never heard');
   assert.strictEqual(cell(rows()[2], 6).children[0].textContent, '\u{1F4DD} 1 note', 'singular');
 
   // search: registration (any it has had), hex, type, note text

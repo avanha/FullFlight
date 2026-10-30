@@ -352,17 +352,19 @@ func (s *Server) track(w http.ResponseWriter, r *http.Request) {
 
 // airframeJSON is one aircraft as the airframes page shows it.
 type airframeJSON struct {
-	Hex       string         `json:"hex"`
-	Tail      string         `json:"tail,omitempty"` // the registration it was last seen with
-	Tails     []tailSeenJSON `json:"tails,omitempty"`
-	Type      string         `json:"type,omitempty"`
-	FirstSeen time.Time      `json:"first_seen,omitzero"`
-	LastSeen  time.Time      `json:"last_seen,omitzero"`
-	Watched   bool           `json:"watched,omitempty"`
-	Notes     int            `json:"notes"`
-	LastNote  string         `json:"last_note,omitempty"`
-	Messages  int            `json:"messages"`
-	Positions int            `json:"positions"`
+	Hex          string         `json:"hex"`
+	Tail         string         `json:"tail,omitempty"` // the registration it was last seen with
+	Tails        []tailSeenJSON `json:"tails,omitempty"`
+	Type         string         `json:"type,omitempty"`
+	FirstSeen    time.Time      `json:"first_seen,omitzero"`
+	LastSeen     time.Time      `json:"last_seen,omitzero"` // the newest ADS-B position or datalink message
+	LastADSB     time.Time      `json:"last_adsb,omitzero"`
+	LastDatalink time.Time      `json:"last_datalink,omitzero"`
+	Watched      bool           `json:"watched,omitempty"`
+	Notes        int            `json:"notes"`
+	LastNote     string         `json:"last_note,omitempty"`
+	Messages     int            `json:"messages"`
+	Positions    int            `json:"positions"`
 }
 
 type tailSeenJSON struct {
@@ -381,7 +383,7 @@ func (s *Server) airframes(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]airframeJSON, 0, len(as))
 	for _, a := range as {
-		j := airframeJSON{Hex: a.Hex, Type: a.Type, FirstSeen: a.FirstSeen, LastSeen: a.LastSeen, Watched: a.Watched,
+		j := airframeJSON{Hex: a.Hex, Type: a.Type, FirstSeen: a.FirstSeen, LastSeen: a.LastSeen, LastADSB: a.LastADSB, LastDatalink: a.LastDatalink, Watched: a.Watched,
 			Notes: a.Notes, LastNote: preview(a.LastNote), Messages: a.Messages, Positions: a.Positions}
 		for _, t := range a.Tails {
 			j.Tails = append(j.Tails, tailSeenJSON{t.Tail, t.Type, t.FirstSeen, t.LastSeen})

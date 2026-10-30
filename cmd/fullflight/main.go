@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -25,6 +26,9 @@ import (
 
 func main() {
 	cfgPath := flag.String("config", "config.yaml", "path to config file")
+	stats := flag.Bool("stats", false, "print how much data is stored, then exit")
+	purgeDays := flag.Float64("purge-older-than", 0, "delete positions, messages and finished watches older than this many days, then exit; airframes with notes keep all their data. Only reports what it would do unless -confirm is given")
+	confirm := flag.Bool("confirm", false, "with -purge-older-than: really delete")
 	redecode := flag.Bool("redecode", false, "re-decode all stored messages with the current decoder, then exit")
 	flag.Parse()
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -45,6 +49,40 @@ func main() {
 	}
 	defer st.Close()
 
+	if *stats {
+		u, err := st.Usage()
+		if err != nil {
+			log.Error("measuring the database", "err", err)
+			os.Exit(1)
+		}
+		fmt.Print(u.Report())
+		return
+	}
+	if *purgeDays != 0 {
+		if *purgeDays < 1 {
+			fmt.Fprintln(os.Stderr, "-purge-older-than takes a number of days, at least 1")
+			os.Exit(2)
+		}
+		cutoff := time.Now().Add(-time.Duration(*purgeDays * 24 * float64(time.Hour)))
+		before, _ := st.Usage()
+		res, err := st.Purge(cutoff, !*confirm)
+		if err != nil {
+			log.Error("purge", "err", err)
+			os.Exit(1)
+		}
+		fmt.Print(res.Report())
+		if !*confirm {
+			fmt.Println("Nothing was deleted. Run it again with -confirm to delete.")
+			return
+		}
+		if err := st.Compact(); err != nil {
+			fmt.Println("The space was not given back to the disk (is the app running? stop it and run this again):", err)
+			return
+		}
+		after, _ := st.Usage()
+		fmt.Printf("Database %s -> %s\n", store.Bytes(before.DBBytes), store.Bytes(after.DBBytes))
+		return
+	}
 	if *redecode {
 		n, err := datalink.Redecode(st)
 		if err != nil {

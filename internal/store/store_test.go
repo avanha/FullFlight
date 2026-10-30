@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -570,8 +571,9 @@ func TestKnownAirframes(t *testing.T) {
 	if len(m.Tails) != 2 || m.Tails[0].Tail != "B-LRM" || m.Tails[1].Tail != "B-OLD" || m.Type != "A359" {
 		t.Errorf("tails newest first, type from the newest that has one: %+v", m)
 	}
-	if !m.FirstSeen.Equal(now.Add(-2000*time.Hour)) || !m.LastSeen.Equal(now) {
-		t.Errorf("seen %v .. %v", m.FirstSeen, m.LastSeen)
+	// seen means heard from (ADS-B or datalink), not the older times in the airframe table
+	if !m.FirstSeen.Equal(now) || !m.LastSeen.Equal(now) || !m.LastADSB.Equal(now) || !m.LastDatalink.Equal(now) {
+		t.Errorf("seen %v .. %v (adsb %v, datalink %v)", m.FirstSeen, m.LastSeen, m.LastADSB, m.LastDatalink)
 	}
 	if m.Notes != 2 || m.LastNote != "second, the newest" || m.Messages != 2 || m.Positions != 1 || m.Watched {
 		t.Errorf("counts: %+v", m)
@@ -587,5 +589,205 @@ func TestKnownAirframes(t *testing.T) {
 	}
 	if order[0] != "780AB8" || order[1] != "780AA4" {
 		t.Errorf("most recently seen first: %v", order)
+	}
+}
+
+// purgeFixture: three aircraft with data at several ages. 780AB8 has a note; the others do not.
+func purgeFixture(t *testing.T) (*Store, time.Time) {
+	t.Helper()
+	s := open(t)
+	cutoff := now.Add(-30 * 24 * time.Hour)
+	age := func(days float64) time.Time { return now.Add(-time.Duration(days * 24 * float64(time.Hour))) }
+	id := int64(0)
+	for _, hex := range []string{"780AB8", "780AA4", "AAAAAA"} {
+		for _, d := range []float64{40, 31, 29, 1} { // two old enough to go, two recent
+			id++
+			s.AddMessage(Message{ID: id, Hex: hex, T: age(d), Label: "BA", Text: fmt.Sprint("m", id)})
+			s.AddPosition(Position{Hex: hex, T: age(d), Lat: float64(id), Lon: 1, Source: "x"})
+		}
+		id++
+		s.AddMessage(Message{ID: id, Hex: hex, T: cutoff, Label: "BA", Text: fmt.Sprint("m", id)}) // exactly on the cutoff stays
+		s.AddPosition(Position{Hex: hex, T: cutoff, Lat: float64(id), Lon: 2, Source: "x"})
+	}
+	s.RecordAirframe(Airframe{Hex: "780AB8", Tail: "B-LRM", Source: "x", LastSeen: age(1)})
+	s.RecordAirframe(Airframe{Hex: "780AA4", Tail: "B-LRD", Source: "x", LastSeen: age(1)})
+	s.AddNote("780AB8", "Yen's plane", age(35))
+	s.AddFix("OLGAN", 1, -5.2, 140.8, "adsc-eta")
+	s.SetFetchedTo("780AA4", age(1))
+
+	watch := func(in string, end time.Time, status watchlist.Status, hex string) {
+		e, _ := watchlist.Parse(in, age(50), time.Time{})
+		e.End, e.Status, e.Hex = end, status, hex
+		if e.Kind == watchlist.KindTail {
+			e.Tail = e.Ident
+		}
+		s.AddWatch(e)
+	}
+	watch("hex:780AA4", age(40), watchlist.StatusDone, "780AA4")     // old, finished, no notes: goes
+	watch("flight:CK624", age(45), watchlist.StatusExpired, "")      // old, expired, never found an aircraft: goes
+	watch("hex:780AB8", age(40), watchlist.StatusDone, "780AB8")     // old, but its airframe has a note: stays
+	watch("tail:B-LRM", age(40), watchlist.StatusDone, "")           // old, never learned the hex, but B-LRM is the noted airframe: stays
+	watch("hex:AAAAAA", age(5), watchlist.StatusDone, "AAAAAA")      // finished recently: stays
+	watch("hex:BBBBBB", age(40), watchlist.StatusTracking, "BBBBBB") // old end but still open: not a finished watch, stays
+	return s, cutoff
+}
+
+func TestPurge(t *testing.T) {
+	counts := func(s *Store) (pos, msg, watches int) {
+		s.db.QueryRow(`SELECT COUNT(*) FROM position`).Scan(&pos)
+		s.db.QueryRow(`SELECT COUNT(*) FROM message`).Scan(&msg)
+		s.db.QueryRow(`SELECT COUNT(*) FROM watch`).Scan(&watches)
+		return
+	}
+	s, cutoff := purgeFixture(t)
+	p0, m0, w0 := counts(s)
+	if p0 != 15 || m0 != 15 || w0 != 6 {
+		t.Fatalf("fixture: %d positions, %d messages, %d watches", p0, m0, w0)
+	}
+
+	// a dry run counts and touches nothing
+	dry, err := s.Purge(cutoff, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, m, w := counts(s); p != p0 || m != m0 || w != w0 {
+		t.Fatalf("a dry run changed the data: %d %d %d", p, m, w)
+	}
+	// two aircraft without notes, two rows each older than the cutoff (40 and 31 days); the one exactly on it stays
+	if !dry.DryRun || dry.Positions != 4 || dry.Messages != 4 || dry.Watches != 2 {
+		t.Errorf("dry run = %+v", dry)
+	}
+	// the noted aircraft's two old rows of each kind are what it kept
+	if dry.KeptAirframes != 1 || dry.KeptPositions != 2 || dry.KeptMessages != 2 {
+		t.Errorf("kept = %+v", dry)
+	}
+
+	real, err := s.Purge(cutoff, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if real.Positions != dry.Positions || real.Messages != dry.Messages || real.Watches != dry.Watches || real.KeptPositions != dry.KeptPositions {
+		t.Errorf("a real run differs from the dry run: %+v vs %+v", real, dry)
+	}
+	if p, m, w := counts(s); p != 11 || m != 11 || w != 4 {
+		t.Errorf("after: %d positions, %d messages, %d watches", p, m, w)
+	}
+	// the noted aircraft lost nothing; the others kept their recent data and the row on the cutoff
+	for hex, want := range map[string]int{"780AB8": 5, "780AA4": 3, "AAAAAA": 3} {
+		var m, p int
+		s.db.QueryRow(`SELECT COUNT(*) FROM message WHERE hex=?`, hex).Scan(&m)
+		s.db.QueryRow(`SELECT COUNT(*) FROM position WHERE hex=?`, hex).Scan(&p)
+		if m != want || p != want {
+			t.Errorf("%s keeps %d messages, %d positions, want %d", hex, m, p, want)
+		}
+	}
+	// what is never purged
+	af, _ := s.ListAirframes()
+	if notes, _ := s.Notes("780AB8"); len(af) != 2 || len(notes) != 1 || len(s.LearnedFixes("OLGAN")) != 1 {
+		t.Errorf("airframes %d, notes %d, learned fixes %d", len(af), len(notes), len(s.LearnedFixes("OLGAN")))
+	}
+	if _, ok := s.FetchedTo("780AA4"); !ok {
+		t.Error("fetch state was purged: the next fetch would fetch the purged data again")
+	}
+	left, _ := s.ListWatches(false)
+	kept := map[string]bool{}
+	for _, e := range left {
+		kept[string(e.Kind)+":"+e.Ident] = true
+	}
+	for _, k := range []string{"hex:780AB8", "tail:B-LRM", "hex:AAAAAA", "hex:BBBBBB"} {
+		if !kept[k] {
+			t.Errorf("watch %s was purged; kept: %v", k, kept)
+		}
+	}
+	// running it again finds nothing more
+	again, _ := s.Purge(cutoff, false)
+	if again.Positions+again.Messages+again.Watches != 0 {
+		t.Errorf("second purge removed more: %+v", again)
+	}
+	// a cutoff before everything removes nothing, a far-future one removes everything of the un-noted
+	if none, _ := s.Purge(now.Add(-1000*24*time.Hour), true); none.Positions+none.Messages+none.Watches != 0 {
+		t.Errorf("an ancient cutoff: %+v", none)
+	}
+	all, _ := s.Purge(now.Add(24*time.Hour), false)
+	var p, m int
+	s.db.QueryRow(`SELECT COUNT(*) FROM position WHERE hex != '780AB8'`).Scan(&p)
+	s.db.QueryRow(`SELECT COUNT(*) FROM message WHERE hex != '780AB8'`).Scan(&m)
+	if p != 0 || m != 0 {
+		t.Errorf("purge of everything left %d positions and %d messages of un-noted aircraft: %+v", p, m, all)
+	}
+	s.db.QueryRow(`SELECT COUNT(*) FROM message WHERE hex = '780AB8'`).Scan(&m)
+	if m != 5 {
+		t.Errorf("the noted aircraft must keep all %d of its messages, has %d", 5, m)
+	}
+	if !strings.Contains(real.Report(), "Kept, because their airframe has notes: 1 airframe with 2 old positions and 2 old messages.") ||
+		!strings.Contains(dry.Report(), "DRY RUN, nothing deleted.") || !strings.Contains(dry.Report(), "would be removed") {
+		t.Errorf("reports:\n%s\n%s", dry.Report(), real.Report())
+	}
+}
+
+func TestUsageAndCompact(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "u.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	big := strings.Repeat("payload ", 150) // ~1.2 KB, like a decoded message
+	for i := 1; i <= 400; i++ {
+		s.AddMessage(Message{ID: int64(i), Hex: "AAAAAA", T: now.Add(-time.Duration(i) * time.Hour), Label: "BA", Text: fmt.Sprint(i), Decoded: big, Detail: big})
+	}
+	s.RecordAirframe(Airframe{Hex: "AAAAAA", Tail: "N1", Source: "x", LastSeen: now})
+	s.AddNote("BBBBBB", "a note about an aircraft with no data", now)
+
+	u, err := s.Usage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[string]TableUsage{}
+	for _, tu := range u.Tables {
+		by[tu.Name] = tu
+	}
+	if by["message"].Rows != 400 || by["message"].Bytes < 400*1000 || by["airframe"].Rows != 1 || by["airframe_note"].Rows != 1 {
+		t.Errorf("tables: %+v", u.Tables)
+	}
+	if u.Tables[0].Name != "message" {
+		t.Errorf("biggest first, got %s", u.Tables[0].Name)
+	}
+	if u.DBBytes < 400*2000 || u.Oldest.IsZero() || !u.Newest.After(u.Oldest) {
+		t.Errorf("db %d bytes, %v .. %v", u.DBBytes, u.Oldest, u.Newest)
+	}
+	if len(u.Aircraft) != 2 || u.Aircraft[0].Hex != "AAAAAA" || u.Aircraft[0].Messages != 400 || u.Aircraft[0].Tail != "N1" || u.Aircraft[1].Notes != 1 {
+		t.Errorf("aircraft: %+v", u.Aircraft)
+	}
+	rep := u.Report()
+	for _, want := range []string{"Database: ", "message ", "By aircraft:", "N1 AAAAAA", "(1 note: its data is never purged)"} {
+		if !strings.Contains(rep, want) {
+			t.Errorf("report lacks %q:\n%s", want, rep)
+		}
+	}
+
+	// purging frees pages inside the file; compacting gives them back to the disk
+	res, err := s.Purge(now.Add(-100*time.Hour), false)
+	if err != nil || res.Messages != 300 {
+		t.Fatalf("purge: %+v %v", res, err)
+	}
+	mid, _ := s.Usage()
+	if mid.FreeBytes < 250*1000 {
+		t.Errorf("expected plenty of empty pages after the purge, got %d", mid.FreeBytes)
+	}
+	if err := s.Compact(); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := s.Usage()
+	if after.FreeBytes != 0 || after.DBBytes >= mid.DBBytes/2 {
+		t.Errorf("compact: %d -> %d bytes, %d free", mid.DBBytes, after.DBBytes, after.FreeBytes)
+	}
+}
+
+func TestBytes(t *testing.T) {
+	for n, want := range map[int64]string{0: "0 B", 1023: "1023 B", 1024: "1.0 KB", 1536: "1.5 KB", 1048576: "1.0 MB", 5 << 30: "5.0 GB"} {
+		if got := Bytes(n); got != want {
+			t.Errorf("Bytes(%d) = %q, want %q", n, got, want)
+		}
 	}
 }
