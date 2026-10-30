@@ -4,7 +4,9 @@ package airframes
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -59,6 +61,9 @@ func (c *Client) get(ctx context.Context, path string) (*Airframe, error) {
 	}
 	var a Airframe
 	if err := json.NewDecoder(resp.Body).Decode(&a); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil, nil // airframes.io answers 200 with an empty body for an unknown registration
+		}
 		return nil, fmt.Errorf("airframes.io: bad JSON: %w", err)
 	}
 	a.ICAO, a.Tail = strings.ToUpper(a.ICAO), strings.ToUpper(a.Tail)

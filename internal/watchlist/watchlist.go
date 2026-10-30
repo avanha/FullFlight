@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/avanha/fullflight/internal/airlines"
 )
 
 type Kind string
@@ -66,8 +68,17 @@ func Parse(input string, now, until time.Time) (Entry, error) {
 	f := strings.Fields(strings.ToUpper(input))
 	switch len(f) {
 	case 1:
+		if isBareFlight(f[0]) {
+			return parseBareFlight(f[0], "", now, until)
+		}
 		return parseAircraft(f[0], now, until)
-	case 2, 3:
+	case 2:
+		// "CPA113 SFO": a callsign with a destination and no date.
+		if isBareFlight(f[0]) && destRe.MatchString(f[1]) && !dateRe.MatchString(f[1]) {
+			return parseBareFlight(f[0], f[1], now, until)
+		}
+		fallthrough
+	case 3:
 		e, err := parseFlight(f[0], f[1], now)
 		if err == nil && len(f) == 3 {
 			if !destRe.MatchString(f[2]) {
@@ -77,7 +88,43 @@ func Parse(input string, now, until time.Time) (Entry, error) {
 		}
 		return e, err
 	}
-	return Entry{}, fmt.Errorf("expected \"UA869 2026-10-31 [SFO]\", a tail, or a hex; got %q", input)
+	return Entry{}, fmt.Errorf("expected \"UA869 2026-10-31 [SFO]\", a callsign, a tail, or a hex; got %q", input)
+}
+
+var (
+	icaoCallsignRe = regexp.MustCompile(`^([A-Z]{3})\d{1,4}[A-Z]?$`)
+	iataFlightRe   = regexp.MustCompile(`^([A-Z0-9]{2})\d{1,4}[A-Z]?$`)
+	dateRe         = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+)
+
+// isBareFlight reports whether a lone token is a flight rather than an
+// aircraft: an ICAO callsign (3 known letters + digits, e.g. CPA113) or a flight
+// number with a known IATA airline code (UA869). Tails are checked after, so
+// N12345 or JA123A stay tails.
+func isBareFlight(s string) bool {
+	if m := icaoCallsignRe.FindStringSubmatch(s); m != nil && airlines.IsICAO(m[1]) {
+		return true
+	}
+	m := iataFlightRe.FindStringSubmatch(s)
+	return m != nil && airlines.IsIATA(m[1])
+}
+
+// parseBareFlight watches a flight with no date: from now until until, or for
+// TailDuration by default (long enough for the longest flights).
+func parseBareFlight(ident, dest string, now, until time.Time) (Entry, error) {
+	e := Entry{Kind: KindFlight, Ident: ident, Start: now, End: until, Status: StatusWaiting}
+	if until.IsZero() {
+		e.End = now.Add(TailDuration)
+	} else if !until.After(now) {
+		return Entry{}, fmt.Errorf("end time must be in the future")
+	}
+	if dest != "" {
+		if !destRe.MatchString(dest) {
+			return Entry{}, fmt.Errorf("%q is not an airport code (3-letter IATA or 4-character ICAO)", dest)
+		}
+		e.Dest = dest
+	}
+	return e, nil
 }
 
 func parseFlight(ident, date string, now time.Time) (Entry, error) {

@@ -1,6 +1,7 @@
 package watchlist
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -105,6 +106,38 @@ func TestParseDestination(t *testing.T) {
 	for _, in := range []string{"UA869 2026-11-05 SF", "UA869 2026-11-05 S-FO", "UA869 2026-11-05 SFO LAX", "B-LRM SFO"} {
 		if _, err := Parse(in, now, time.Time{}); err == nil {
 			t.Errorf("%q: expected error", in)
+		}
+	}
+}
+
+// Bare callsigns and flight numbers are flights, not registrations. A bare
+// "CPA113" was once filed as a tail because the tail pattern is very loose.
+func TestParseBareFlight(t *testing.T) {
+	for in, ident := range map[string]string{"CPA113": "CPA113", "cpa113": "CPA113", "UAL0869": "UAL0869", "UA869": "UA869", "ACA123": "ACA123", "BAW9": "BAW9"} {
+		e, err := Parse(in, now, time.Time{})
+		if err != nil || e.Kind != KindFlight || e.Ident != ident || e.Date != "" || e.Status != StatusWaiting {
+			t.Errorf("%q: %+v %v", in, e, err)
+			continue
+		}
+		if !e.Start.Equal(now) || !e.End.Equal(now.Add(36*time.Hour)) {
+			t.Errorf("%q: window %v..%v", in, e.Start, e.End)
+		}
+	}
+	e, err := Parse("CPA113 sfo", now, now.Add(48*time.Hour))
+	if err != nil || e.Kind != KindFlight || e.Dest != "SFO" || !e.End.Equal(now.Add(48*time.Hour)) {
+		t.Errorf("with destination and until: %+v %v", e, err)
+	}
+	if _, err := Parse("CPA113 S-FO", now, time.Time{}); err == nil || !strings.Contains(err.Error(), "YYYY-MM-DD") {
+		t.Error("bad destination accepted")
+	}
+	// A dated flight still works, and registrations that look a bit like flights stay tails.
+	if e, _ := Parse("CPA113 2026-11-05", now, time.Time{}); e.Date != "2026-11-05" {
+		t.Errorf("dated: %+v", e)
+	}
+	for in, kind := range map[string]Kind{"N12345": KindTail, "N8538V": KindTail, "JA123A": KindTail, "HL7500": KindTail,
+		"B-LRM": KindTail, "VH-OQA": KindTail, "780AB8": KindHex, "A6F9B3": KindHex} {
+		if e, err := Parse(in, now, time.Time{}); err != nil || e.Kind != kind {
+			t.Errorf("%q: kind %v, want %v (%v)", in, e.Kind, kind, err)
 		}
 	}
 }

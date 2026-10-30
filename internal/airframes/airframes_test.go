@@ -15,6 +15,8 @@ func TestLookup(t *testing.T) {
 		switch r.URL.Path {
 		case "/airframes/tail/B-LRM", "/airframes/icao/780AB8":
 			w.Write([]byte(`{"id":20893,"tail":"b-lrm","icao":"780ab8","icaoType":"A359"}`))
+		case "/airframes/tail/CPA113":
+			// airframes.io answers 200 with no body for a registration it does not know.
 		case "/airframes/tail/B-ERR":
 			w.WriteHeader(500)
 		default:
@@ -34,6 +36,9 @@ func TestLookup(t *testing.T) {
 	}
 	if a, err = c.ByTail(context.Background(), "N0NE"); err != nil || a != nil {
 		t.Errorf("unknown tail = %+v, %v; want nil, nil", a, err)
+	}
+	if a, err = c.ByTail(context.Background(), "CPA113"); err != nil || a != nil {
+		t.Errorf("empty 200 = %+v, %v; want nil, nil", a, err)
 	}
 	if _, err = c.ByTail(context.Background(), "B-ERR"); err == nil {
 		t.Error("HTTP 500 should be an error")

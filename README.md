@@ -20,6 +20,9 @@ Type into the web UI (or `POST /api/watches {"input": "...", "until": "<RFC3339>
 
 - `UA869 2026-10-31`: waits for the callsign (UAL869) to appear, then follows
   that aircraft by hex. Window: 12 h before the date (UTC) through 60 h.
+- `CPA113` or `UA869` (no date): a callsign, or a flight number with a known
+  airline code, is a flight watch that starts now and runs 36 h (or until
+  `until`). `CPA113 SFO` adds a destination.
 - `B-LRM` or `780AB8`: tracks now until `until`, default 36 h. A tail is
   resolved to its hex via airframes.io, so it can be watched before it flies.
 

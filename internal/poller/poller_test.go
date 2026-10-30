@@ -419,3 +419,33 @@ func TestVanishedHighIsNotArrival(t *testing.T) {
 		t.Fatalf("a high-altitude dropout ended the watch: %+v", e)
 	}
 }
+
+func TestDatelessCallsignWatchLatchesAndFollows(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 17, 0, 0, 0, time.UTC)
+	e, err := watchlist.Parse("CPA113", now, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.AddWatch(e)
+	f := &fake{byCallsign: map[string][]adsb.Aircraft{}, byHex: map[string][]adsb.Aircraft{}}
+	lk := &fakeLookup{}
+	p := &Poller{Store: st, ADSB: f, Airframes: lk, Now: func() time.Time { return now }, WaitingEvery: time.Second, TrackingEvery: time.Second}
+
+	p.Once(context.Background())
+	if !reflect.DeepEqual(f.calls, []string{"cs:CPA113", "cs:CPA0113"}) {
+		t.Fatalf("calls = %v", f.calls)
+	}
+	if lk.calls != 0 {
+		t.Errorf("a callsign was looked up as a registration %d times", lk.calls)
+	}
+	a := ac(22)
+	a.Flight, a.Hex = "CPA113  ", "780AA4"
+	f.byCallsign["CPA113"] = []adsb.Aircraft{a}
+	now = now.Add(time.Minute)
+	p.Once(context.Background())
+	if w, _ := st.ListWatches(true); w[0].Hex != "780AA4" || w[0].Status != watchlist.StatusTracking || w[0].Callsign != "CPA113" {
+		t.Errorf("entry = %+v", w[0])
+	}
+}
