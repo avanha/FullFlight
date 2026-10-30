@@ -13,6 +13,7 @@ import (
 
 	"github.com/avanha/fullflight/internal/airlines"
 	"github.com/avanha/fullflight/internal/airports"
+	"github.com/avanha/fullflight/internal/flights"
 	"github.com/avanha/fullflight/internal/navdata"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/watchlist"
@@ -40,6 +41,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/track/{hex}", s.track)
 	mux.HandleFunc("GET /api/airframes", s.airframes)
 	mux.HandleFunc("GET /api/messages/{hex}", s.messages)
+	mux.HandleFunc("GET /api/flights/{hex}", s.flights)
 	return s.auth(mux)
 }
 
@@ -493,4 +495,38 @@ func (s *Server) routeWaypoints(raw string) []routeWpJSON {
 		out = append(out, j)
 	}
 	return out
+}
+
+// flightSegJSON is one flight of an aircraft, with the names of its airports where the aircraft reported them.
+type flightSegJSON struct {
+	flights.Segment
+	FromName string `json:"from_name,omitempty"`
+	ToName   string `json:"to_name,omitempty"`
+}
+
+// flights lists the flights an aircraft flew, oldest first. Query: hours (default 96, max 720).
+func (s *Server) flights(w http.ResponseWriter, r *http.Request) {
+	hex := strings.ToUpper(r.PathValue("hex"))
+	hours := 96
+	if h, err := strconv.Atoi(r.URL.Query().Get("hours")); err == nil && h > 0 && h <= 24*30 {
+		hours = h
+	}
+	now := s.now()
+	segs, err := flights.Segments(s.Store, hex, now.Add(-time.Duration(hours)*time.Hour), now.Add(time.Minute))
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	out := make([]flightSegJSON, 0, len(segs))
+	for _, sg := range segs {
+		j := flightSegJSON{Segment: sg}
+		if a, ok := airports.Lookup(sg.From); ok {
+			j.FromName = a.Name
+		}
+		if a, ok := airports.Lookup(sg.To); ok {
+			j.ToName = a.Name
+		}
+		out = append(out, j)
+	}
+	writeJSON(w, 200, out)
 }

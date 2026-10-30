@@ -393,3 +393,96 @@ func (s *Store) FixNameAt(lat, lon, tolDeg float64) (string, bool) {
 		GROUP BY name ORDER BY COUNT(*) DESC, name LIMIT 1`, lat, lon, tolDeg).Scan(&name)
 	return name, err == nil
 }
+
+// Evidence is one sighting of the flight an aircraft was operating: a flight number in a message, or
+// a callsign on an ADS-B position.
+type Evidence struct {
+	T  time.Time
+	ID string // as seen: "CX0113", "CPA113", ...
+}
+
+// FlightEvidence returns every sighting of the flight identity in [since, until], oldest first.
+// Messages whose text names a different aircraft are left out.
+func (s *Store) FlightEvidence(hexAddr string, since, until time.Time) ([]Evidence, error) {
+	rows, err := s.db.Query(`
+		SELECT ts, CASE WHEN flight != '' THEN flight ELSE callsign END FROM message
+		  WHERE hex=?1 AND ts BETWEEN ?2 AND ?3 AND (flight != '' OR callsign != '') AND mismatch NOT LIKE '%which is hex%'
+		UNION ALL
+		SELECT ts, callsign FROM position WHERE hex=?1 AND ts BETWEEN ?2 AND ?3 AND callsign != ''
+		ORDER BY 1`, hexAddr, ts(since), ts(until))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Evidence
+	for rows.Next() {
+		var e Evidence
+		var t int64
+		if err := rows.Scan(&t, &e.ID); err != nil {
+			return nil, err
+		}
+		e.T = time.Unix(t, 0).UTC()
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// PositionTimes returns when the aircraft was positioned, from ADS-B and from messages not flagged
+// suspect, oldest first.
+func (s *Store) PositionTimes(hexAddr string, since, until time.Time) ([]time.Time, error) {
+	rows, err := s.db.Query(`
+		SELECT ts FROM position WHERE hex=?1 AND ts BETWEEN ?2 AND ?3
+		UNION ALL
+		SELECT pos_ts FROM message WHERE hex=?1 AND pos_ts BETWEEN ?2 AND ?3 AND lat IS NOT NULL AND suspect = ''
+		ORDER BY 1`, hexAddr, ts(since), ts(until))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []time.Time
+	for rows.Next() {
+		var t int64
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, time.Unix(t, 0).UTC())
+	}
+	return out, rows.Err()
+}
+
+// RouteReport is one REP081 origin/destination.
+type RouteReport struct {
+	T        time.Time
+	From, To string
+}
+
+// RouteReports returns the REP081 origin/destination reports in [since, until], oldest first.
+func (s *Store) RouteReports(hexAddr string, since, until time.Time) ([]RouteReport, error) {
+	rows, err := s.db.Query(`SELECT COALESCE(pos_ts, ts),
+			COALESCE(json_extract(decoded, '$.fields.rep081.Origin'), ''), json_extract(decoded, '$.fields.rep081.Dest')
+		FROM message WHERE hex=? AND kind='miam' AND COALESCE(pos_ts, ts) BETWEEN ? AND ?
+		  AND json_extract(decoded, '$.fields.rep081.Dest') IS NOT NULL AND json_extract(decoded, '$.fields.rep081.Dest') != ''
+		ORDER BY 1`, hexAddr, ts(since), ts(until))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RouteReport
+	for rows.Next() {
+		var r RouteReport
+		var t int64
+		if err := rows.Scan(&t, &r.From, &r.To); err != nil {
+			return nil, err
+		}
+		r.T = time.Unix(t, 0).UTC()
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// CountMessages counts an aircraft's stored messages received in [from, to].
+func (s *Store) CountMessages(hexAddr string, from, to time.Time) int {
+	var n int
+	s.db.QueryRow(`SELECT COUNT(*) FROM message WHERE hex=? AND ts BETWEEN ? AND ?`, hexAddr, ts(from), ts(to)).Scan(&n)
+	return n
+}

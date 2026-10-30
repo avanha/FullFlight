@@ -458,3 +458,56 @@ func TestRouteWaypointsAreNamedWhenWeKnowThem(t *testing.T) {
 		t.Errorf("the projection must not take a name: %+v", r[3])
 	}
 }
+
+func TestFlightsEndpoint(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 20, 0, 0, 0, time.UTC)
+	id := int64(0)
+	add := func(at time.Time, flight string, kind string, pos bool, decoded string) {
+		id++
+		m := store.Message{ID: id, Hex: "780AB8", T: at, Label: "BA", Text: fmt.Sprint("t", id), Flight: flight, Kind: kind, Decoded: decoded}
+		if pos {
+			lat, lon := 10.0, 100.0
+			m.Lat, m.Lon, m.PosT = &lat, &lon, &at
+		}
+		st.AddMessage(m)
+	}
+	for i := 0; i < 6; i++ { // yesterday's CX840, today's CX843 with a reported route
+		add(now.Add(-30*time.Hour+time.Duration(i)*30*time.Minute), "CX840", "adsc", true, "")
+		add(now.Add(-8*time.Hour+time.Duration(i)*30*time.Minute), "CX843", "adsc", true, "")
+	}
+	add(now.Add(-7*time.Hour), "", "miam", false, `{"fields":{"rep081":{"Origin":"KJFK","Dest":"VHHH"}}}`)
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+
+	_, body := do(t, "GET", ts.URL+"/api/flights/780ab8", "")
+	var got []struct {
+		ID, Flight, Callsign, From, To string
+		FromName                       string `json:"from_name"`
+		ToName                         string `json:"to_name"`
+		Positions                      int
+		Identified, Latest             bool
+	}
+	if err := json.Unmarshal([]byte(body), &got); err != nil || len(got) != 2 {
+		t.Fatalf("%v: %s", err, body)
+	}
+	a, b := got[0], got[1]
+	if a.Flight != "CX840" || a.Callsign != "CPA840" || a.Latest || !a.Identified || a.Positions != 6 {
+		t.Errorf("first = %+v", a)
+	}
+	if b.Flight != "CX843" || !b.Latest || b.From != "KJFK" || b.To != "VHHH" || b.ToName == "" || b.FromName == "" {
+		t.Errorf("second = %+v", b)
+	}
+	if !strings.HasPrefix(b.ID, "CX843@") {
+		t.Errorf("id = %q", b.ID)
+	}
+	// a shorter window leaves yesterday out
+	_, body = do(t, "GET", ts.URL+"/api/flights/780AB8?hours=12", "")
+	if strings.Contains(body, "CX840") || !strings.Contains(body, "CX843") {
+		t.Errorf("12 hours: %s", body)
+	}
+	if _, body = do(t, "GET", ts.URL+"/api/flights/FFFFFF", ""); strings.TrimSpace(body) != "[]" {
+		t.Errorf("unknown aircraft: %s", body)
+	}
+}
