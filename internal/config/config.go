@@ -23,6 +23,11 @@ type Config struct {
 		Sources []string `yaml:"sources"` // "adsb.lol", "adsb.fi"; tried in order
 	} `yaml:"adsb"`
 
+	// Navdata holds the optional waypoint database (fix.dat.gz, nav.dat.gz); see scripts/fetch-navdata.sh.
+	Navdata struct {
+		Dir string `yaml:"dir"` // default data/navdata
+	} `yaml:"navdata"`
+
 	Poll struct {
 		Waiting  time.Duration `yaml:"waiting"`  // unmatched flight entries; default 3m
 		Tracking time.Duration `yaml:"tracking"` // followed aircraft; default 45s
@@ -46,6 +51,9 @@ func Load(path string) (*Config, error) {
 	}
 	if c.DBPath == "" {
 		c.DBPath = "data/fullflight.db"
+	}
+	if c.Navdata.Dir == "" {
+		c.Navdata.Dir = "data/navdata"
 	}
 	if len(c.ADSB.Sources) == 0 {
 		c.ADSB.Sources = []string{"adsb.lol", "adsb.fi"}

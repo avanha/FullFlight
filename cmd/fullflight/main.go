@@ -17,6 +17,7 @@ import (
 	"github.com/avanha/fullflight/internal/airframes"
 	"github.com/avanha/fullflight/internal/config"
 	"github.com/avanha/fullflight/internal/datalink"
+	"github.com/avanha/fullflight/internal/navdata"
 	"github.com/avanha/fullflight/internal/poller"
 	"github.com/avanha/fullflight/internal/server"
 	"github.com/avanha/fullflight/internal/store"
@@ -54,6 +55,18 @@ func main() {
 		return
 	}
 
+	nav, err := navdata.Load(cfg.Navdata.Dir)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		log.Info("no navigation database; run scripts/fetch-navdata.sh to place more of the waypoints CPDLC reports name", "dir", cfg.Navdata.Dir)
+		nav = nil
+	case err != nil:
+		log.Warn("navigation database unusable; continuing without it", "err", err)
+		nav = nil
+	default:
+		log.Info("navigation database loaded", "cycle", nav.Cycle, "fixes", nav.Fixes, "navaids", nav.Navaid)
+	}
+
 	var sources []adsb.Source
 	for _, name := range cfg.ADSB.Sources {
 		switch name {
@@ -80,7 +93,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           (&server.Server{Store: st, Username: cfg.Auth.Username, Password: cfg.Auth.Password}).Handler(),
+		Handler:           (&server.Server{Store: st, Nav: nav, Username: cfg.Auth.Username, Password: cfg.Auth.Password}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {

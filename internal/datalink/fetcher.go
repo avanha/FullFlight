@@ -8,6 +8,7 @@ import (
 
 	"github.com/avanha/fullflight/internal/airframes"
 	"github.com/avanha/fullflight/internal/store"
+	"github.com/avanha/fullflight/internal/waypoints"
 )
 
 // Source is the subset of airframes.Client the fetcher needs.
@@ -148,6 +149,12 @@ func (f *Fetcher) fetchHex(ctx context.Context, hex string, now time.Time) error
 			f.Log.Error("recheck positions", "hex", hex, "err", err)
 		} else if n > 0 {
 			f.Log.Info("position flags updated", "hex", hex, "changed", n)
+		}
+		// CPDLC and ADS-C reports can arrive in either order, so match their waypoints over a wide window.
+		if n, err := waypoints.Learn(f.Store, hex, since.Add(-2*time.Hour)); err != nil {
+			f.Log.Error("learn waypoints", "hex", hex, "err", err)
+		} else if n > 0 {
+			f.Log.Debug("waypoint matches", "hex", hex, "n", n)
 		}
 	}
 	return f.Store.SetFetchedTo(hex, now)

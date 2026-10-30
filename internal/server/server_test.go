@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/avanha/fullflight/internal/navdata"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/watchlist"
 )
@@ -366,5 +368,55 @@ func TestWatchShowsCurrentFlight(t *testing.T) {
 	// A flight watch already is a flight, so it gets no flight line.
 	if b = watches("flight", seed{adsb: "CPA113", adsbAgo: 10 * time.Second}); strings.Contains(b, `"flight":{`) {
 		t.Errorf("flight watch has a flight line: %s", b)
+	}
+}
+
+func TestMessagesCarryWeatherSpeedAndWaypoints(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 19, 0, 0, 0, time.UTC)
+	pos := time.Date(2026, 10, 30, 18, 48, 0, 0, time.UTC)
+	lat, lon := -5.46, 141.742
+	wd, wk, wt, gs, trk := 148.0, 34.0, -51.0, 520.0, 122.0
+	fl, _ := json.Marshal(store.FixList{GS: &gs, Trk: &trk, List: []store.FixEntry{
+		{Name: "NEXTX", Role: "next", T: time.Date(2026, 10, 30, 18, 55, 0, 0, time.UTC).Unix()},
+		{Name: "KADAB", Role: "then"}, // the 2013 database has it behind the aircraft
+	}})
+	st.AddMessage(store.Message{ID: 1, Hex: "780AA4", T: pos.Add(-3 * time.Minute), Label: "BA", Text: "a", Kind: "cpdlc", Summary: "CPDLC position report",
+		Lat: &lat, Lon: &lon, PosT: &pos, WxDir: &wd, WxKt: &wk, WxTemp: &wt, GS: &gs, Trk: &trk, Fixes: string(fl)})
+	st.AddMessage(store.Message{ID: 2, Hex: "780AA4", T: pos, Label: "SA", Text: "b", Kind: "media_advisory", Summary: "Link"}) // no weather
+
+	nav := navdata.New()
+	nav.Add("NEXTX", navdata.Point{Lat: -6.0, Lon: 142.7, Kind: "fix"})
+	nav.Add("KADAB", navdata.Point{Lat: -4.965, Lon: 141.0, Kind: "fix"})
+	ts := httptest.NewServer((&Server{Store: st, Nav: nav, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+
+	_, body := do(t, "GET", ts.URL+"/api/messages/780AA4", "")
+	var ms []struct {
+		ID int64 `json:"id"`
+		Wx *struct {
+			Dir, Kt *float64
+			TempC   *float64 `json:"temp_c"`
+		} `json:"wx"`
+		GS, Trk   *float64
+		Waypoints []struct {
+			Name, Role, Source string
+			Exact              bool
+			Lat                float64
+		} `json:"waypoints"`
+	}
+	if err := json.Unmarshal([]byte(body), &ms); err != nil || len(ms) != 2 {
+		t.Fatalf("%v: %s", err, body)
+	}
+	a, b := ms[0], ms[1]
+	if a.Wx == nil || *a.Wx.Dir != 148 || *a.Wx.Kt != 34 || *a.Wx.TempC != -51 || *a.GS != 520 || *a.Trk != 122 {
+		t.Errorf("weather/motion = %+v gs=%v trk=%v", a.Wx, a.GS, a.Trk)
+	}
+	if len(a.Waypoints) != 1 || a.Waypoints[0].Name != "NEXTX" || !a.Waypoints[0].Exact || a.Waypoints[0].Source != "database" || a.Waypoints[0].Lat != -6.0 {
+		t.Errorf("waypoints = %+v (KADAB must not be placed: the database has it behind the aircraft)", a.Waypoints)
+	}
+	if b.Wx != nil || b.GS != nil || len(b.Waypoints) != 0 {
+		t.Errorf("a message without them: %+v", b)
 	}
 }

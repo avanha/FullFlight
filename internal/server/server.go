@@ -13,8 +13,10 @@ import (
 
 	"github.com/avanha/fullflight/internal/airlines"
 	"github.com/avanha/fullflight/internal/airports"
+	"github.com/avanha/fullflight/internal/navdata"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/watchlist"
+	"github.com/avanha/fullflight/internal/waypoints"
 )
 
 //go:embed static
@@ -22,6 +24,7 @@ var static embed.FS
 
 type Server struct {
 	Store    *store.Store
+	Nav      *navdata.DB // optional waypoint database
 	Username string
 	Password string // empty disables auth (config only allows that on loopback)
 	Now      func() time.Time
@@ -367,6 +370,31 @@ type messageJSON struct {
 	AFTail         string     `json:"af_tail,omitempty"`
 	AFFlight       string     `json:"af_flight,omitempty"`
 	Route          any        `json:"route,omitempty"`
+
+	Wx        *wxJSON        `json:"wx,omitempty"`
+	GS        *float64       `json:"gs,omitempty"`  // knots, as the report gave it
+	Trk       *float64       `json:"trk,omitempty"` // true track, degrees
+	Waypoints []waypointJSON `json:"waypoints,omitempty"`
+}
+
+// wxJSON is the weather at a report: wind direction (the way it blows FROM, true), speed and temperature.
+type wxJSON struct {
+	DirDeg *float64 `json:"dir,omitempty"`
+	Kt     *float64 `json:"kt,omitempty"`
+	TempC  *float64 `json:"temp_c,omitempty"`
+}
+
+// waypointJSON is a waypoint a CPDLC position report named, with the best position we can give it.
+type waypointJSON struct {
+	Name   string     `json:"name"`
+	Role   string     `json:"role"` // passed, next or then
+	Lat    float64    `json:"lat"`
+	Lon    float64    `json:"lon"`
+	Exact  bool       `json:"exact"`
+	Source string     `json:"source"` // ADS-C, database, interpolated or projected
+	How    string     `json:"how"`
+	T      *time.Time `json:"t,omitempty"`
+	AltFt  *float64   `json:"alt_ft,omitempty"`
 }
 
 // messages returns an aircraft's decoded datalink messages, oldest first.
@@ -387,6 +415,7 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, err.Error())
 		return
 	}
+	res := &waypoints.Resolver{Store: s.Store, Nav: s.Nav}
 	out := make([]messageJSON, 0, len(ms))
 	for _, m := range ms {
 		j := messageJSON{Undecoded: m.Kind == "unknown" || m.Summary == "MIAM (not decoded)", ID: m.ID, T: m.T, Label: m.Label, Kind: m.Kind, Direction: m.Direction, Summary: m.Summary,
@@ -395,6 +424,18 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 			Mismatch: m.Mismatch, AFTail: m.AFTail, AFFlight: m.AFFlight}
 		if m.Route != "" {
 			json.Unmarshal([]byte(m.Route), &j.Route)
+		}
+		if m.WxDir != nil || m.WxKt != nil || m.WxTemp != nil {
+			j.Wx = &wxJSON{DirDeg: m.WxDir, Kt: m.WxKt, TempC: m.WxTemp}
+		}
+		j.GS, j.Trk = m.GS, m.Trk
+		for _, w := range res.Resolve(m) {
+			wj := waypointJSON{Name: w.Name, Role: w.Role, Lat: w.Lat, Lon: w.Lon, Exact: w.Exact, Source: w.Source, How: w.How, AltFt: w.AltFt}
+			if !w.T.IsZero() {
+				t := w.T
+				wj.T = &t
+			}
+			j.Waypoints = append(j.Waypoints, wj)
 		}
 		out = append(out, j)
 	}

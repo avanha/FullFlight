@@ -15,6 +15,7 @@ import (
 	"github.com/avanha/fullflight/internal/decoder"
 	"github.com/avanha/fullflight/internal/geo"
 	"github.com/avanha/fullflight/internal/store"
+	"github.com/avanha/fullflight/internal/waypoints"
 )
 
 // FixWindow is how far from a message position we look for another fix to
@@ -190,6 +191,9 @@ func Redecode(st *store.Store) (changed int, err error) {
 			return changed, err
 		}
 		changed += n
+		if _, err := waypoints.Learn(st, h, time.Time{}); err != nil {
+			return changed, err
+		}
 	}
 	return changed, nil
 }
