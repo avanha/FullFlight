@@ -57,8 +57,11 @@ positions are placed in time from their embedded timestamps, drawn on the map
 in orange, and marked suspect only when they are impossible (over 700 kt) against every one of
 the two nearest fixes on each side, so a coherent run of fixes is never
 condemned by a conflicting one and the result does not depend on fetch order.
-FMS position reports carry no usable embedded time and are placed at their
-receipt time, which is only as good as the receiving station's clock. The newest ADS-C predicted route is drawn dashed.
+FMS position reports are placed at their receipt time, which is the time
+airframes.io stored them (its `timestamp` equals its `createdAt`; it is not read
+from the receiving station's clock). Their embedded waypoint time agrees with
+that for some stations and is hours off for others, for reasons not yet
+understood, so FMS positions can be misplaced in time. The newest ADS-C predicted route is drawn dashed.
 
 `GET /api/messages/{hex}?hours=48&limit=300` returns them, oldest first. Airline-
 specific engine/performance data (label H1 and others) has no public format; it
