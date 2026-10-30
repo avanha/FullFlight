@@ -242,3 +242,39 @@ func cpdlcMsg(st *store.Store, id int64) store.Message {
 	}
 	return store.Message{}
 }
+
+// Near the date line longitudes jump from 180 to -180; nothing here may treat that as a 360 degree leap.
+func TestAcrossTheDateLine(t *testing.T) {
+	// Advance 60 nm east from 179.5E on the equator lands at 179.5 + 1 = 180.5, i.e. 179.5W.
+	_, lon := Advance(0, 179.5, 90, 60)
+	near(t, "advance east across 180", lon, -179.5, 1e-6)
+	_, lon = Advance(0, -179.5, 270, 60)
+	near(t, "advance west across -180", lon, 179.5, 1e-6)
+	// Bearings and the ahead/behind decision across it.
+	near(t, "bearing east across 180", bearing(0, 179.5, 0, -179.5), 90, 0.01)
+	near(t, "bearing west across 180", bearing(0, -179.5, 0, 179.5), 270, 0.01)
+
+	// A fix passed at 12:00, half way between ADS-B points at 179.0E and 179.0W (2 degrees apart)
+	// must be interpolated to the date line, not to 0 on the far side of the world.
+	st := open(t)
+	base := time.Date(2026, 10, 30, 11, 50, 0, 0, time.UTC)
+	st.AddPosition(store.Position{Hex: hex, T: base, Lat: 10, Lon: 179.0, Source: "x"})
+	st.AddPosition(store.Position{Hex: hex, T: base.Add(20 * time.Minute), Lat: 10, Lon: -179.0, Source: "x"})
+	lat, lon0 := 10.0, -179.0
+	pt := base.Add(20 * time.Minute)
+	fl, _ := json.Marshal(store.FixList{GS: fp(500), Trk: fp(90), List: []store.FixEntry{{Name: "DLINE", Role: "passed", T: base.Add(10 * time.Minute).Unix()}}})
+	m := store.Message{ID: 1, Hex: hex, T: pt, Label: "BA", Text: "x", Kind: "cpdlc", Lat: &lat, Lon: &lon0, PosT: &pt, Fixes: string(fl)}
+	ws := (&Resolver{Store: st}).Resolve(m)
+	d := find(ws, "DLINE")
+	if d == nil || math.Abs(geo.NormLon(d.Lon)) < 179.9 {
+		t.Fatalf("interpolated across the date line to %+v", d)
+	}
+	near(t, "distance to the date line", math.Abs(geo.DLon(d.Lon, 180)), 0, 0.01)
+
+	// A next fix projected eastward across the date line comes out as a valid longitude.
+	m2 := cpdlc(t, st, 2, 10, 179.5, store.FixEntry{Name: "NXT", Role: "next", T: t0.Add(7 * time.Minute).Unix()})
+	nx := find((&Resolver{Store: st}).Resolve(m2), "NXT")
+	if nx == nil || nx.Lon < -180 || nx.Lon > 180 {
+		t.Errorf("projected fix longitude %+v", nx)
+	}
+}

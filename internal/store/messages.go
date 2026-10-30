@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/avanha/fullflight/internal/geo"
 )
 
 // DupWindow is how close in time two receptions of the same text must be to
@@ -371,7 +373,7 @@ next:
 			continue
 		}
 		for i := range out {
-			if math.Abs(out[i].Lat-la) < 0.25 && math.Abs(out[i].Lon-lo) < 0.25 {
+			if math.Abs(out[i].Lat-la) < 0.25 && math.Abs(geo.DLon(out[i].Lon, lo)) < 0.25 {
 				out[i].N++
 				continue next
 			}

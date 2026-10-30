@@ -109,6 +109,34 @@ complete answer (a position under 20 s old and a callsign) stops the search, so 
 source costs nothing while the first has the aircraft. A source that errors is skipped while
 another answers.
 
+## Waypoints named in CPDLC reports
+
+A CPDLC position report names the fix just passed, the next fix (with its ETA) and the one after,
+but not where they are. Each name gets coordinates from the most trustworthy source that has them:
+
+1. **Learned from the aircraft's own ADS-C** (exact): an ADS-C report lists its next waypoint with
+   coordinates and an ETA; a CPDLC fix whose time matches that ETA to within 90 s is that waypoint.
+2. **The navigation database** (exact), if it fits the flight: not behind the aircraft, no nearer than
+   the next fix, within 60 nm of our own estimate. `scripts/fetch-navdata.sh` downloads FlightGear's
+   X-Plane-format `fix.dat.gz`/`nav.dat.gz` into `data/navdata/`. It is GPL data from **2013**, so it
+   misses newer waypoints (about half of the names seen on Cathay's Pacific routes) and some names have
+   been reused (KADAB is 44 nm behind B-LRD in it); it is kept out of git and the app works without it.
+3. **An estimate** (dashed): a passed fix interpolated along the aircraft's own track at the reported
+   time; the next fix projected from the report's position, speed and track by its ETA. The fix after
+   next has no time, so without 1 or 2 it is not placed.
+
+Solid diamonds are exact, dashed ones estimates; hover for how each was placed. Clicking one selects
+the report that named it. Position-report tooltips also show wind (from, true), temperature, speed and track.
+
+## Projection
+
+An estimated position now (a grey ghost plane) and a dotted look-ahead, dead-reckoned from the newest
+trustworthy fix along its track at its ground speed (or the speed and track worked out from the last
+two fixes). Limits: never from a fix over an hour old, never more than 90 minutes beyond the fix, not
+for an aircraft on the ground or outside 100-700 kt, and it stops at a known destination (the one you
+set, else a recent REP081 one) rather than flying past it. The look-ahead past now (off, 15, 30 or 60 min)
+is the selector under the watch list. It does not know about turns or weather deviations.
+
 ## Web page
 
 Choosing a watch centres the map (zoom 7) on that aircraft's newest trustworthy
@@ -116,12 +144,15 @@ fix, from ADS-B or a datalink message, whichever is later. Each position source 
 and colour (ADS-B blue, ADS-C orange, CPDLC purple, REP081 teal, FMS green) with a
 legend to switch them on and off. A track is broken, not bridged, across a long
 silence (ADS-B 20 min, ADS-C 90, CPDLC 150, REP081 90, FMS 60) or an impossible
-jump (over 700 kt), and positions flagged impossible are left out. Click a message that
+jump (over 700 kt), and positions flagged impossible are left out. Click a dot on the map and its message is selected in the list (and scrolled to); click a message that
 has a position (orange bar on its left) to ring it on the map and show its popup
 (only one popup is ever open); the map pans only if it is out of view. Position messages are listed at the time the report carries, with a dotted underline, and the list is ordered by the time shown; hover for both times and the gap between them (one station logs about 3 minutes before the time inside its messages). Other messages show when they arrived. Hover any message time for its age.
 The aircraft is drawn as a plane turned to its track; hovering it shows altitude,
 climb/descent trend, ground speed and track. `make uitest` (needs node) drives the
 page script against a fake DOM.
+
+Everything drawn shares one longitude frame, anchored at the chosen aircraft's newest fix, so a
+track crossing the date line continues from 179 to 181 instead of drawing a line round the world.
 
 ## Status
 

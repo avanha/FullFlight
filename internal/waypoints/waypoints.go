@@ -185,7 +185,7 @@ func (r *Resolver) estimate(m store.Message, fl store.FixList, e store.FixEntry,
 		if span := after.T.Sub(before.T); span > 0 {
 			k = float64(t.Sub(before.T)) / float64(span)
 		}
-		return &[2]float64{before.Lat + k*(after.Lat-before.Lat), before.Lon + k*(after.Lon-before.Lon)}, "estimated: the aircraft's track at the time it reported passing it", "interpolated"
+		return &[2]float64{before.Lat + k*(after.Lat-before.Lat), geo.NormLon(before.Lon + k*geo.DLon(before.Lon, after.Lon))}, "estimated: the aircraft's track at the time it reported passing it", "interpolated"
 	case "next":
 		if fl.GS == nil || fl.Trk == nil || !t.After(*m.PosT) {
 			return nil, "", ""
@@ -206,12 +206,12 @@ func Advance(lat, lon, trackDeg, distNM float64) (float64, float64) {
 	r := trackDeg * math.Pi / 180
 	nlat := lat + distNM*math.Cos(r)/60
 	nlon := lon + distNM*math.Sin(r)/(60*math.Cos((lat+nlat)/2*math.Pi/180))
-	return nlat, nlon
+	return nlat, geo.NormLon(nlon)
 }
 
 func bearing(lat1, lon1, lat2, lon2 float64) float64 {
 	dy := lat2 - lat1
-	dx := (lon2 - lon1) * math.Cos((lat1+lat2)/2*math.Pi/180)
+	dx := geo.DLon(lon1, lon2) * math.Cos((lat1+lat2)/2*math.Pi/180)
 	return math.Mod(math.Atan2(dx, dy)*180/math.Pi+360, 360)
 }
 

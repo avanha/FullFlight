@@ -84,6 +84,8 @@ type watchJSON struct {
 	Date     string      `json:"date,omitempty"`
 	Dest     string      `json:"dest,omitempty"` // ICAO code
 	DestName string      `json:"dest_name,omitempty"`
+	DestLat  *float64    `json:"dest_lat,omitempty"` // for stopping a projection at the destination
+	DestLon  *float64    `json:"dest_lon,omitempty"`
 	Start    time.Time   `json:"start"`
 	End      time.Time   `json:"end"`
 	Status   string      `json:"status"`
@@ -154,6 +156,8 @@ type routeJSON struct {
 	To       string    `json:"to"`
 	FromName string    `json:"from_name,omitempty"`
 	ToName   string    `json:"to_name,omitempty"`
+	ToLat    *float64  `json:"to_lat,omitempty"`
+	ToLon    *float64  `json:"to_lon,omitempty"`
 	T        time.Time `json:"t"`
 	Stale    bool      `json:"stale,omitempty"` // older than InfoFreshFor: may be out of date
 	Source   string    `json:"source"`
@@ -173,7 +177,8 @@ func (s *Server) route(hex string) *routeJSON {
 		out.FromName = a.Name
 	}
 	if a, ok := airports.Lookup(r.To); ok {
-		out.ToName = a.Name
+		lat, lon := a.Lat, a.Lon
+		out.ToName, out.ToLat, out.ToLon = a.Name, &lat, &lon
 	}
 	return out
 }
@@ -207,7 +212,8 @@ func toJSON(e watchlist.Entry) watchJSON {
 	w := watchJSON{ID: e.ID, Kind: string(e.Kind), Ident: e.Ident, Date: e.Date, Dest: e.Dest, Start: e.Start, End: e.End,
 		Status: string(e.Status), Hex: e.Hex, Tail: e.Tail, Callsign: e.Callsign}
 	if a, ok := airports.Lookup(e.Dest); ok {
-		w.DestName = a.Name
+		lat, lon := a.Lat, a.Lon
+		w.DestName, w.DestLat, w.DestLon = a.Name, &lat, &lon
 	}
 	return w
 }

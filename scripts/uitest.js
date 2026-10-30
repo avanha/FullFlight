@@ -12,6 +12,7 @@ class El {
   append(...n) { this.children.push(...n); }
   replaceChildren(...n) { this.children = n; }
   remove() { this.removed = true; }
+  scrollIntoView(o) { this.scrolled = o || true; }
   select() { this.selectedAll = true; }
   querySelector(sel) { return this._q ||= {}, this._q[sel] ||= new El('q'); }
   set innerHTML(v) { this._html = v; this.children = []; }
@@ -27,9 +28,10 @@ const document = {
   createTextNode: t => ({text: t}),
 };
 // --- a recording Leaflet ---
-const calls = { exec: [], copied: [], timers: [], lines: [], legend: null, addLayer: 0, fitBounds: 0, setView: [], panTo: [], markers: [], circles: [], polylines: 0, tooltipsOpened: 0, highlightAdds: [] };
+const calls = { legendExtra: null, exec: [], copied: [], timers: [], lines: [], legend: null, addLayer: 0, fitBounds: 0, setView: [], panTo: [], markers: [], circles: [], polylines: 0, tooltipsOpened: 0, highlightAdds: [] };
 const allLayers = [];
-class Layer { constructor(){ this.items = []; this.open = false; allLayers.push(this); } addTo(t) { this.target = t; this.onMap = (t === mapObj); t.items && t.items.push(this); if (t === highlightGroup) calls.highlightAdds.push(this); return this; }
+class Layer { on(ev, fn) { (this.handlers ||= {})[ev] = fn; return this; }
+  constructor(){ this.items = []; this.open = false; allLayers.push(this); } addTo(t) { this.target = t; this.onMap = (t === mapObj); t.items && t.items.push(this); if (t === highlightGroup) calls.highlightAdds.push(this); return this; }
   bindTooltip(c) { this.tooltip = c; return this; } openTooltip() { calls.tooltipsOpened++; this.open = true; return this; } closeTooltip() { this.open = false; return this; } getBounds() { return {}; } }
 let highlightGroup;
 const groups = [];
@@ -40,7 +42,7 @@ const L = {
   map: () => mapObj, tileLayer: () => ({ addTo() {} }),
   layerGroup() { const g = new Layer(); g.clearLayers = () => { g.items = []; }; groups.push(g); return g; },
   polyline(ll, o) { calls.polylines++; const l = new Layer(); l.ll = ll; l.o = o; calls.lines.push(l); return l; },
-  control: { layers: (base, overlays) => ({ addTo() { calls.legend = overlays; return this; } }) },
+  control: { layers: (base, overlays) => ({ addTo() { if (!calls.legend) calls.legend = overlays; else calls.legendExtra = overlays; return this; } }) },
   circleMarker(ll, o) { const l = new Layer(); l.ll = ll; l.o = o; calls.circles.push(l); return l; },
   marker(ll, o) { const l = new Layer(); l.ll = ll; l.o = o; calls.markers.push(l); return l; },
   divIcon: o => o, featureGroup: () => ({ getBounds: () => ({}) }),
@@ -71,7 +73,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {projection, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -97,7 +99,7 @@ highlightGroup = null;
   assert.strictEqual(calls.fitBounds, 0, 'no longer fits the whole history');
   const openTips = () => allLayers.filter(l => l.open);
   const lines = el => el.children.map(c => c.textContent);
-  assert.deepEqual(lines(plane.tooltip), ['CPA843 \u00b7 A359', '35,025 ft  \u2193 descending 1,800 ft/min', '480 kt \u00b7 track 135\u00b0', '2026-10-30 16:01Z (adsb.lol)'], 'plane hover text');
+  assert.deepEqual(lines(plane.tooltip), ['B-LRM \u00b7 CPA843 \u00b7 A359', '35,025 ft  \u2193 descending 1,800 ft/min', '480 kt \u00b7 track 135\u00b0', '2026-10-30 16:01Z (adsb.lol)'], 'plane hover text');
 
   // 3. the undecoded message is hidden; the rest are listed newest first
   const box = byId['#msgs'];
@@ -222,6 +224,7 @@ highlightGroup = null;
   const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
   // the legend lists all five sources
   assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS']);
+  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Waypoints|Projection', 'waypoints and projection have legend entries');
   // each source gets its own colour and style
   for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {
     const r = await lineOf([], [at2(0, 41, -105, kind), at2(10, 41.1, -104, kind), at2(20, 41.2, -103, kind)]);
@@ -379,6 +382,206 @@ highlightGroup = null;
   timeOf(13).onmouseenter();
   assert.ok(timeOf(13).title.includes('arrived 18:40:00Z') && !timeOf(13).title.includes('report is'), 'a 20 s difference is not worth a note');
   await t.showTrack(t.watches()[0], false);   // back to the real data
+
+
+  // ===== 8i. the date line: one frame for every layer, no line round the world ======================
+  const draw = async (ptsArr, msgsArr, focus, extra = {}) => {
+    const sp = pts.slice(), sm = msgs.slice(), saved = {};
+    for (const k of Object.keys(extra)) { saved[k] = watch[k]; watch[k] = extra[k]; }
+    pts.splice(0, pts.length, ...ptsArr); msgs.splice(0, msgs.length, ...msgsArr);
+    calls.lines.length = 0; calls.markers.length = 0; calls.circles.length = 0;
+    const views = calls.setView.length;
+    await t.showTrack(t.watches()[0], focus);
+    const out = {lines: calls.lines.slice(), markers: calls.markers.slice(), circles: calls.circles.slice(), view: calls.setView.length > views ? calls.setView.at(-1) : null};
+    pts.splice(0, pts.length, ...sp); msgs.splice(0, msgs.length, ...sm);
+    for (const k of Object.keys(extra)) { if (saved[k] === undefined) delete watch[k]; else watch[k] = saved[k]; }
+    return out;
+  };
+  const apt = (mm, lon, extra = {}) => ({t: `2026-10-30T16:${String(mm).padStart(2, '0')}:00Z`, lat: 10, lon, alt_ft: 35000, gs: 480, track: 90, source: 'adsb.lol', ...extra});
+  const lons = line => line.ll.map(p => p[1]);
+  const steps = a => a.slice(1).map((x, i) => Math.abs(x - a[i]));
+  const adsbLines = r => r.lines.filter(l => l.o.color === COLORS.adsb);
+
+  // eastbound across 180: 179.0, 179.6, -179.8, -179.2 become one continuous line in the frame anchored at the newest fix
+  r = await draw([apt(0, 179.0), apt(8, 179.6), apt(16, -179.8), apt(24, -179.2)], [], true);
+  assert.strictEqual(adsbLines(r).length, 1, 'one ADS-B line, not two');
+  assert.strictEqual(JSON.stringify(lons(adsbLines(r)[0]).map(x => +x.toFixed(1))), '[-181,-180.4,-179.8,-179.2]');
+  assert.ok(Math.max(...steps(lons(adsbLines(r)[0]))) < 1, 'no step anywhere near 360');
+  assert.strictEqual(t.lonRef, -179.2);
+  assert.strictEqual(JSON.stringify(r.view), '[[10,-179.2],7]', 'centred in the same frame');
+  assert.strictEqual(+r.markers.find(m => m.o.icon && m.o.icon.className === 'plane').ll[1].toFixed(1), -179.2, 'the plane too');
+  // a datalink dot at 179.7 (before the date line) is drawn at -180.3, beside the line, not 360 degrees away
+  r = await draw([apt(0, 179.0), apt(24, -179.2)], [{id: 30, t: '2026-10-30T16:10:00Z', pos_t: '2026-10-30T16:10:00Z', kind: 'adsc', summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat: 10, lon: 179.7}], true);
+  assert.strictEqual(+r.circles.find(c => c.o.radius === 4).ll[1].toFixed(1), -180.3);
+
+  // westbound: -179.0, -179.6, 179.8, 179.2 -> 181.0, 180.4, 179.8, 179.2
+  r = await draw([apt(0, -179.0, {track: 270}), apt(8, -179.6, {track: 270}), apt(16, 179.8, {track: 270}), apt(24, 179.2, {track: 270})], [], true);
+  assert.strictEqual(JSON.stringify(lons(adsbLines(r)[0]).map(x => +x.toFixed(1))), '[181,180.4,179.8,179.2]');
+  assert.strictEqual(t.lonRef, 179.2);
+  // the frame does not jump when the aircraft carries on past 180 and the page refreshes: the new point continues at 180.4
+  r = await draw([apt(0, -179.0, {track: 270}), apt(8, -179.6, {track: 270}), apt(16, 179.8, {track: 270}), apt(24, 179.2, {track: 270}), apt(32, -179.6, {track: 270})], [], false);
+  assert.strictEqual(JSON.stringify(lons(adsbLines(r)[0]).map(x => +x.toFixed(1))), '[181,180.4,179.8,179.2,180.4]');
+  assert.strictEqual(t.lonRef, 179.2, 'a refresh keeps the frame');
+  // far side of the world from the frame: a track of 179.5 -> -179.5 is cut, never drawn right round the globe
+  r = await draw([apt(0, 179.5), apt(8, -179.5)], [{id: 31, t: '2026-10-30T17:00:00Z', pos_t: '2026-10-30T17:00:00Z', kind: 'adsc', summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat: 10, lon: 0.0}], true);
+  assert.strictEqual(t.lonRef, 0);
+  assert.strictEqual(adsbLines(r).length, 0, 'the 359 degree jump is not drawn');
+  assert.ok(r.lines.every(l => Math.max(0, ...steps(lons(l))) <= 180), 'no line spans more than half the globe');
+  // the highlight ring and the pan target use the same frame
+  r = await draw([apt(0, 179.0), apt(24, -179.2)], [{id: 32, t: '2026-10-30T16:10:00Z', pos_t: '2026-10-30T16:10:00Z', kind: 'adsc', summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat: 10, lon: 179.7}], true);
+  await t.showTrack(t.watches()[0], false);
+  t.renderMessages([{id: 32, t: '2026-10-30T16:10:00Z', pos_t: '2026-10-30T16:10:00Z', kind: 'adsc', summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat: 10, lon: 179.7}]);
+  calls.circles.length = 0; calls.panTo.length = 0;
+  t.rows.get(32).onclick();
+  assert.strictEqual(+calls.circles.at(-1).ll[1].toFixed(1), -180.3, 'ring in the frame');
+
+  // ===== 8j. clicking a point on the map selects its message in the list =============================
+  await t.showTrack(t.watches()[0], true);                      // back to the standard data
+  t.renderMessages(msgs); 
+  await t.showTrack(t.watches()[0], false);
+  const dot = t.markers.get(1);
+  assert.ok(dot && dot.handlers && dot.handlers.click, 'message dots are clickable');
+  t.rows.get(1).scrolled = null; t.rows.get(1)._cls.delete('sel');
+  dot.handlers.click();
+  assert.strictEqual(t.selectedMsg2, 1);
+  assert.ok(t.rows.get(1)._cls.has('sel'), 'its row is highlighted');
+  assert.ok(t.rows.get(1).scrolled, 'and scrolled into view');
+  assert.ok(highlightGroup.items.length === 1, 'the ring is drawn');
+  // clicking another dot moves the selection and leaves a single popup
+  t.markers.get(3).handlers.click();
+  assert.ok(t.rows.get(3)._cls.has('sel') && !t.rows.get(1)._cls.has('sel'));
+  assert.strictEqual(allLayers.filter(l => l.open).length, 1, 'one popup after clicking around the map');
+
+  // ===== 8k. the tracked aircraft is named by its registration first =================================
+  const lastPlaneTip = async (ptsArr, extra) => (lines((await draw(ptsArr, [], false, extra)).markers.filter(m => m.o.icon && m.o.icon.className === 'plane').at(-1).tooltip))[0];
+  assert.strictEqual(await lastPlaneTip([apt(0, 100)], {tail: 'B-LRD'}), 'B-LRD · A359', 'tail first, then type (this point has no callsign)'.replace(' · A359', '') === '' ? '' : 'B-LRD · A359');
+  assert.strictEqual(await lastPlaneTip([apt(0, 100, {callsign: 'CPA113'})], {tail: 'B-LRD'}), 'B-LRD · CPA113 · A359');
+  assert.strictEqual(await lastPlaneTip([apt(0, 100, {callsign: 'CPA113'})], {tail: undefined, type: undefined}), 'CPA113', 'no tail: the callsign');
+  assert.strictEqual(await lastPlaneTip([apt(0, 100)], {tail: undefined, callsign: undefined, type: undefined}), '780AB8', 'only then the hex');
+
+  // ===== 8l. weather and motion in a position's tooltip ==========================================
+  const wxmsg = {id: 40, t: '2026-10-30T16:10:00Z', pos_t: '2026-10-30T16:10:00Z', kind: 'cpdlc', summary: 'CPDLC position report', raw: 'r', label: 'BA', rx_count: 1,
+    lat: 10, lon: 100, wx: {dir: 70, kt: 50, temp_c: -45}, gs: 520, trk: 184};
+  r = await draw([], [wxmsg], false);
+  let dotTip = lines(r.circles.find(c => c.o.radius === 4).tooltip);
+  assert.ok(dotTip.includes('wind 070°/50 kt · -45°C'), 'wind (3 digits) and temperature: ' + dotTip);
+  assert.ok(dotTip.includes('520 kt · track 184°'), 'speed and track: ' + dotTip);
+  r = await draw([], [{...wxmsg, wx: {kt: 12.4}, gs: null, trk: null}], false);
+  dotTip = lines(r.circles.find(c => c.o.radius === 4).tooltip);
+  assert.ok(dotTip.includes('wind 12 kt') && !dotTip.some(l => /track|°C/.test(l)), 'only what is known: ' + dotTip);
+  r = await draw([], [{...wxmsg, wx: undefined, gs: undefined, trk: undefined}], false);
+  assert.strictEqual(lines(r.circles.find(c => c.o.radius === 4).tooltip).length, 2, 'summary and time only when there is nothing else');
+
+  // ===== 8m. waypoints named in CPDLC reports ====================================================
+  const wp = (name, exact, role = 'next', extra = {}) => ({name, role, lat: 5 + name.length, lon: 120, exact, source: exact ? 'database' : 'projected', how: exact ? 'from the navigation database (cycle 2013.10)' : 'estimated: 61 nm ahead on track 122° at 520 kt, by its ETA', t: '2026-10-30T18:55:00Z', ...extra});
+  const cm = (id, hh, wps, extra = {}) => ({id, t: `2026-10-30T${hh}:00Z`, pos_t: `2026-10-30T${hh}:00Z`, kind: 'cpdlc', summary: 's', raw: 'r', label: 'BA', rx_count: 1, lat: 6, lon: 119, waypoints: wps, ...extra});
+  r = await draw([], [
+      cm(50, '17:00', [wp('EXACTX', true), wp('NEWEST', false, 'next', {lat: 1})]),   // older report
+      cm(51, '18:00', [wp('EXACTX', false, 'next', {lat: 2}), wp('NEWEST', false, 'next', {lat: 3})]),   // newer: an estimate of EXACTX, a newer estimate of NEWEST
+      cm(52, '19:00', [wp('BAD', false)], {suspect: 'x'}),                              // a suspect report's waypoints are ignored
+    ], false);
+  const wpts = r.markers.filter(m => m.o.icon && /wpt-wrap/.test(m.o.icon.className));
+  assert.strictEqual(wpts.length, 2, 'one marker per name, none from the suspect report: ' + wpts.length);
+  const byName = n => wpts.find(m => lines(m.tooltip)[0].startsWith(n));
+  assert.strictEqual(byName('EXACTX').ll[0], 5 + 6, 'an exact position beats a newer estimate');   // lat 5+len('EXACTX')
+  assert.ok(/class="wpt"/.test(byName('EXACTX').o.icon.html) && /class="wpt est"/.test(byName('NEWEST').o.icon.html), 'exact is solid, an estimate dashed');
+  assert.strictEqual(byName('NEWEST').ll[0], 3, 'of two estimates, the newest report');
+  assert.strictEqual(JSON.stringify(lines(byName('NEWEST').tooltip).slice(0, 2)), JSON.stringify(['NEWEST — next fix, ETA 18:55:00Z', '⚠ estimated: 61 nm ahead on track 122° at 520 kt, by its ETA']));
+  assert.ok(lines(byName('EXACTX').tooltip)[1].startsWith('from the navigation database'));
+  assert.strictEqual(lines(byName('EXACTX').tooltip)[0], 'EXACTX — next fix, ETA 18:55:00Z');
+  const passed = (await draw([], [cm(53, '18:00', [wp('PASSEDX', true, 'passed', {alt_ft: 34300})])], false)).markers.find(m => m.o.icon && /wpt-wrap/.test(m.o.icon.className));
+  assert.ok(lines(passed.tooltip)[0].includes('passed 18:55:00Z at 34,300 ft'), lines(passed.tooltip)[0]);
+  // clicking a waypoint selects the report that named it
+  t.renderMessages([cm(54, '18:00', [wp('CLICKME', true)])]);
+  const cl = (await draw([], [cm(54, '18:00', [wp('CLICKME', true)])], false)).markers.find(m => m.o.icon && /wpt-wrap/.test(m.o.icon.className));
+  cl.handlers.click();
+  assert.strictEqual(t.selectedMsg2, 54);
+  assert.strictEqual((await draw([], [cm(55, '18:00', [])], false)).markers.filter(m => m.o.icon && /wpt-wrap/.test(m.o.icon.className)).length, 0, 'none when no waypoints');
+
+  // ===== 8n. projection: where it probably is now, with limits ========================================
+  const NOW = Date.UTC(2026, 9, 30, 19, 0, 0);
+  const iso = minAgo => new Date(NOW - minAgo * 60000).toISOString();
+  const ap = (minAgo, lat, lon, extra = {}) => ({t: iso(minAgo), lat, lon, alt_ft: 36000, gs: 480, track: 90, source: 'adsb.lol', ...extra});
+  const W = {id: 1, hex: 'ABCDEF'};
+  const km = (a, b) => Math.hypot((b[1] - a[1]) * 60 * Math.cos(a[0] * Math.PI / 180), (b[0] - a[0]) * 60);   // nm, equator-ish
+  let pr = t.projection(W, [ap(10, 0, 0)], [], NOW, 30);
+  assert.ok(pr, 'a 10 minute old fix with speed and track projects');
+  assert.ok(Math.abs(km([0, 0], pr.now) - 80) < 0.5, 'now: 10 min at 480 kt = 80 nm, got ' + km([0, 0], pr.now));
+  assert.ok(Math.abs(km([0, 0], pr.end) - 320) < 0.5, 'end: 40 min after the fix = 320 nm');
+  assert.strictEqual(pr.ticks.map(x => x.min).join(), '10,20,30', 'a tick every 10 minutes ahead of now');
+  assert.ok(Math.abs(pr.end[1] - 320 / 60) < 0.01 && Math.abs(pr.end[0]) < 0.01, 'due east along the equator');
+  assert.strictEqual(pr.capped, false);
+  assert.ok(/480 kt on track 90/.test(pr.basis));
+  // the limits
+  assert.strictEqual(t.projection(W, [ap(61, 0, 0)], [], NOW, 30), null, 'no projection from a fix over an hour old');
+  assert.ok(t.projection(W, [ap(59, 0, 0)], [], NOW, 30), 'but 59 minutes is fine');
+  assert.strictEqual(t.projection(W, [ap(10, 0, 0)], [], NOW, 0), null, 'off');
+  assert.strictEqual(t.projection(W, [ap(10, 0, 0, {on_ground: true, gs: 0})], [], NOW, 30), null, 'not for an aircraft on the ground');
+  assert.strictEqual(t.projection(W, [ap(10, 0, 0, {gs: 60})], [], NOW, 30), null, 'nor one too slow to be flying');
+  assert.strictEqual(t.projection(W, [ap(10, 0, 0, {gs: 900})], [], NOW, 30), null, 'nor an impossible speed');
+  pr = t.projection(W, [ap(55, 0, 0)], [], NOW, 60);
+  assert.ok(pr.capped && Math.abs(pr.endMin - 35) < 1e-9, 'never more than 90 minutes beyond the fix: 55 old + 60 ahead is cut to 35 ahead, got ' + pr.endMin);
+  assert.ok(Math.abs(km([0, 0], pr.end) - 720) < 0.5, '90 minutes at 480 kt');
+  // the selector's value is the default
+  assert.ok(t.projection(W, [ap(10, 0, 0)], [], NOW), 'uses the selected look-ahead by default');
+  // the newest TRUSTWORTHY fix is the basis: a later suspect or time-unverified datalink position is ignored
+  const dl = (minAgo, lat, lon, extra = {}) => ({id: 200 + minAgo, t: iso(minAgo), pos_t: iso(minAgo), kind: 'adsc', summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, gs: 480, trk: 90, ...extra});
+  pr = t.projection(W, [ap(20, 0, 0)], [dl(5, 40, 40, {suspect: 'x'}), dl(4, 41, 41, {time_unverified: true})], NOW, 30);
+  assert.strictEqual(pr.fix.lat, 0, 'ignored the bad fixes and projected from the ADS-B one');
+  pr = t.projection(W, [ap(20, 0, 0)], [dl(5, 0, 1.0)], NOW, 30);
+  assert.strictEqual(pr.fix.lon, 1.0, 'a newer datalink fix is the basis, with its own speed and track');
+  assert.strictEqual(pr.fix.src, 'ADS-C');
+  // no speed or track with the fix: worked out from the move since the previous one
+  pr = t.projection(W, [ap(25, 0, 0, {gs: undefined, track: undefined}), ap(10, 0, 2.0, {gs: undefined, track: undefined})], [], NOW, 30);
+  assert.ok(pr && Math.abs(pr.gs - 480) < 1 && Math.abs(pr.trk - 90) < 0.5 && /from the move since the adsb\.lol fix 15 min earlier/.test(pr.basis), pr && pr.basis);
+  assert.strictEqual(t.projection(W, [ap(10, 0, 2.0, {gs: undefined, track: undefined})], [], NOW, 30), null, 'a lone fix with no speed or track gives nothing to go on');
+  // never past the destination: 100 nm ahead of the fix, and the projection would run 320 nm
+  pr = t.projection({...W, dest: 'KXXX', dest_lat: 0, dest_lon: 100 / 60}, [ap(10, 0, 0)], [], NOW, 30);
+  assert.strictEqual(pr.stop, 'KXXX');
+  assert.ok(Math.abs(km([0, 0], pr.end) - 100) < 0.5 && Math.abs(km([0, 0], pr.now) - 80) < 0.5, 'ends at the destination, now is still short of it');
+  assert.strictEqual(pr.ticks.length, 0, 'ticks beyond the destination (160, 240 and 320 nm out) are dropped, not piled on it');
+  pr = t.projection({...W, dest_lat: 0, dest_lon: 200 / 60}, [ap(10, 0, 0)], [], NOW, 30);
+  assert.strictEqual(JSON.stringify(pr.ticks.map(x => x.min)), '[10]', 'a destination 200 nm out keeps the +10 min tick (160 nm) and drops +20 (240 nm)');
+  assert.ok(Math.abs(km([0, 0], pr.end) - 200) < 0.5);
+  pr = t.projection({...W, dest_lat: 0, dest_lon: -2}, [ap(10, 0, 0)], [], NOW, 30);   // a destination BEHIND it is not a reason to stop
+  assert.strictEqual(pr.stop, null);
+  pr = t.projection({...W, route: {to: 'YSSY', to_lat: 0, to_lon: 100 / 60, stale: false}}, [ap(10, 0, 0)], [], NOW, 30);
+  assert.strictEqual(pr.stop, 'YSSY', 'a recently reported destination also stops it');
+  pr = t.projection({...W, route: {to: 'YSSY', to_lat: 0, to_lon: 100 / 60, stale: true}}, [ap(10, 0, 0)], [], NOW, 30);
+  assert.strictEqual(pr.stop, null, 'a stale one does not');
+  pr = t.projection({...W, dest: 'KUSR', dest_lat: 0, dest_lon: 500 / 60, route: {to: 'YSSY', to_lat: 0, to_lon: 100 / 60, stale: false}}, [ap(10, 0, 0)], [], NOW, 30);
+  assert.strictEqual(pr.stop, null, 'the destination you set wins over the reported one (500 nm away: not reached in 40 min)');
+  pr = t.projection({...W, dest: 'NZAA', dest_lat: 0, dest_lon: -179.0}, [ap(10, 0, 179.5)], [], NOW, 30);
+  assert.strictEqual(pr.stop, 'NZAA', 'a destination just across the date line is ahead, not on the far side of the world');
+  assert.ok(Math.abs(km([0, 179.5], [0, 181.0]) - 90) < 0.5);
+  // across the date line the estimate carries on in the same frame
+  assert.ok(t.advance(0, 179.5, 90, 60)[1] > 180, 'advance does not wrap: the page frames it');
+
+  // drawing: ghost plane at the estimated position, a dotted line, ticks, an end marker; limits on the selector
+  const drawn = async (ptsArr, ahead) => {
+    t.setAhead(ahead);
+    const sp = pts.slice(), sm = msgs.slice();
+    pts.splice(0, pts.length, ...ptsArr); msgs.splice(0, msgs.length);
+    calls.markers.length = 0; calls.lines.length = 0;
+    const realNow = Date.now; Date.now = () => NOW;
+    try { await t.showTrack(t.watches()[0], false); } finally { Date.now = realNow; }
+    pts.splice(0, pts.length, ...sp); msgs.splice(0, msgs.length, ...sm);
+    return t.projGroup.items;
+  };
+  let items = await drawn([ap(10, 0, 0), ap(20, 0, -1.3)], 30);
+  const ghost = items.find(i => i.o && i.o.icon && /opacity: 0.55/.test(i.o.icon.html));
+  assert.ok(ghost && Math.abs(ghost.ll[1] - 80 / 60) < 0.02, 'a ghost plane at the dead-reckoned position');
+  assert.ok(/#777/.test(ghost.o.icon.html), 'greyed so it cannot be taken for a real position');
+  assert.ok(items.some(i => i.o && i.o.dashArray === '2 6') && items.some(i => i.o && i.o.dashArray === '2 10'), 'a dotted line to now and a fainter one ahead');
+  assert.strictEqual(items.filter(i => i.o && i.o.radius === 3).length, 3, 'ticks');
+  assert.ok(lines(ghost.tooltip)[0].startsWith('Estimated position now (10 min since the last fix)'), lines(ghost.tooltip)[0]);
+  items = await drawn([ap(0.3, 0, 0)], 30);        // a fix 18 seconds old: the real plane is already there
+  assert.ok(!items.some(i => i.o && i.o.icon), 'no ghost on top of a fresh real position');
+  assert.ok(items.some(i => i.o && i.o.dashArray === '2 10'), 'but the look-ahead is still drawn');
+  assert.strictEqual((await drawn([ap(10, 0, 0)], 0)).length, 0, 'switched off: nothing drawn');
+  assert.strictEqual((await drawn([ap(90, 0, 0)], 30)).length, 0, 'too old: nothing drawn');
+  assert.strictEqual((await drawn([ap(10, 0, 0, {on_ground: true})], 30)).length, 0, 'on the ground: nothing drawn');
+  t.setAhead(30);
 
   // 9. a watch with no aircraft yet clears the map without error
   await t.showTrack({id: 9, hex: ''}, true);

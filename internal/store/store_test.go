@@ -316,3 +316,14 @@ func TestLastFlightAndCallsign(t *testing.T) {
 		t.Errorf("callsign = %q %v %v", cs, at, ok)
 	}
 }
+
+func TestLearnedFixesAcrossTheDateLine(t *testing.T) {
+	s := open(t)
+	s.AddFix("DLINE", 1, 5, 179.95, "adsc-eta")
+	s.AddFix("DLINE", 2, 5.01, -179.95, "adsc-eta") // 0.1 degree away across the date line: the same place
+	s.AddFix("DLINE", 3, 5, 120, "adsc-eta")        // a different one entirely
+	got := s.LearnedFixes("DLINE")
+	if len(got) != 2 || got[0].N != 2 {
+		t.Errorf("fixes = %+v, want the two near the date line counted as one", got)
+	}
+}
