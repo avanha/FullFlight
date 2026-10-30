@@ -86,8 +86,10 @@ L.control.layers(null, Object.fromEntries(Object.values(SOURCES).map(src =>
   {collapsed: false, position: 'bottomleft'}).addTo(map);
 const wptGroup = L.layerGroup().addTo(map);   // waypoints named in CPDLC position reports
 const projGroup = L.layerGroup().addTo(map);  // dead-reckoned position and look-ahead
+const predGroup = L.layerGroup().addTo(map);  // what the selected report predicted: its route and next waypoints
 L.control.layers(null, {
   '<span style="font-weight:bold">&#9671;</span> Waypoints': wptGroup,
+  '<span style="color:#e8590c;font-weight:bold">&#8211; &#8211;</span> Predictions': predGroup,
   '<span style="color:#666;font-weight:bold">&middot;&middot;&middot;</span> Projection': projGroup,
 }, {collapsed: false, position: 'bottomleft'}).addTo(map);
 // ---- longitude frame --------------------------------------------------------------------
@@ -430,9 +432,9 @@ const FOCUS_ZOOM = 7;   // regional: a few hundred miles across
 // better exists, so it cannot win just by claiming to be recent.
 function latestFix(pts, msgs) {
   const all = [
-    ...pts.map(p => ({lat: p.lat, lon: p.lon, t: new Date(p.t).getTime(), tier: 1, src: p.source})),
+    ...pts.map(p => ({lat: p.lat, lon: p.lon, t: new Date(p.t).getTime(), tier: 1, src: p.source, kind: 'adsb', ref: p})),
     ...msgs.filter(m => m.lat != null).map(m => ({lat: m.lat, lon: m.lon, t: new Date(m.pos_t || m.t).getTime(),
-      tier: m.suspect ? 3 : m.time_unverified ? 2 : 1, src: m.kind})),
+      tier: m.suspect ? 3 : m.time_unverified ? 2 : 1, src: m.kind, kind: 'msg', ref: m})),
   ];
   if (!all.length) return null;
   const best = Math.min(...all.map(f => f.tier));
@@ -440,7 +442,7 @@ function latestFix(pts, msgs) {
 }
 
 async function showTrack(w, focus) {
-  if (!w.hex) { layer.clearLayers(); wptGroup.clearLayers(); lastData = null; drawProjection(); markers.clear(); renderMessages([]); return; }
+  if (!w.hex) { layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); lastData = null; drawProjection(); markers.clear(); renderMessages([]); return; }
   const seq = ++showSeq;
   const [pts, msgs] = await Promise.all([api(`/api/track/${w.hex}?hours=96`), api(`/api/messages/${w.hex}?hours=96`)]);
   if (seq !== showSeq) return;
@@ -448,6 +450,7 @@ async function showTrack(w, focus) {
   layer.clearLayers();
   Object.values(SOURCES).forEach(src => src.group.clearLayers());
   wptGroup.clearLayers();
+  predGroup.clearLayers();
   markers.clear();
 
   // A track per source. Lines run through each source's positions in time order, skipping ones flagged impossible.
@@ -479,28 +482,18 @@ async function showTrack(w, focus) {
   for (const [kind, fixes] of Object.entries(byKind)) drawTrack(kind, fixes);
   drawWaypoints(msgs);
 
-  // Predicted route from the newest ADS-C report that has one.
-  const withRoute = msgs.filter(m => m.route && m.lat != null && !m.suspect).pop();
-  if (withRoute) {
-    const line = [ll(withRoute.lat, withRoute.lon), ...withRoute.route.map(p => ll(p.Lat, p.Lon))];
-    L.polyline(line, {color: SOURCES.adsc.color, weight: 2, dashArray: '6 6'}).addTo(SOURCES.adsc.group);
-    withRoute.route.forEach(p => L.circleMarker(ll(p.Lat, p.Lon), {radius: 3, color: SOURCES.adsc.color, fillColor: '#fff', fillOpacity: 1}).addTo(SOURCES.adsc.group)
-      .bindTooltip(tip('predicted waypoint', p.ETASec != null ? `ETA +${Math.round(p.ETASec / 60)} min from ${fmt(withRoute.pos_t || withRoute.t)}` : '')));
-  }
-
-  // The aircraft: a plane at its last ADS-B position, turned to its track. With no ADS-B
-  // (mid-ocean), the newest trustworthy message position, pointing north.
-  if (pts.length) {
-    const last = pts[pts.length - 1];
-    L.marker(ll(last.lat, last.lon), {icon: planeIcon(last.track), zIndexOffset: 1000}).addTo(layer)
+  // The aircraft: a plane at its newest trustworthy fix, from ADS-B or from a datalink report. (Not
+  // simply the last ADS-B point: that can be hours older than a report, e.g. once it is mid-ocean.)
+  // A plane standing on a report is that report: clicking it selects the message.
+  const cur = latestFix(pts, msgs);
+  if (cur && cur.kind === 'adsb') {
+    L.marker(ll(cur.lat, cur.lon), {icon: planeIcon(cur.ref.track), zIndexOffset: 1000}).addTo(layer)
       .bindTooltip(aircraftTip(w, pts));
-  } else {
-    const fix = latestFix([], msgs.filter(m => !m.suspect && !m.time_unverified));
-    const m = fix && msgs.find(x => x.lat === fix.lat && x.lon === fix.lon && new Date(x.pos_t || x.t).getTime() === fix.t);
-    if (fix && m) {
-      L.marker(ll(fix.lat, fix.lon), {icon: planeIcon(null), zIndexOffset: 1000}).addTo(layer)
-        .bindTooltip(tip(`${aircraftName(w, null, false)}: last reported position`, m.summary, fmt(m.pos_t || m.t)));
-    }
+  } else if (cur) {
+    const m = cur.ref;
+    L.marker(ll(m.lat, m.lon), {icon: planeIcon(m.trk), zIndexOffset: 1000}).addTo(layer)
+      .bindTooltip(tip(`${aircraftName(w, null, false)}: last report`, m.summary, fmt(m.pos_t || m.t), motionLine(m), wxLine(m), 'no newer ADS-B'))
+      .on('click', () => pickMessage(m.id));
   }
 
   lastData = {w, pts, msgs};
@@ -518,9 +511,55 @@ async function showTrack(w, focus) {
 // A position message is listed at the time the report itself carries, which can differ from when
 // airframes.io logged it (this station's messages arrive about 3 minutes before the time inside them).
 const reportTime = m => (m.lat != null && m.pos_t) ? m.pos_t : m.t;
+// An ADS-C report gives its predicted waypoints as coordinates; where we know their names, say so.
+function routeNames(m) {
+  const named = (m.route || []).filter(p => p.kind !== 'fixed' && p.name);
+  return named.length ? ' \u00b7 ' + named.map(p => (p.kind === 'next' ? 'next ' : 'then ') + p.name).join(', ') : '';
+}
 function dur(sec) {
   if (sec >= 3600) return `${Math.floor(sec / 3600)}h${String(Math.floor(sec % 3600 / 60)).padStart(2, '0')}m`;
   return `${Math.floor(sec / 60)}m${String(sec % 60).padStart(2, '0')}s`;
+}
+
+// ---- what a report predicted --------------------------------------------------------------
+// An ADS-C report lists the waypoints it expects to reach (with ETAs) and where the flight computer
+// expects to be after a fixed time; a CPDLC position report names the next fixes. Selecting such a
+// report draws them; selecting any other point replaces them. With nothing selected, the newest ADS-C
+// report's route is shown.
+const etaText = (m, secs) => secs == null ? '' : `ETA ${fmtTime(new Date(m.pos_t || m.t).getTime() + secs * 1000)} (+${Math.round(secs / 60)} min)`;
+function drawPredictions() {
+  predGroup.clearLayers();
+  // A selection that is no longer in the list (it scrolled out of the window, or another aircraft was chosen) is no selection.
+  const m = (selectedMsg != null && lastMsgs.find(x => x.id === selectedMsg))
+            || lastMsgs.filter(x => x.route && x.route.length && x.lat != null && !x.suspect).pop();
+  if (!m || m.lat == null) return;
+  const here = ll(m.lat, m.lon);
+  const route = (m.route || []).filter(p => p.kind !== 'fixed');
+  if (route.length) {
+    const c = SOURCES.adsc.color;
+    L.polyline([here, ...route.map(p => ll(p.lat, p.lon))], {color: c, weight: 2, dashArray: '6 6', interactive: false}).addTo(predGroup);
+    for (const p of route) {
+      L.circleMarker(ll(p.lat, p.lon), {radius: 5, color: c, weight: 2, fillColor: '#fff', fillOpacity: 1}).addTo(predGroup).bindTooltip(tip(
+        `${p.name ? p.name + ' \u2014 ' : ''}predicted ${p.kind === 'next' ? 'next waypoint' : 'waypoint after next'}`, etaText(m, p.eta_sec),
+        p.name ? (p.name_src === 'learned' ? 'name matched from CPDLC reports' : 'name from the 2013 navigation database') : 'the report gives coordinates only',
+        `predicted by the report of ${fmt(m.pos_t || m.t)}`));
+    }
+  }
+  const proj = (m.route || []).find(p => p.kind === 'fixed');
+  if (proj) {
+    L.circleMarker(ll(proj.lat, proj.lon), {radius: 5, color: SOURCES.adsc.color, weight: 2, fillColor: SOURCES.adsc.color, fillOpacity: .35}).addTo(predGroup).bindTooltip(tip(
+      `Where the flight computer expects it to be ${proj.eta_sec != null ? 'in ' + Math.round(proj.eta_sec / 60) + ' min' : 'later'}`, etaText(m, proj.eta_sec),
+      `predicted by the report of ${fmt(m.pos_t || m.t)}`));
+  }
+  const ahead = (m.waypoints || []).filter(w => w.role !== 'passed');
+  if (ahead.length) {
+    const c = SOURCES.cpdlc.color;
+    L.polyline([here, ...ahead.map(w => ll(w.lat, w.lon))], {color: c, weight: 2, dashArray: '6 6', interactive: false}).addTo(predGroup);
+    for (const w of ahead) {
+      L.circleMarker(ll(w.lat, w.lon), {radius: 9, color: c, weight: 2, fillOpacity: 0}).addTo(predGroup).bindTooltip(tip(
+        `${w.name} \u2014 ${(ROLE_TEXT[w.role] || (() => w.role))(w)}`, w.exact ? w.how : '\u26a0 ' + w.how, `named in the report of ${fmt(m.pos_t || m.t)}`));
+    }
+  }
 }
 
 let showUndecoded = false, lastMsgs = [], selectedMsg = null;
@@ -538,6 +577,7 @@ const rows = new Map();       // message id -> its row
 function applyHighlight(pan) {
   map.eachLayer(l => { if (l.closeTooltip) l.closeTooltip(); });   // no stray popups from earlier clicks
   highlight.clearLayers();
+  drawPredictions();                                               // the selected report's predictions, replacing the last one's
   rows.forEach((el, id) => el.classList.toggle('sel', id === selectedMsg));
   const m = lastMsgs.find(x => x.id === selectedMsg);
   if (!m || m.lat == null) return;
@@ -581,7 +621,7 @@ function renderMessages(msgs) {
     const k = document.createElement('span');
     k.className = 'kind';
     k.textContent = m.kind.replace('_', ' ');
-    d.append(t, k, document.createTextNode(m.summary));
+    d.append(t, k, document.createTextNode(m.summary + routeNames(m)));
     for (const [flag, why] of [['⚠', m.mismatch], ['?', m.suspect], ['⏱', m.time_unverified && m.time_note]]) {
       if (!why) continue;
       const w = document.createElement('span');

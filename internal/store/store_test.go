@@ -327,3 +327,20 @@ func TestLearnedFixesAcrossTheDateLine(t *testing.T) {
 		t.Errorf("fixes = %+v, want the two near the date line counted as one", got)
 	}
 }
+
+func TestFixNameAt(t *testing.T) {
+	s := open(t)
+	s.AddFix("SABNO", 1, 18.985, 115.845, "adsc-eta")
+	s.AddFix("SABNO", 2, 18.985, 115.845, "adsc-eta")
+	s.AddFix("OTHER", 3, 18.985, 115.846, "adsc-eta") // a different name at nearly the same spot, with less support
+	s.AddFix("DLINE", 4, 5, 179.999, "adsc-eta")
+	if n, ok := s.FixNameAt(18.985, 115.845, 0.005); !ok || n != "SABNO" {
+		t.Errorf("got %q %v, want the best supported name", n, ok)
+	}
+	if _, ok := s.FixNameAt(18.5, 115.845, 0.005); ok {
+		t.Error("found a name where there is none")
+	}
+	if n, ok := s.FixNameAt(5, -179.999, 0.005); !ok || n != "DLINE" {
+		t.Errorf("across the date line: %q %v", n, ok)
+	}
+}

@@ -61,7 +61,7 @@ const msgs = [
 ];
 global.fetch = async url => {
   const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : null;
-  return { status: 200, ok: true, json: async () => body };
+  return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(body)) };   // a fresh copy each time, like a real response
 };
 let intervals = [];
 const ctx = { document, L, fetch, console, Date, Number, Math, Set, Map, setInterval: (f, ms) => intervals.push([f, ms]), FormData: class {},
@@ -73,7 +73,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {projection, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {predGroup, projection, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -224,7 +224,7 @@ highlightGroup = null;
   const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
   // the legend lists all five sources
   assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS']);
-  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Waypoints|Projection', 'waypoints and projection have legend entries');
+  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Waypoints|Predictions|Projection', 'waypoints, predictions and projection have legend entries');
   // each source gets its own colour and style
   for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {
     const r = await lineOf([], [at2(0, 41, -105, kind), at2(10, 41.1, -104, kind), at2(20, 41.2, -103, kind)]);
@@ -389,12 +389,14 @@ highlightGroup = null;
     const sp = pts.slice(), sm = msgs.slice(), saved = {};
     for (const k of Object.keys(extra)) { saved[k] = watch[k]; watch[k] = extra[k]; }
     pts.splice(0, pts.length, ...ptsArr); msgs.splice(0, msgs.length, ...msgsArr);
+    if (Object.keys(extra).length) await t.refresh();     // the page sees a changed watch only after a refresh
     calls.lines.length = 0; calls.markers.length = 0; calls.circles.length = 0;
     const views = calls.setView.length;
     await t.showTrack(t.watches()[0], focus);
     const out = {lines: calls.lines.slice(), markers: calls.markers.slice(), circles: calls.circles.slice(), view: calls.setView.length > views ? calls.setView.at(-1) : null};
     pts.splice(0, pts.length, ...sp); msgs.splice(0, msgs.length, ...sm);
     for (const k of Object.keys(extra)) { if (saved[k] === undefined) delete watch[k]; else watch[k] = saved[k]; }
+    if (Object.keys(extra).length) await t.refresh();
     return out;
   };
   const apt = (mm, lon, extra = {}) => ({t: `2026-10-30T16:${String(mm).padStart(2, '0')}:00Z`, lat: 10, lon, alt_ft: 35000, gs: 480, track: 90, source: 'adsb.lol', ...extra});
@@ -583,8 +585,88 @@ highlightGroup = null;
   assert.strictEqual((await drawn([ap(10, 0, 0, {on_ground: true})], 30)).length, 0, 'on the ground: nothing drawn');
   t.setAhead(30);
 
+  // ===== 8o. the plane is the newest trustworthy fix, and a plane standing on a report is that report ======
+  const rep = (id, hh, extra = {}) => ({id, t: `2026-10-30T${hh}:00Z`, pos_t: `2026-10-30T${hh}:00Z`, kind: 'adsc', summary: 'ADS-C report ' + id, raw: 'r', label: 'B6', rx_count: 1, lat: 10, lon: 100, ...extra});
+  const planeOf = r => r.markers.filter(m => m.o.icon && m.o.icon.className === 'plane').at(-1);
+  // ADS-B hours older than a datalink report: the plane belongs at the report, as the map centring already did
+  r = await draw([apt(0, 100)], [rep(60, '19:00', {lat: 12, lon: 104, trk: 135})], true);
+  let pl = planeOf(r);
+  assert.strictEqual(JSON.stringify(pl.ll), '[12,104]', 'at the newest fix, not the last ADS-B point');
+  assert.match(pl.o.icon.html, /rotate\(135deg\)/, 'turned to the report\'s track');
+  assert.strictEqual(JSON.stringify(r.view), '[[12,104],7]', 'and the map centres on it');
+  const tipLines = lines(pl.tooltip);
+  assert.ok(tipLines[0].endsWith(': last report') && tipLines.includes('ADS-C report 60') && tipLines.includes('no newer ADS-B'), tipLines.join(' | '));
+  assert.ok(pl.handlers && pl.handlers.click, 'the plane is clickable');
+  t.renderMessages([rep(60, '19:00', {lat: 12, lon: 104})]);
+  pl.handlers.click();
+  assert.strictEqual(t.selectedMsg2, 60, 'clicking it selects that report');
+  assert.ok(t.rows.get(60)._cls.has('sel'));
+  // a newer ADS-B point wins instead
+  r = await draw([apt(40, 105)], [rep(61, '16:10', {lat: 12, lon: 104})], false);
+  assert.strictEqual(planeOf(r).ll[1], 105, 'ADS-B newer than the report: the plane is the ADS-B point');
+  // a newer but untrustworthy report does not move the plane
+  r = await draw([apt(0, 100)], [rep(62, '19:00', {lat: 12, lon: 104, suspect: 'x'})], false);
+  assert.strictEqual(planeOf(r).ll[1], 100);
+
+  // ===== 8p. predictions follow the selection ======================================================
+  const named = (kind, lat, lon, eta, name, src) => ({lat, lon, kind, eta_sec: eta, ...(name ? {name, name_src: src} : {})});
+  const A = rep(70, '18:00', {lat: 0, lon: 140, route: [named('next', -1, 141, 600, 'OLGAN', 'learned'), named('next+1', -2, 142, null, 'KAPPU', 'database'), named('fixed', -3, 143, 2220)]});
+  const B = rep(71, '18:30', {lat: -2, lon: 142, route: [named('next', -3, 143, 300), named('next+1', -4, 144, null)]});
+  const C = {id: 72, t: '2026-10-30T18:40:00Z', pos_t: '2026-10-30T18:40:00Z', kind: 'miam', summary: 'REP081', raw: 'r', label: 'MA', rx_count: 1, lat: -2.5, lon: 142.5};   // predicts nothing
+  const D = {id: 73, t: '2026-10-30T18:50:00Z', pos_t: '2026-10-30T18:50:00Z', kind: 'cpdlc', summary: 'CPDLC position report', raw: 'r', label: 'BA', rx_count: 1, lat: -4, lon: 144,
+    waypoints: [wp('OLDONE', true, 'passed'), wp('NEXTONE', true, 'next', {lat: -5, lon: 145}), wp('THENONE', false, 'then', {lat: -6, lon: 146})]};
+  await draw([], [A, B, C, D], false);
+  const predItems = () => t.predGroup.items;
+  const predLine = () => predItems().find(i => i.o && i.o.dashArray === '6 6');
+  const predDots = () => predItems().filter(i => i.o && i.o.radius === 5);
+  // nothing selected: the newest ADS-C route is shown (as it always was)
+  assert.strictEqual(JSON.stringify(predLine().ll), '[[-2,142],[-3,143],[-4,144]]', 'newest ADS-C route: here -> next -> next+1');
+  assert.strictEqual(predDots().length, 2, 'two waypoints (and no fixed projection in this one)');
+  // select the older report: its predictions replace those
+  t.rows.get(70).onclick();
+  assert.strictEqual(JSON.stringify(predLine().ll), '[[0,140],[-1,141],[-2,142]]', 'the selected report\'s own route');
+  assert.ok(!predLine().ll.some(p => p[0] === -4), 'nothing left from the other report');
+  assert.strictEqual(predDots().length, 3, 'two waypoints and the flight computer\'s projection');
+  const pdots = predDots();
+  const t1 = lines(pdots[0].tooltip), t2 = lines(pdots[1].tooltip), tf = lines(pdots[2].tooltip);
+  assert.strictEqual(t1[0], 'OLGAN — predicted next waypoint');
+  assert.ok(t1.includes('ETA 18:10:00Z (+10 min)') && t1.includes('name matched from CPDLC reports'), t1.join(' | '));
+  assert.strictEqual(t2[0], 'KAPPU — predicted waypoint after next');
+  assert.ok(t2.includes('name from the 2013 navigation database'), t2.join(' | '));
+  assert.ok(tf[0].startsWith('Where the flight computer expects it to be in 37 min') && tf.includes('ETA 18:37:00Z (+37 min)'), tf.join(' | '));
+  // a nameless waypoint says why
+  t.rows.get(71).onclick();
+  assert.ok(lines(predDots()[0].tooltip).includes('the report gives coordinates only'));
+  assert.ok(lines(predDots()[0].tooltip)[0] === 'predicted next waypoint', 'no name, no dash');
+  // a point that predicts nothing: the predictions go away
+  t.rows.get(72).onclick();
+  assert.strictEqual(predItems().length, 0, 'selecting a REP081 clears them');
+  // a CPDLC report: its next fixes (not the one it passed), placed ones only
+  t.rows.get(73).onclick();
+  const cl2 = predLine();
+  assert.strictEqual(JSON.stringify(cl2.ll), '[[-4,144],[-5,145],[-6,146]]', 'here -> next -> then');
+  assert.strictEqual(cl2.o.color, COLORS.cpdlc);
+  assert.strictEqual(predDots().length, 0, 'rings, not the ADS-C style dots');
+  assert.strictEqual(predItems().filter(i => i.o && i.o.radius === 9).length, 2);
+  // clicking the report's own dot on the map does the same
+  t.markers.get(70).handlers.click();
+  assert.strictEqual(JSON.stringify(predLine().ll), '[[0,140],[-1,141],[-2,142]]', 'clicking the dot on the map plots its predictions too');
+  // they survive a refresh of the page data
+  await t.showTrack(t.watches()[0], false);
+  assert.ok(predItems().length >= 0);
+  // ... and with the plot fed by the real data again, nothing stale is left behind
+  await draw([], [A, B, C, D], false);
+  assert.strictEqual(predItems().length > 0, true);
+
+  // ===== 8q. names in the list ===================================================================
+  t.renderMessages([A, B, D]);
+  const rowText = id => t.rows.get(id).children.filter(c => c.text !== undefined).map(c => c.text).join('');
+  assert.strictEqual(rowText(70), 'ADS-C report 70 · next OLGAN, then KAPPU', 'a route whose waypoints we can name');
+  assert.strictEqual(rowText(71), 'ADS-C report 71', 'nothing added when the names are not known');
+  assert.strictEqual(rowText(73), 'CPDLC position report', 'the CPDLC summary already carries its names (from the decoder)');
+
   // 9. a watch with no aircraft yet clears the map without error
   await t.showTrack({id: 9, hex: ''}, true);
   assert.match(byId['#msgs'].innerHTML, /No messages yet/);
   console.log('UI behaviour checks passed');
-})().catch(e => { console.error('FAILED:', e.message); process.exit(1); });
+})().catch(e => { console.error('FAILED:', e.message); if (process.env.UITEST_STACK) console.error(e.stack.split('\n').slice(1, 4).join('\n')); process.exit(1); });

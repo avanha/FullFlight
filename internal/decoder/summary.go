@@ -41,6 +41,9 @@ type Waypoint struct {
 	Lat, Lon float64
 	AltFt    *float64
 	ETASec   *float64
+	// Kind is "next" or "next+1" for the predicted route, "fixed" for the flight computer's
+	// projection of where it will be after a fixed time. Empty in rows stored before this existed.
+	Kind string
 }
 
 func num(m map[string]any, k string) *float64 {
@@ -58,6 +61,7 @@ func adscPosition(tree map[string]any) (*Pos, []Waypoint) {
 	tags, _ := adsc["tags"].([]any)
 	var pos *Pos
 	var route []Waypoint
+	var fixedProj *Waypoint
 	for _, t := range tags {
 		tm, _ := t.(map[string]any)
 		for name, v := range tm {
@@ -66,17 +70,24 @@ func adscPosition(tree map[string]any) (*Pos, []Waypoint) {
 				continue
 			}
 			if name == "predicted_route" {
-				for _, k := range []string{"next_wpt", "next_next_wpt"} {
-					if w, _ := body[k].(map[string]any); w != nil && num(w, "lat") != nil && num(w, "lon") != nil {
-						route = append(route, Waypoint{Lat: *num(w, "lat"), Lon: *num(w, "lon"), AltFt: num(w, "alt"), ETASec: num(w, "eta_sec")})
+				for _, k := range []struct{ key, kind string }{{"next_wpt", "next"}, {"next_next_wpt", "next+1"}} {
+					if w, _ := body[k.key].(map[string]any); w != nil && num(w, "lat") != nil && num(w, "lon") != nil {
+						route = append(route, Waypoint{Lat: *num(w, "lat"), Lon: *num(w, "lon"), AltFt: num(w, "alt"), ETASec: num(w, "eta_sec"), Kind: k.kind})
 					}
 				}
+				continue
+			}
+			if name == "fixed_projection" && num(body, "lat") != nil && num(body, "lon") != nil {
+				fixedProj = &Waypoint{Lat: *num(body, "lat"), Lon: *num(body, "lon"), AltFt: num(body, "alt"), ETASec: num(body, "eta_sec"), Kind: "fixed"}
 				continue
 			}
 			if pos == nil && num(body, "lat") != nil && num(body, "lon") != nil && num(body, "ts_sec") != nil {
 				pos = &Pos{Lat: *num(body, "lat"), Lon: *num(body, "lon"), AltFt: num(body, "alt"), Secs: *num(body, "ts_sec"), Basis: BasisHour}
 			}
 		}
+	}
+	if fixedProj != nil && len(route) > 0 { // the order matters to readers: next, next+1, then the projection
+		route = append(route, *fixedProj)
 	}
 	return pos, route
 }
@@ -189,10 +200,10 @@ func summarize(r Result) string {
 			if r.Pos.AltFt != nil {
 				s += fmt.Sprintf(" %.0f ft", *r.Pos.AltFt)
 			}
-			return s
+			return s + fixNames(r.Fixes)
 		}
 		if fix, ok := r.Fields["fix"].(string); ok {
-			return "CPDLC position report at " + fix
+			return "CPDLC position report at " + fix + fixNames(r.Fixes)
 		}
 		if l, ok := findString(r.Tree, "choice_label"); ok {
 			return "CPDLC " + map[Direction]string{Uplink: "uplink", Downlink: "downlink"}[r.Dir] + ": " + l
@@ -346,4 +357,20 @@ func cpdlcExtras(tree map[string]any) (gs, trk *float64, wx *Weather, fixes []Fi
 		fixes = append(fixes, FixRef{Name: n, Role: "then"})
 	}
 	return
+}
+
+// fixNames renders the waypoints a position report named: " — passed OLGAN 18:26Z, next KADAB 18:55Z, then KAPPU".
+func fixNames(fixes []FixRef) string {
+	var parts []string
+	for _, f := range fixes {
+		p := f.Role + " " + f.Name
+		if f.Secs != nil {
+			p += fmt.Sprintf(" %02d:%02dZ", int(*f.Secs)/3600%24, int(*f.Secs)/60%60)
+		}
+		parts = append(parts, p)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " \u2014 " + strings.Join(parts, ", ")
 }

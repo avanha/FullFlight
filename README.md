@@ -128,6 +128,21 @@ but not where they are. Each name gets coordinates from the most trustworthy sou
 Solid diamonds are exact, dashed ones estimates; hover for how each was placed. Clicking one selects
 the report that named it. Position-report tooltips also show wind (from, true), temperature, speed and track.
 
+## Predictions
+
+Selecting a report that carried predictions plots them, and selecting any other point replaces them
+(with nothing selected, the newest ADS-C route is shown). An ADS-C report draws a dashed line from its
+position through the waypoints it expects to reach (with ETAs), plus a ring where the flight computer
+expects to be after a fixed time; a CPDLC position report draws a line through its next fixes, leaving
+out the one it already passed. Clicking the dot, the waypoint or the plane that stands on a report all
+select it. The plane is drawn at the newest trustworthy fix from ADS-B *or* a datalink report, and is
+the report itself when that is newer.
+
+ADS-C gives waypoints as coordinates only. Where those coordinates match a waypoint learned from CPDLC
+reports, or one in the navigation database, the list adds the name (`ADS-C report ... · next OLGAN,
+then KAPPU`) and the tooltip says which. CPDLC position reports list the names they carried. Run
+`fullflight -redecode` to give already-stored messages the names.
+
 ## Projection
 
 An estimated position now (a grey ghost plane) and a dotted look-ahead, dead-reckoned from the newest

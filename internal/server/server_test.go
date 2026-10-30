@@ -99,7 +99,7 @@ func TestMessagesEndpoint(t *testing.T) {
 	pt := now.Add(-time.Hour - 2*time.Second)
 	for i, ago := range []time.Duration{3 * time.Hour, time.Hour} { // inserted out of order is fine
 		st.AddMessage(store.Message{ID: int64(i + 1), Hex: "780AB8", T: now.Add(-ago), Label: "B6", Text: "t" + string(rune('a'+i)),
-			Kind: "adsc", Summary: "ADS-C report", Lat: &lat, Lon: &lon, PosT: &pt, Route: `[{"Lat":26.9,"Lon":150}]`,
+			Kind: "adsc", Summary: "ADS-C report", Lat: &lat, Lon: &lon, PosT: &pt, Route: `[{"Lat":26.9,"Lon":150,"Kind":"next"}]`,
 			Mismatch: "tail: x"})
 	}
 	st.AddMessage(store.Message{ID: 9, Hex: "780AB8", T: now.Add(-100 * time.Hour), Label: "SA", Text: "old"}) // outside 48 h
@@ -110,7 +110,7 @@ func TestMessagesEndpoint(t *testing.T) {
 	if code != 200 || strings.Count(body, `"raw"`) != 2 || strings.Index(body, `"raw":"ta"`) > strings.Index(body, `"raw":"tb"`) {
 		t.Fatalf("%d %s", code, body)
 	}
-	for _, want := range []string{`"summary":"ADS-C report"`, `"route":[{"Lat":26.9,"Lon":150}]`, `"mismatch":"tail: x"`, `"lat":27.6`} {
+	for _, want := range []string{`"summary":"ADS-C report"`, `"route":[{"lat":26.9,"lon":150,"kind":"next"}]`, `"mismatch":"tail: x"`, `"lat":27.6`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %s in %s", want, body)
 		}
@@ -418,5 +418,43 @@ func TestMessagesCarryWeatherSpeedAndWaypoints(t *testing.T) {
 	}
 	if b.Wx != nil || b.GS != nil || len(b.Waypoints) != 0 {
 		t.Errorf("a message without them: %+v", b)
+	}
+}
+
+func TestRouteWaypointsAreNamedWhenWeKnowThem(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 19, 0, 0, 0, time.UTC)
+	lat, lon := -4.54, 140.25
+	pt := now.Add(-time.Hour)
+	// An ADS-C report predicting: a waypoint we learned the name of, one only the database knows, one nobody knows,
+	// and the flight computer's projection (never named). The first row predates Kind, as an old stored route would.
+	route := `[{"Lat":-5.233,"Lon":140.798,"ETASec":443},{"Lat":-6.152,"Lon":142.008,"Kind":"next+1"},{"Lat":-7.5,"Lon":143.5,"Kind":"next+1"},{"Lat":-5.233,"Lon":140.798,"ETASec":2220,"Kind":"fixed"}]`
+	st.AddMessage(store.Message{ID: 1, Hex: "780AA4", T: pt, Label: "B6", Text: "a", Kind: "adsc", Lat: &lat, Lon: &lon, PosT: &pt, Route: route})
+	st.AddFix("OLGAN", 9, -5.233, 140.798, "adsc-eta")
+	nav := navdata.New()
+	nav.Add("KAPPU", navdata.Point{Lat: -6.1521, Lon: 142.0079, Kind: "fix"})
+	nav.Add("ELSEWHERE", navdata.Point{Lat: -5.233, Lon: 140.798, Kind: "fix"}) // also here, but learned names win
+	ts := httptest.NewServer((&Server{Store: st, Nav: nav, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	_, body := do(t, "GET", ts.URL+"/api/messages/780AA4", "")
+	var ms []struct {
+		Route []routeWpJSON `json:"route"`
+	}
+	if err := json.Unmarshal([]byte(body), &ms); err != nil || len(ms) != 1 || len(ms[0].Route) != 4 {
+		t.Fatalf("%v: %s", err, body)
+	}
+	r := ms[0].Route
+	if r[0].Kind != "next" || r[0].Name != "OLGAN" || r[0].NameSrc != "learned" {
+		t.Errorf("learned: %+v", r[0])
+	}
+	if r[1].Kind != "next+1" || r[1].Name != "KAPPU" || r[1].NameSrc != "database" {
+		t.Errorf("database: %+v", r[1])
+	}
+	if r[2].Name != "" {
+		t.Errorf("an unknown waypoint was named: %+v", r[2])
+	}
+	if r[3].Kind != "fixed" || r[3].Name != "" || *r[3].ETASec != 2220 {
+		t.Errorf("the projection must not take a name: %+v", r[3])
 	}
 }

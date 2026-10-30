@@ -10,11 +10,14 @@ import (
 	"compress/gzip"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/avanha/fullflight/internal/geo"
 )
 
 // MaxFileBytes bounds how much is read from one (decompressed) file; the real ones are ~4 MB.
@@ -27,12 +30,20 @@ type Point struct {
 
 type DB struct {
 	byName map[string][]Point
-	Fixes  int    // fix.dat entries loaded
-	Navaid int    // nav.dat entries loaded
-	Cycle  string // AIRAC-style cycle of the data, e.g. "2013.10", if the header gave one
+	grid   map[[2]int][]named // one-degree cells, for finding what is at a position
+	Fixes  int                // fix.dat entries loaded
+	Navaid int                // nav.dat entries loaded
+	Cycle  string             // AIRAC-style cycle of the data, e.g. "2013.10", if the header gave one
 }
 
-func New() *DB { return &DB{byName: map[string][]Point{}} }
+type named struct {
+	name string
+	p    Point
+}
+
+func cell(lat, lon float64) [2]int { return [2]int{int(math.Floor(lat)), int(math.Floor(lon))} }
+
+func New() *DB { return &DB{byName: map[string][]Point{}, grid: map[[2]int][]named{}} }
 
 // Add records a point under a name. Two points under one name within 0.01 degree (a VOR and its
 // DME) are kept once.
@@ -44,6 +55,35 @@ func (d *DB) Add(name string, p Point) {
 		}
 	}
 	d.byName[name] = append(d.byName[name], p)
+	c := cell(p.Lat, p.Lon)
+	d.grid[c] = append(d.grid[c], named{name, p})
+}
+
+// Near returns the name of the fix or navaid within tolNM of a position, nearest first, if any. It
+// is how a waypoint that arrives as bare coordinates (an ADS-C predicted route) gets its name back.
+func (d *DB) Near(lat, lon, tolNM float64) (string, bool) {
+	if d == nil {
+		return "", false
+	}
+	best, bestD := "", tolNM
+	c := cell(lat, lon)
+	for dy := -1; dy <= 1; dy++ {
+		for dx := -1; dx <= 1; dx++ {
+			// the longitude cell wraps at the date line
+			lonCell := c[1] + dx
+			if lonCell < -180 {
+				lonCell += 360
+			} else if lonCell >= 180 {
+				lonCell -= 360
+			}
+			for _, n := range d.grid[[2]int{c[0] + dy, lonCell}] {
+				if dist := geo.DistNM(lat, lon, n.p.Lat, n.p.Lon); dist <= bestD {
+					best, bestD = n.name, dist
+				}
+			}
+		}
+	}
+	return best, best != ""
 }
 
 func abs(v float64) float64 {

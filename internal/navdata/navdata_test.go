@@ -106,3 +106,30 @@ func TestLoadMissingAndLimits(t *testing.T) {
 		t.Log("scanner survived the long line")
 	}
 }
+
+func TestNear(t *testing.T) {
+	d := New()
+	d.Add("SABNO", Point{Lat: 18.985, Lon: 115.845, Kind: "fix"})
+	d.Add("PUPIT", Point{Lat: -12.0, Lon: 115.150556, Kind: "fix"})
+	d.Add("DLINE", Point{Lat: 5.0, Lon: 179.999, Kind: "fix"})
+	d.Add("NEARBY", Point{Lat: 18.99, Lon: 115.85, Kind: "fix"}) // about 0.4 nm from SABNO
+	if n, ok := d.Near(18.985, 115.845, 0.5); !ok || n != "SABNO" {
+		t.Errorf("exact position = %q %v", n, ok)
+	}
+	if n, ok := d.Near(-12.0, 115.15, 0.5); !ok || n != "PUPIT" { // the ADS-C coordinate is rounded relative to the database
+		t.Errorf("rounded position = %q %v", n, ok)
+	}
+	if n, _ := d.Near(18.9885, 115.8475, 0.5); n != "NEARBY" && n != "SABNO" {
+		t.Errorf("between two: %q", n)
+	}
+	if n, ok := d.Near(18.985, 115.9, 0.5); ok {
+		t.Errorf("3 nm away found %q", n)
+	}
+	// the cell wraps at the date line
+	if n, ok := d.Near(5.0, -179.999, 0.5); !ok || n != "DLINE" {
+		t.Errorf("across the date line = %q %v", n, ok)
+	}
+	if _, ok := (*DB)(nil).Near(0, 0, 1); ok {
+		t.Error("nil DB found something")
+	}
+}

@@ -383,3 +383,13 @@ next:
 	sort.SliceStable(out, func(i, j int) bool { return out[i].N > out[j].N })
 	return out
 }
+
+// FixNameAt returns the learned waypoint name whose position is within tolDeg of (lat, lon), the
+// best supported one if several. It names a waypoint that arrives as bare coordinates.
+func (s *Store) FixNameAt(lat, lon, tolDeg float64) (string, bool) {
+	var name string
+	err := s.db.QueryRow(`SELECT name FROM fix
+		WHERE ABS(lat - ?1) <= ?3 AND (ABS(lon - ?2) <= ?3 OR ABS(ABS(lon - ?2) - 360) <= ?3)
+		GROUP BY name ORDER BY COUNT(*) DESC, name LIMIT 1`, lat, lon, tolDeg).Scan(&name)
+	return name, err == nil
+}

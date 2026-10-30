@@ -351,31 +351,31 @@ func (s *Server) airframes(w http.ResponseWriter, r *http.Request) {
 }
 
 type messageJSON struct {
-	ID             int64      `json:"id"`
-	T              time.Time  `json:"t"`
-	Label          string     `json:"label"`
-	Kind           string     `json:"kind"`
-	Direction      string     `json:"dir,omitempty"`
-	Summary        string     `json:"summary"`
-	Undecoded      bool       `json:"undecoded,omitempty"` // we have no decoder for it (vendor data, MIAM fragments)
-	Detail         string     `json:"detail,omitempty"`
-	Raw            string     `json:"raw"`
-	Tail           string     `json:"tail,omitempty"`
-	Flight         string     `json:"flight,omitempty"`
-	Callsign       string     `json:"callsign,omitempty"`
-	Station        string     `json:"station,omitempty"`
-	RxCount        int        `json:"rx_count"`
-	Lat            *float64   `json:"lat,omitempty"`
-	Lon            *float64   `json:"lon,omitempty"`
-	AltFt          *float64   `json:"alt_ft,omitempty"`
-	PosT           *time.Time `json:"pos_t,omitempty"`
-	Suspect        string     `json:"suspect,omitempty"`
-	TimeNote       string     `json:"time_note,omitempty"`
-	TimeUnverified bool       `json:"time_unverified,omitempty"`
-	Mismatch       string     `json:"mismatch,omitempty"`
-	AFTail         string     `json:"af_tail,omitempty"`
-	AFFlight       string     `json:"af_flight,omitempty"`
-	Route          any        `json:"route,omitempty"`
+	ID             int64         `json:"id"`
+	T              time.Time     `json:"t"`
+	Label          string        `json:"label"`
+	Kind           string        `json:"kind"`
+	Direction      string        `json:"dir,omitempty"`
+	Summary        string        `json:"summary"`
+	Undecoded      bool          `json:"undecoded,omitempty"` // we have no decoder for it (vendor data, MIAM fragments)
+	Detail         string        `json:"detail,omitempty"`
+	Raw            string        `json:"raw"`
+	Tail           string        `json:"tail,omitempty"`
+	Flight         string        `json:"flight,omitempty"`
+	Callsign       string        `json:"callsign,omitempty"`
+	Station        string        `json:"station,omitempty"`
+	RxCount        int           `json:"rx_count"`
+	Lat            *float64      `json:"lat,omitempty"`
+	Lon            *float64      `json:"lon,omitempty"`
+	AltFt          *float64      `json:"alt_ft,omitempty"`
+	PosT           *time.Time    `json:"pos_t,omitempty"`
+	Suspect        string        `json:"suspect,omitempty"`
+	TimeNote       string        `json:"time_note,omitempty"`
+	TimeUnverified bool          `json:"time_unverified,omitempty"`
+	Mismatch       string        `json:"mismatch,omitempty"`
+	AFTail         string        `json:"af_tail,omitempty"`
+	AFFlight       string        `json:"af_flight,omitempty"`
+	Route          []routeWpJSON `json:"route,omitempty"`
 
 	Wx        *wxJSON        `json:"wx,omitempty"`
 	GS        *float64       `json:"gs,omitempty"`  // knots, as the report gave it
@@ -428,9 +428,7 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 			Detail: m.Detail, Raw: m.Text, Tail: m.Tail, Flight: m.Flight, Callsign: m.Callsign, Station: m.Station,
 			RxCount: m.RxCount, Lat: m.Lat, Lon: m.Lon, AltFt: m.AltFt, PosT: m.PosT, Suspect: m.Suspect, TimeNote: m.TimeNote, TimeUnverified: m.TimeFlag,
 			Mismatch: m.Mismatch, AFTail: m.AFTail, AFFlight: m.AFFlight}
-		if m.Route != "" {
-			json.Unmarshal([]byte(m.Route), &j.Route)
-		}
+		j.Route = s.routeWaypoints(m.Route)
 		if m.WxDir != nil || m.WxKt != nil || m.WxTemp != nil {
 			j.Wx = &wxJSON{DirDeg: m.WxDir, Kt: m.WxKt, TempC: m.WxTemp}
 		}
@@ -446,4 +444,53 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		out = append(out, j)
 	}
 	writeJSON(w, 200, out)
+}
+
+// routeWpJSON is a waypoint of an ADS-C report's predicted route, or the flight computer's own
+// projection ("fixed"). The report gives coordinates only; Name is filled in when those coordinates
+// are a waypoint we have learned from CPDLC reports or that is in the navigation database.
+type routeWpJSON struct {
+	Lat     float64  `json:"lat"`
+	Lon     float64  `json:"lon"`
+	AltFt   *float64 `json:"alt_ft,omitempty"`
+	ETASec  *float64 `json:"eta_sec,omitempty"`
+	Kind    string   `json:"kind"`
+	Name    string   `json:"name,omitempty"`
+	NameSrc string   `json:"name_src,omitempty"` // "learned" or "database"
+}
+
+const (
+	nameTolDeg = 0.005 // about 0.3 nm: ADS-C coordinates are exact, the database's are rounded
+	nameTolNM  = 0.5
+)
+
+func (s *Server) routeWaypoints(raw string) []routeWpJSON {
+	if raw == "" {
+		return nil
+	}
+	var wps []struct {
+		Lat, Lon      float64
+		AltFt, ETASec *float64
+		Kind          string
+	}
+	if json.Unmarshal([]byte(raw), &wps) != nil {
+		return nil
+	}
+	out := make([]routeWpJSON, 0, len(wps))
+	for i, w := range wps {
+		kind := w.Kind
+		if kind == "" { // stored before kinds existed: the first two entries were next and next+1
+			kind = map[int]string{0: "next", 1: "next+1"}[i]
+		}
+		j := routeWpJSON{Lat: w.Lat, Lon: w.Lon, AltFt: w.AltFt, ETASec: w.ETASec, Kind: kind}
+		if kind != "fixed" {
+			if n, ok := s.Store.FixNameAt(w.Lat, w.Lon, nameTolDeg); ok {
+				j.Name, j.NameSrc = n, "learned"
+			} else if n, ok := s.Nav.Near(w.Lat, w.Lon, nameTolNM); ok {
+				j.Name, j.NameSrc = n, "database"
+			}
+		}
+		out = append(out, j)
+	}
+	return out
 }

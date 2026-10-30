@@ -307,9 +307,15 @@ func TestSummariesAndPositions(t *testing.T) {
 	}
 
 	_, r = load(t, "adsc_periodic")
-	if len(r.Route) != 2 || r.Route[0].Lat < 26.99 || r.Route[0].ETASec == nil || *r.Route[0].ETASec != 1088 {
-		t.Errorf("route = %+v", r.Route)
+	if len(r.Route) != 3 || r.Route[0].Lat < 26.99 || r.Route[0].ETASec == nil || *r.Route[0].ETASec != 1088 {
+		t.Fatalf("route = %+v", r.Route)
 	}
+	// next waypoint, the one after, then the flight computer's own projection of where it will be in 2220 s.
+	if r.Route[0].Kind != "next" || r.Route[1].Kind != "next+1" || r.Route[2].Kind != "fixed" || *r.Route[2].ETASec != 2220 {
+		t.Errorf("kinds = %q %q %q", r.Route[0].Kind, r.Route[1].Kind, r.Route[2].Kind)
+	}
+	near(t, "fixed lat", r.Route[2].Lat, 26.527, 1e-3)
+	near(t, "fixed lon", r.Route[2].Lon, 147.257, 1e-3)
 
 	_, r = load(t, "rep081_handoff")
 	if r.Pos == nil || r.Pos.Basis != BasisMonth || *r.Pos.AltFt != 39000 {
@@ -346,7 +352,8 @@ func TestCPDLCPositionReport(t *testing.T) {
 	if got, want := r.Pos.At(f.Received), time.Date(2026, 10, 28, 16, 6, 0, 0, time.UTC); !got.Equal(want) {
 		t.Errorf("At = %v, want %v", got, want)
 	}
-	if r.Summary != "CPDLC position report 19.172N 115.872E 37000 ft" {
+	// ... naming the waypoints the report carried: the one just passed, the next (with ETAs), and the one after.
+	if r.Summary != "CPDLC position report 19.172N 115.872E 37000 ft \u2014 passed UNTUL 15:58Z, next SABNO 16:07Z, then DALRA" {
 		t.Errorf("summary = %q", r.Summary)
 	}
 	// Other CPDLC messages carry no position.
@@ -577,5 +584,20 @@ func TestNearestTimeOfDay(t *testing.T) {
 		if got := NearestTimeOfDay(c.secs, c.ref); !got.Equal(c.want) {
 			t.Errorf("%v around %v = %v, want %v", c.secs, c.ref, got, c.want)
 		}
+	}
+}
+
+func TestFixNames(t *testing.T) {
+	secs := func(h, m int) *float64 { v := float64(h*3600 + m*60); return &v }
+	got := fixNames([]FixRef{{Name: "OLGAN", Role: "passed", Secs: secs(18, 26)}, {Name: "KADAB", Role: "next", Secs: secs(18, 55)}, {Name: "KAPPU", Role: "then"}})
+	if got != " \u2014 passed OLGAN 18:26Z, next KADAB 18:55Z, then KAPPU" {
+		t.Errorf("got %q", got)
+	}
+	if fixNames(nil) != "" {
+		t.Error("no fixes, no suffix")
+	}
+	// a time past midnight stays on the clock
+	if got := fixNames([]FixRef{{Name: "X", Role: "next", Secs: secs(24, 5)}}); got != " \u2014 next X 00:05Z" {
+		t.Errorf("got %q", got)
 	}
 }
