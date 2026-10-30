@@ -19,10 +19,12 @@
   li.sel { background: #eef4ff; }
   li small { color: #666; display: block; }
   li small.lastpos { color: #333; }
-  li small.route { color: #333; }
-  li small.route.stale { color: #999; font-style: italic; }
+  li small.route, li small.flight { color: #333; }
+  li small.route.stale, li small.flight.stale { color: #999; font-style: italic; }
   .waiting { color: #a60; } .tracking { color: #070; } .done, .expired { color: #888; }
   button.del { float: right; }
+  button.copy { border: none; background: none; cursor: pointer; padding: 0 3px; font-size: 11px; vertical-align: baseline; }
+  button.copy:hover { background: #e8eefc; border-radius: 3px; }
   h4 { margin: 14px 0 4px; }
   #msgs .msg { padding: 5px 4px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 12px; }
   #msgs .msg time { color: #666; font-family: ui-monospace, monospace; margin-right: 6px; }
@@ -95,6 +97,39 @@ async function api(path, opts) {
   return j;
 }
 
+// Copy text to the clipboard. The async clipboard API only exists on secure pages (https or
+// localhost), so fall back to the old select-and-copy trick when the page is served over plain http.
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch (e) { /* fall through to the fallback */ }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.append(ta);
+  ta.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  ta.remove();
+  return ok;
+}
+
+function copyButton(text) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'copy';
+  const reset = () => { b.textContent = '\u{1F4CB}'; b.title = `Copy ${text}`; };
+  reset();
+  b.onclick = async e => {
+    e.stopPropagation();           // do not also select the watch
+    const ok = await copyText(text);
+    b.textContent = ok ? '\u2713' : '!';
+    b.title = ok ? 'Copied' : 'Could not copy';
+    setTimeout(reset, 1200);
+  };
+  return b;
+}
+
 async function refresh() {
   watches = await api('/api/watches');
   const ul = $('#list');
@@ -102,15 +137,35 @@ async function refresh() {
     const li = document.createElement('li');
     li.className = w.id === selected ? 'sel' : '';
     const title = w.kind === 'flight' ? `${w.ident}${w.date ? ' ' + w.date : ''}${w.dest ? ' → ' + w.dest : ''}` : w.ident;
-    const ids = [w.callsign, w.tail, w.hex].filter(Boolean).join(' · ');
+    // A tail or hex watch follows the aircraft from flight to flight, so its callsign is shown on its own
+    // line, with an age; only a flight watch has a fixed callsign. On a flight or hex watch the tail gets a
+    // copy button, so an aircraft first followed by callsign can be re-added by registration.
     li.innerHTML = `<button class="del" title="Remove">✕</button><b></b> <span class="${w.status}">${w.status}</span><small></small>`;
     li.querySelector('b').textContent = title;
-    li.querySelector('small').textContent = `${ids ? ids + ' — ' : ''}${fmt(w.start)} → ${fmt(w.end)}`;
+    const idLine = li.querySelector('small');
+    const bits = [];
+    if (w.kind === 'flight' && w.callsign) bits.push(document.createTextNode(w.callsign));
+    if (w.tail) {
+      const t = document.createElement('span');
+      t.append(document.createTextNode(w.tail));
+      if (w.kind !== 'tail') t.append(copyButton(w.tail));
+      bits.push(t);
+    }
+    if (w.hex) bits.push(document.createTextNode(w.hex));
+    bits.forEach((b, i) => { if (i) idLine.append(document.createTextNode(' · ')); idLine.append(b); });
+    idLine.append(document.createTextNode(`${bits.length ? ' — ' : ''}${fmt(w.start)} → ${fmt(w.end)}`));
     if (w.last_pos || w.type) {
       const lp = document.createElement('small');
       lp.className = 'lastpos';
       lp.textContent = [w.last_pos && `last ${w.last_pos.kind} ${fmtTime(w.last_pos.t)} (${ago(w.last_pos.t)})`, w.type].filter(Boolean).join(' · ');
       li.append(lp);
+    }
+    if (w.flight) {
+      const f = document.createElement('small');
+      f.className = 'flight' + (w.flight.stale ? ' stale' : '');
+      const name = [w.flight.callsign, w.flight.number].filter(Boolean).join(' · ');
+      f.textContent = `flight ${name} (${w.flight.source === 'messages' ? 'from messages' : w.flight.source} ${ago(w.flight.t)}${w.flight.stale ? ', may be out of date' : ''})`;
+      li.append(f);
     }
     if (w.route) {
       const r = document.createElement('small');

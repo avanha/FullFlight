@@ -602,3 +602,30 @@ func TestRouteFromREP081(t *testing.T) {
 		t.Errorf("route from non-REP081: %+v", r)
 	}
 }
+
+// The flight a message names comes from our own decode of its raw text.
+func TestFlightFromMessages(t *testing.T) {
+	st := newStore(t)
+	f := fixture(t, "adsc_periodic_prefixed") // prefix J25ACX0833: flight CX833, tail B-LRM
+	if _, err := Ingest(st, "780AB8", msg(1, f)); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := st.LastFlight("780AB8")
+	if !ok || got.Flight != "CX833" || !got.T.Equal(f.Received) {
+		t.Fatalf("from prefix = %+v %v", got, ok)
+	}
+	// An AFN logon names the ICAO callsign.
+	a := fixture(t, "afn_contact") // FMHCPA833, B-LRD
+	if _, err := Ingest(st, "780AA4", msg(2, a)); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok = st.LastFlight("780AA4"); !ok || got.Callsign != "CPA833" {
+		t.Errorf("from AFN = %+v %v", got, ok)
+	}
+	// A message with no prefix and no AFN (a bare CPDLC) names no flight.
+	st2 := newStore(t)
+	Ingest(st2, "780AA4", msg(3, fixture(t, "cpdlc_wilco")))
+	if got, ok := st2.LastFlight("780AA4"); ok {
+		t.Errorf("flight from a bare CPDLC: %+v", got)
+	}
+}

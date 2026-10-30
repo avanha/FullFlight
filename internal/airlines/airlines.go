@@ -1,7 +1,10 @@
 // Package airlines maps IATA airline designators to ICAO ones.
 package airlines
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // icaoByIATA maps common IATA airline designators to ICAO ones. A flight the
 // user types as "UA869" is broadcast as the callsign "UAL869". Anything not
@@ -38,3 +41,34 @@ func IsICAO(code string) bool { return icaoSet[strings.ToUpper(code)] }
 
 // IsIATA reports whether code is a known IATA airline designator.
 func IsIATA(code string) bool { _, ok := ICAO(code); return ok }
+
+var iataByICAO = func() map[string]string {
+	m := make(map[string]string, len(icaoByIATA))
+	for k, v := range icaoByIATA {
+		m[v] = k
+	}
+	return m
+}()
+
+var (
+	icaoFlightRe = regexp.MustCompile(`^([A-Z]{3})0*(\d{1,4}[A-Z]?)$`)
+	iataFlightRe = regexp.MustCompile(`^([A-Z0-9]{2})0*(\d{1,4}[A-Z]?)$`)
+)
+
+// Forms returns a flight identifier in both its ICAO callsign form ("CPA113") and its IATA
+// flight-number form ("CX113"), given either. Leading zeros in the number are dropped. Both are
+// empty if id is not a flight identifier or its airline is not in the table.
+func Forms(id string) (icao, iata string) {
+	id = strings.ToUpper(strings.TrimSpace(id))
+	if m := icaoFlightRe.FindStringSubmatch(id); m != nil {
+		if code := iataByICAO[m[1]]; code != "" {
+			return m[1] + m[2], code + m[2]
+		}
+	}
+	if m := iataFlightRe.FindStringSubmatch(id); m != nil {
+		if des, ok := icaoByIATA[m[1]]; ok {
+			return des + m[2], m[1] + m[2]
+		}
+	}
+	return "", ""
+}

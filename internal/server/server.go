@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/avanha/fullflight/internal/airlines"
 	"github.com/avanha/fullflight/internal/airports"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/watchlist"
@@ -74,30 +75,74 @@ func fail(w http.ResponseWriter, code int, msg string) {
 }
 
 type watchJSON struct {
-	ID       int64      `json:"id"`
-	Kind     string     `json:"kind"`
-	Ident    string     `json:"ident"`
-	Date     string     `json:"date,omitempty"`
-	Dest     string     `json:"dest,omitempty"` // ICAO code
-	DestName string     `json:"dest_name,omitempty"`
-	Start    time.Time  `json:"start"`
-	End      time.Time  `json:"end"`
-	Status   string     `json:"status"`
-	Hex      string     `json:"hex,omitempty"`
-	Tail     string     `json:"tail,omitempty"`
-	Callsign string     `json:"callsign,omitempty"`
-	Type     string     `json:"type,omitempty"` // aircraft type, e.g. A359
-	LastPos  *lastPos   `json:"last_pos,omitempty"`
-	Route    *routeJSON `json:"route,omitempty"`
+	ID       int64       `json:"id"`
+	Kind     string      `json:"kind"`
+	Ident    string      `json:"ident"`
+	Date     string      `json:"date,omitempty"`
+	Dest     string      `json:"dest,omitempty"` // ICAO code
+	DestName string      `json:"dest_name,omitempty"`
+	Start    time.Time   `json:"start"`
+	End      time.Time   `json:"end"`
+	Status   string      `json:"status"`
+	Hex      string      `json:"hex,omitempty"`
+	Tail     string      `json:"tail,omitempty"`
+	Callsign string      `json:"callsign,omitempty"`
+	Type     string      `json:"type,omitempty"` // aircraft type, e.g. A359
+	LastPos  *lastPos    `json:"last_pos,omitempty"`
+	Route    *routeJSON  `json:"route,omitempty"`
+	Flight   *flightJSON `json:"flight,omitempty"` // tail and hex watches only: the flight it is operating
 }
 
-// How long a destination reported by the aircraft stays believable. REP081 goes out
-// every ~20 minutes in flight, so a report older than RouteFreshFor means we have lost
-// it, or the aircraft has landed and moved on to another sector. After RouteHideAfter we
-// stop showing it at all.
+// flightJSON is the flight an aircraft is currently operating, from its newest ADS-B callsign
+// or the flight number in its newest message, whichever is later.
+type flightJSON struct {
+	Callsign string    `json:"callsign,omitempty"` // ICAO form, e.g. CPA113
+	Number   string    `json:"number,omitempty"`   // IATA form, e.g. CX113
+	T        time.Time `json:"t"`
+	Source   string    `json:"source"` // "ADS-B" or "messages"
+	Stale    bool      `json:"stale,omitempty"`
+}
+
+func (s *Server) flight(hex string) *flightJSON {
+	var id, src string
+	var at time.Time
+	if cs, t, ok := s.Store.LastCallsign(hex); ok {
+		id, at, src = cs, t, "ADS-B"
+	}
+	if f, ok := s.Store.LastFlight(hex); ok && f.T.After(at) {
+		id, at, src = firstNonEmpty(f.Callsign, f.Flight), f.T, "messages"
+	}
+	if id == "" {
+		return nil
+	}
+	age := s.now().Sub(at)
+	if age > InfoHideAfter {
+		return nil
+	}
+	out := &flightJSON{T: at, Source: src, Stale: age > InfoFreshFor}
+	out.Callsign, out.Number = airlines.Forms(id)
+	if out.Callsign == "" && out.Number == "" {
+		out.Callsign = strings.ToUpper(id) // an airline we have no table entry for: show it as received
+	}
+	return out
+}
+
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// How long something the aircraft says about itself (its destination, its flight) stays
+// believable. Reports go out every ~20 minutes in flight, so one older than InfoFreshFor means
+// we have lost contact, or the aircraft has landed and moved on to another sector. After
+// InfoHideAfter we stop showing it at all.
 const (
-	RouteFreshFor  = 90 * time.Minute
-	RouteHideAfter = 24 * time.Hour
+	InfoFreshFor  = 90 * time.Minute
+	InfoHideAfter = 24 * time.Hour
 )
 
 // routeJSON is the origin and destination the aircraft last reported (REP081).
@@ -107,7 +152,7 @@ type routeJSON struct {
 	FromName string    `json:"from_name,omitempty"`
 	ToName   string    `json:"to_name,omitempty"`
 	T        time.Time `json:"t"`
-	Stale    bool      `json:"stale,omitempty"` // older than RouteFreshFor: may be out of date
+	Stale    bool      `json:"stale,omitempty"` // older than InfoFreshFor: may be out of date
 	Source   string    `json:"source"`
 }
 
@@ -117,10 +162,10 @@ func (s *Server) route(hex string) *routeJSON {
 		return nil
 	}
 	age := s.now().Sub(r.T)
-	if age > RouteHideAfter {
+	if age > InfoHideAfter {
 		return nil
 	}
-	out := &routeJSON{From: r.From, To: r.To, T: r.T, Stale: age > RouteFreshFor, Source: "REP081"}
+	out := &routeJSON{From: r.From, To: r.To, T: r.T, Stale: age > InfoFreshFor, Source: "REP081"}
 	if a, ok := airports.Lookup(r.From); ok {
 		out.FromName = a.Name
 	}
@@ -170,6 +215,9 @@ func (s *Server) withAircraft(j watchJSON) watchJSON {
 		j.Type = s.Store.TypeForHex(j.Hex)
 		j.LastPos = s.lastPosition(j.Hex)
 		j.Route = s.route(j.Hex)
+		if j.Kind != string(watchlist.KindFlight) { // a flight watch already is a flight
+			j.Flight = s.flight(j.Hex)
+		}
 	}
 	return j
 }

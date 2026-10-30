@@ -276,3 +276,26 @@ func (s *Store) LastRoute(hexAddr string) (Route, bool) {
 	r.T = time.Unix(t, 0).UTC()
 	return r, true
 }
+
+// FlightID is a flight an aircraft's messages name, as we decoded it from the raw text.
+type FlightID struct {
+	Flight   string // IATA-style flight number from the message prefix, e.g. CX113
+	Callsign string // ICAO callsign from an AFN logon, e.g. CPA113
+	T        time.Time
+}
+
+// LastFlight returns the newest message that names the flight the aircraft is operating.
+// Messages whose text names a different aircraft than the one asked for are skipped:
+// their flight belongs to that other aircraft.
+func (s *Store) LastFlight(hexAddr string) (FlightID, bool) {
+	var f FlightID
+	var t int64
+	err := s.db.QueryRow(`SELECT ts, flight, callsign FROM message
+		WHERE hex=? AND (flight != '' OR callsign != '') AND mismatch NOT LIKE '%which is hex%'
+		ORDER BY ts DESC, id DESC LIMIT 1`, hexAddr).Scan(&t, &f.Flight, &f.Callsign)
+	if err != nil {
+		return FlightID{}, false
+	}
+	f.T = time.Unix(t, 0).UTC()
+	return f, true
+}

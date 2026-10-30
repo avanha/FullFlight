@@ -6,23 +6,28 @@ const src = html.match(/<script>\n(const map[\s\S]*?)<\/script>/)[1];
 
 // --- a just-enough DOM ---
 class El {
-  constructor(tag) { this.tag = tag; this.children = []; this.textContent = ''; this.className = ''; this.hidden = false; this.title = ''; this.dataset = {};
+  constructor(tag) { this.tag = tag; this.children = []; this.textContent = ''; this.className = ''; this.hidden = false; this.title = ''; this.dataset = {}; this.style = {};
     this._cls = new Set(); const self = this;
     this.classList = { toggle(c, on) { on ? self._cls.add(c) : self._cls.delete(c); }, contains: c => self._cls.has(c) || self.className.split(' ').includes(c) }; }
   append(...n) { this.children.push(...n); }
   replaceChildren(...n) { this.children = n; }
+  remove() { this.removed = true; }
+  select() { this.selectedAll = true; }
   querySelector(sel) { return this._q ||= {}, this._q[sel] ||= new El('q'); }
   set innerHTML(v) { this._html = v; this.children = []; }
   get innerHTML() { return this._html; }
 }
 const byId = {};
 const document = {
+  body: new El('body'),
+  execResult: true,
+  execCommand(c) { calls.exec.push(c); return this.execResult; },
   querySelector: s => byId[s] ||= new El(s),
   createElement: t => new El(t),
   createTextNode: t => ({text: t}),
 };
 // --- a recording Leaflet ---
-const calls = { lines: [], legend: null, addLayer: 0, fitBounds: 0, setView: [], panTo: [], markers: [], circles: [], polylines: 0, tooltipsOpened: 0, highlightAdds: [] };
+const calls = { exec: [], copied: [], timers: [], lines: [], legend: null, addLayer: 0, fitBounds: 0, setView: [], panTo: [], markers: [], circles: [], polylines: 0, tooltipsOpened: 0, highlightAdds: [] };
 const allLayers = [];
 class Layer { constructor(){ this.items = []; this.open = false; allLayers.push(this); } addTo(t) { this.target = t; this.onMap = (t === mapObj); t.items && t.items.push(this); if (t === highlightGroup) calls.highlightAdds.push(this); return this; }
   bindTooltip(c) { this.tooltip = c; return this; } openTooltip() { calls.tooltipsOpened++; this.open = true; return this; } closeTooltip() { this.open = false; return this; } getBounds() { return {}; } }
@@ -57,7 +62,9 @@ global.fetch = async url => {
   return { status: 200, ok: true, json: async () => body };
 };
 let intervals = [];
-const ctx = { document, L, fetch, console, Date, Number, Math, Set, Map, setInterval: (f, ms) => intervals.push([f, ms]), FormData: class {} };
+const ctx = { document, L, fetch, console, Date, Number, Math, Set, Map, setInterval: (f, ms) => intervals.push([f, ms]), FormData: class {},
+  setTimeout: f => { calls.timers.push(f); }, window: {isSecureContext: true},
+  navigator: {clipboard: {writeText: async t => { calls.copied.push(t); }}} };
 ctx.global = ctx;
 vm.createContext(ctx);
 highlightGroup = null;
@@ -287,6 +294,66 @@ highlightGroup = null;
   await t.refresh();
   assert.ok(!routeLine().textContent.includes('you set'), 'no note when they agree');
   delete watch.route; delete watch.dest;
+  await t.refresh();
+
+  // 8f. the flight a tail watch is operating (callsign + flight number, with its age and source)
+  const flightLine = () => byId['#list'].children[0].children.find(c => c.className && c.className.startsWith('flight'));
+  const idLine = () => byId['#list'].children[0].querySelector('small');
+  const textOf = n => n.text !== undefined ? n.text : (n.textContent || '') + (n.children || []).map(textOf).join('');
+  const descendants = (n, out = []) => { (n.children || []).forEach(c => { out.push(c); descendants(c, out); }); return out; };
+  assert.strictEqual(flightLine(), undefined, 'no flight line when none known');
+  watch.flight = {callsign: 'CPA113', number: 'CX113', t: new Date(Date.now() - 4 * 60000).toISOString(), source: 'messages'};
+  await t.refresh();
+  assert.strictEqual(flightLine().textContent, 'flight CPA113 \u00b7 CX113 (from messages 4m ago)');
+  assert.ok(!flightLine().className.includes('stale'));
+  assert.ok(!textOf(idLine()).includes('CPA113'), 'a tail watch no longer shows a possibly out-of-date callsign in the id line');
+  watch.flight = {...watch.flight, t: new Date(Date.now() - 3 * 3600000).toISOString(), source: 'ADS-B', stale: true};
+  await t.refresh();
+  assert.strictEqual(flightLine().textContent, 'flight CPA113 \u00b7 CX113 (ADS-B 3h ago, may be out of date)');
+  assert.ok(flightLine().className.includes('stale'));
+  watch.flight = {callsign: 'ZZZ123', t: new Date().toISOString(), source: 'ADS-B'};   // an airline with no IATA code
+  await t.refresh();
+  assert.match(flightLine().textContent, /^flight ZZZ123 \(ADS-B /);
+  delete watch.flight;
+
+  // 8g. copy-to-clipboard next to the tail, on watches that were not started by tail
+  const copyBtn = () => descendants(idLine()).find(c => c.className === 'copy');
+  await t.refresh();
+  assert.strictEqual(copyBtn(), undefined, 'a tail watch needs no copy button: the tail is already what is tracked');
+  const was = {kind: watch.kind, ident: watch.ident, callsign: watch.callsign};
+  watch.kind = 'flight'; watch.ident = 'CPA113'; watch.callsign = 'CPA113'; watch.tail = 'B-LRD';
+  await t.refresh();
+  assert.strictEqual(textOf(idLine()).replace(/\u{1F4CB}/u, '').split(' \u2014 ')[0], 'CPA113 \u00b7 B-LRD \u00b7 780AB8', 'ids: callsign, tail, hex');
+  let b = copyBtn();
+  assert.ok(b, 'copy button next to the tail');
+  assert.strictEqual(b.title, 'Copy B-LRD');
+  let stopped = false;
+  await b.onclick({stopPropagation() { stopped = true; }});
+  assert.strictEqual(JSON.stringify(calls.copied), '["B-LRD"]', 'tail copied to the clipboard');
+  assert.ok(stopped, 'clicking copy does not also select the watch');
+  assert.strictEqual(b.textContent, '\u2713'); assert.strictEqual(b.title, 'Copied');
+  calls.timers.at(-1)();
+  assert.strictEqual(b.textContent, '\u{1F4CB}'); assert.strictEqual(b.title, 'Copy B-LRD');
+  // on a plain-http page the async clipboard is unavailable: fall back to select + copy
+  ctx.window.isSecureContext = false;
+  await b.onclick({stopPropagation() {}});
+  assert.deepEqual(calls.exec, ['copy']);
+  const ta = document.body.children.at(-1);
+  assert.ok(ta.value === 'B-LRD' && ta.selectedAll && ta.removed, 'temporary textarea selected, copied from, and removed');
+  assert.strictEqual(b.textContent, '\u2713');
+  // ... and when even that fails the button says so instead of claiming success
+  document.execResult = false;
+  await b.onclick({stopPropagation() {}});
+  assert.strictEqual(b.textContent, '!'); assert.strictEqual(b.title, 'Could not copy');
+  document.execResult = true; ctx.window.isSecureContext = true;
+  // a hex watch gets one too; a watch with no known tail has none
+  watch.kind = 'hex';
+  await t.refresh();
+  assert.ok(copyBtn(), 'hex watch');
+  delete watch.tail;
+  await t.refresh();
+  assert.strictEqual(copyBtn(), undefined, 'no tail, nothing to copy');
+  watch.kind = was.kind; watch.ident = was.ident; watch.callsign = was.callsign; watch.tail = 'B-LRM';
   await t.refresh();
 
   // 9. a watch with no aircraft yet clears the map without error

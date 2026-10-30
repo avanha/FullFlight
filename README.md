@@ -85,6 +85,21 @@ to another sector; after 24 hours it is not shown. If you gave a destination
 yourself and the aircraft reports a different one, the line says so. Other airlines'
 aircraft send no such report, so this appears only where the data exists.
 
+## Current flight
+
+A tail or hex watch follows an aircraft from flight to flight, so it shows the flight it is
+operating now (`flight CPA113 · CX113 (from messages 4m ago)`), from whichever is newer: the
+callsign on its latest ADS-B position, or the flight number in its latest message (the
+10-character prefix, or an AFN logon), with the other form worked out from the airline
+table. It goes grey after 90 minutes ("may be out of date") and disappears after 24 hours,
+like the reported destination. A message whose text names a different aircraft is ignored.
+The destination is deliberately not guessed from D-ATIS requests: crews also request
+them for alternates and ETOPS enroute alternates (on Cathay flights with a known
+destination, it was the first airport requested only 4 times in 16 and the last only 6).
+
+On flight and hex watches the tail has a 📋 button that copies it, so an aircraft first
+followed by callsign can be re-added by registration.
+
 ## Web page
 
 Choosing a watch centres the map (zoom 7) on that aircraft's newest trustworthy

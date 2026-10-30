@@ -309,6 +309,16 @@ func (s *Store) LastPosition(hex string) (Position, bool) {
 	return t, t.Hex != ""
 }
 
+// LastCallsign returns the callsign on the aircraft's newest ADS-B position that has one.
+func (s *Store) LastCallsign(hexAddr string) (string, time.Time, bool) {
+	var cs string
+	var t int64
+	if err := s.db.QueryRow(`SELECT callsign, ts FROM position WHERE hex=? AND callsign != '' ORDER BY ts DESC LIMIT 1`, hexAddr).Scan(&cs, &t); err != nil {
+		return "", time.Time{}, false
+	}
+	return cs, time.Unix(t, 0).UTC(), true
+}
+
 // lastPosition is the newest position or the zero value.
 func (s *Store) lastPosition(hex string) Position {
 	var p Position

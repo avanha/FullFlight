@@ -259,10 +259,10 @@ func TestWatchShowsReportedRoute(t *testing.T) {
 		t.Errorf("a 12 minute old report is stale: %s", b)
 	}
 	// The freshness boundary.
-	if b = watches(rep{RouteFreshFor - time.Minute, "VHHH", "EDDM"}); !strings.Contains(b, `"to":"EDDM"`) || strings.Contains(b, `"stale"`) {
+	if b = watches(rep{InfoFreshFor - time.Minute, "VHHH", "EDDM"}); !strings.Contains(b, `"to":"EDDM"`) || strings.Contains(b, `"stale"`) {
 		t.Errorf("just inside the window: %s", b)
 	}
-	if b = watches(rep{RouteFreshFor + time.Minute, "VHHH", "EDDM"}); !strings.Contains(b, `"to":"EDDM"`) || !strings.Contains(b, `"stale":true`) {
+	if b = watches(rep{InfoFreshFor + time.Minute, "VHHH", "EDDM"}); !strings.Contains(b, `"to":"EDDM"`) || !strings.Contains(b, `"stale":true`) {
 		t.Errorf("just outside the window: %s", b)
 	}
 	// The newest report is the current destination (the aircraft has turned round).
@@ -275,11 +275,96 @@ func TestWatchShowsReportedRoute(t *testing.T) {
 		t.Errorf("3 hour old report: %s", b)
 	}
 	// Too old to be worth showing at all.
-	if b = watches(rep{RouteHideAfter + time.Hour, "VHHH", "YSSY"}); strings.Contains(b, `"route"`) {
+	if b = watches(rep{InfoHideAfter + time.Hour, "VHHH", "YSSY"}); strings.Contains(b, `"route"`) {
 		t.Errorf("a day-old report still shown: %s", b)
 	}
 	// An unknown airport code is still shown, just without a name.
 	if b = watches(rep{time.Minute, "VHHH", "ZZZZ"}); !strings.Contains(b, `"to":"ZZZZ"`) || strings.Contains(b, `"to_name"`) {
 		t.Errorf("unknown airport: %s", b)
+	}
+}
+
+func TestWatchShowsCurrentFlight(t *testing.T) {
+	now := time.Date(2026, 10, 30, 18, 0, 0, 0, time.UTC)
+	type seed struct {
+		adsb     string // callsign on an ADS-B position
+		adsbAgo  time.Duration
+		flight   string // flight number in a message
+		callsign string // callsign in a message (AFN)
+		msgAgo   time.Duration
+		mismatch string
+	}
+	watches := func(kind string, seeds ...seed) string {
+		st, _ := store.Open(":memory:")
+		defer st.Close()
+		e, _ := watchlist.Parse("B-LRM", now, time.Time{})
+		if kind == "flight" {
+			e, _ = watchlist.Parse("CPA113", now, time.Time{})
+		}
+		e.Hex = "780AB8"
+		st.AddWatch(e)
+		for i, sd := range seeds {
+			if sd.adsb != "" {
+				st.AddPosition(store.Position{Hex: "780AB8", T: now.Add(-sd.adsbAgo), Lat: float64(i + 1), Lon: 1, Callsign: sd.adsb, Source: "adsb.lol"})
+			}
+			if sd.flight != "" || sd.callsign != "" {
+				st.AddMessage(store.Message{ID: int64(i + 1), Hex: "780AB8", T: now.Add(-sd.msgAgo), Label: "H1", Text: fmt.Sprint("t", i),
+					Flight: sd.flight, Callsign: sd.callsign, Mismatch: sd.mismatch})
+			}
+		}
+		ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+		defer ts.Close()
+		_, b := do(t, "GET", ts.URL+"/api/watches", "")
+		return b
+	}
+	min := time.Minute
+
+	if b := watches("tail"); strings.Contains(b, `"flight":{`) {
+		t.Errorf("flight with no data: %s", b)
+	}
+	// From ADS-B: both forms, not stale.
+	b := watches("tail", seed{adsb: "CPA113", adsbAgo: 20 * time.Second})
+	for _, want := range []string{`"callsign":"CPA113"`, `"number":"CX113"`, `"source":"ADS-B"`} {
+		if !strings.Contains(b, want) {
+			t.Errorf("missing %s in %s", want, b)
+		}
+	}
+	if strings.Contains(b, `"stale"`) {
+		t.Errorf("fresh ADS-B callsign called stale: %s", b)
+	}
+	// From a message's flight number (IATA form): the ICAO callsign is worked out.
+	b = watches("tail", seed{flight: "CX113", msgAgo: 5 * min})
+	if !strings.Contains(b, `"callsign":"CPA113"`) || !strings.Contains(b, `"number":"CX113"`) || !strings.Contains(b, `"source":"messages"`) {
+		t.Errorf("from message flight: %s", b)
+	}
+	// From an AFN callsign (ICAO form): the flight number is worked out.
+	if b = watches("tail", seed{callsign: "CPA833", msgAgo: 5 * min}); !strings.Contains(b, `"number":"CX833"`) {
+		t.Errorf("from AFN callsign: %s", b)
+	}
+	// Whichever is newer wins, in either direction.
+	if b = watches("tail", seed{adsb: "CPA843", adsbAgo: 2 * time.Hour}, seed{flight: "CX113", msgAgo: 5 * min}); !strings.Contains(b, `"number":"CX113"`) || strings.Contains(b, "CX843") {
+		t.Errorf("newer message should win: %s", b)
+	}
+	if b = watches("tail", seed{adsb: "CPA843", adsbAgo: 30 * time.Second}, seed{flight: "CX113", msgAgo: 5 * min}); !strings.Contains(b, `"number":"CX843"`) || !strings.Contains(b, `"source":"ADS-B"`) {
+		t.Errorf("newer ADS-B should win: %s", b)
+	}
+	// Staleness: three hours old is shown but flagged; a day and more is dropped.
+	if b = watches("tail", seed{flight: "CX113", msgAgo: 3 * time.Hour}); !strings.Contains(b, `"number":"CX113"`) || !strings.Contains(b, `"stale":true`) {
+		t.Errorf("3 hours: %s", b)
+	}
+	if b = watches("tail", seed{flight: "CX113", msgAgo: InfoHideAfter + time.Hour}); strings.Contains(b, `"flight":{`) {
+		t.Errorf("a day old: %s", b)
+	}
+	// A message whose text names another aircraft does not give this aircraft its flight.
+	if b = watches("tail", seed{flight: "CX999", msgAgo: min, mismatch: "text names B-LRD, which is hex 780AA4, not 780AB8"}); strings.Contains(b, `"flight":{`) {
+		t.Errorf("another aircraft's flight: %s", b)
+	}
+	// An airline we have no table entry for is shown as received.
+	if b = watches("tail", seed{adsb: "ZZZ123", adsbAgo: 10 * time.Second}); !strings.Contains(b, `"callsign":"ZZZ123"`) || strings.Contains(b, `"number"`) {
+		t.Errorf("unknown airline: %s", b)
+	}
+	// A flight watch already is a flight, so it gets no flight line.
+	if b = watches("flight", seed{adsb: "CPA113", adsbAgo: 10 * time.Second}); strings.Contains(b, `"flight":{`) {
+		t.Errorf("flight watch has a flight line: %s", b)
 	}
 }

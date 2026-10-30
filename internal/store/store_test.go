@@ -283,3 +283,36 @@ func TestLastRoute(t *testing.T) {
 		t.Errorf("other aircraft = %+v %v", r, ok)
 	}
 }
+
+func TestLastFlightAndCallsign(t *testing.T) {
+	s := open(t)
+	add := func(id int64, hex string, ago time.Duration, flight, callsign, mismatch string) {
+		s.AddMessage(Message{ID: id, Hex: hex, T: now.Add(-ago), Label: "H1", Text: "t" + string(rune('a'+id)), Flight: flight, Callsign: callsign, Mismatch: mismatch})
+	}
+	if _, ok := s.LastFlight("780AB8"); ok {
+		t.Fatal("flight from nothing")
+	}
+	add(1, "780AB8", 5*time.Hour, "CX833", "", "")
+	add(2, "780AB8", 2*time.Hour, "CX113", "", "")
+	add(3, "780AB8", time.Hour, "", "", "")                                                            // names no flight
+	add(4, "780AB8", 30*time.Minute, "CX999", "", "text names B-LRD, which is hex 780AA4, not 780AB8") // belongs to another aircraft
+	add(5, "780AA4", time.Minute, "CX555", "", "")                                                     // another aircraft
+	f, ok := s.LastFlight("780AB8")
+	if !ok || f.Flight != "CX113" || !f.T.Equal(now.Add(-2*time.Hour)) {
+		t.Errorf("flight = %+v %v", f, ok)
+	}
+	add(6, "780AB8", 10*time.Minute, "", "CPA113", "") // an AFN logon names only the callsign
+	if f, _ = s.LastFlight("780AB8"); f.Callsign != "CPA113" || f.Flight != "" {
+		t.Errorf("callsign-only message = %+v", f)
+	}
+
+	if _, _, ok := s.LastCallsign("780AB8"); ok {
+		t.Fatal("callsign from nothing")
+	}
+	s.AddPosition(Position{Hex: "780AB8", T: now.Add(-3 * time.Hour), Lat: 1, Lon: 1, Callsign: "CPA843", Source: "adsb.lol"})
+	s.AddPosition(Position{Hex: "780AB8", T: now.Add(-time.Hour), Lat: 2, Lon: 2, Callsign: "", Source: "adsb.lol"}) // feed had no callsign
+	cs, at, ok := s.LastCallsign("780AB8")
+	if !ok || cs != "CPA843" || !at.Equal(now.Add(-3*time.Hour)) {
+		t.Errorf("callsign = %q %v %v", cs, at, ok)
+	}
+}
