@@ -263,6 +263,9 @@ flights, or between fixes no aircraft could fly between.
 
 ## Projection
 
+The grey ghost plane appears only once the newest fix is 3 minutes old; a fresher one (ADS-B arrives about
+every 45 s) is the plane's position, and only the dotted look-ahead is drawn from it.
+
 An estimated position now (a grey ghost plane) and a dotted look-ahead, dead-reckoned from the newest
 trustworthy fix along its track at its ground speed (or the speed and track worked out from the last
 two fixes). Limits: never from a fix over an hour old, never more than 90 minutes beyond the fix, not
