@@ -587,3 +587,99 @@ func TestProviderIsAFallbackOnly(t *testing.T) {
 		t.Errorf("latched aircraft replaced: %+v", w[0])
 	}
 }
+
+type fakeSearch struct {
+	ms    []airframes.Message
+	calls []string
+}
+
+func (f *fakeSearch) SearchText(_ context.Context, q string) ([]airframes.Message, error) {
+	f.calls = append(f.calls, q)
+	return f.ms, nil
+}
+
+func textMsg(at time.Time, hex, tail, text string) airframes.Message {
+	m := airframes.Message{Timestamp: at, Text: airframes.FlexString(text)}
+	m.Airframe.ICAO, m.Airframe.Tail = airframes.FlexString(hex), airframes.FlexString(tail)
+	return m
+}
+
+// With nothing else able to find a flight, its number in the text of recent messages names the aircraft:
+// the newest recent match wins, an older flight of the same number does not, and the search is throttled.
+func TestFlightFoundInMessageText(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 22, 0, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("UPS58", now, time.Time{})
+	st.AddWatch(e)
+	f := &fake{byCallsign: map[string][]adsb.Aircraft{}, byHex: map[string][]adsb.Aircraft{}}
+	se := &fakeSearch{ms: []airframes.Message{
+		textMsg(now.Add(-2*time.Minute), "A762CC", "N575UP", "OAKODYA.AFN/FMHUPS58,.N575UP,,200552/FAK0,KZAK"),
+		textMsg(now.Add(-time.Minute), "A11111", "N111XX", "FREIGHT UPS580 PHNL/VHHH"),                 // another flight number
+		textMsg(now.Add(-26*time.Hour), "A76DF1", "N578UP", "B N578UP 29OCT26 1942 UPS58   PHNL/VHHH"), // yesterday
+		textMsg(now.Add(-time.Minute), "", "", "UPS58 with no airframe named"),
+	}}
+	p := &Poller{Store: st, ADSB: f, Search: se, Now: func() time.Time { return now }, WaitingEvery: time.Second, TrackingEvery: time.Second}
+
+	p.Once(context.Background())
+	if !reflect.DeepEqual(se.calls, []string{"UPS58"}) {
+		t.Fatalf("searched %v", se.calls)
+	}
+	w, _ := st.ListWatches(true)
+	if w[0].Hex != "A762CC" || w[0].Tail != "N575UP" || w[0].Status != watchlist.StatusTracking {
+		t.Fatalf("entry = %+v", w[0])
+	}
+	if hex, ok := st.HexForTail("N575UP"); !ok || hex != "A762CC" {
+		t.Errorf("airframe table: %q %v", hex, ok)
+	}
+	now = now.Add(time.Minute)
+	p.Once(context.Background())
+	if len(se.calls) != 1 {
+		t.Errorf("searched again after latching: %v", se.calls)
+	}
+}
+
+func TestMessageSearchThrottledAndNeverOverrides(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 22, 0, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("UPS58", now, time.Time{})
+	st.AddWatch(e)
+	f := &fake{byCallsign: map[string][]adsb.Aircraft{}, byHex: map[string][]adsb.Aircraft{}}
+	se := &fakeSearch{} // nothing yet
+	p := &Poller{Store: st, ADSB: f, Search: se, Now: func() time.Time { return now }, WaitingEvery: time.Second}
+	p.Once(context.Background())
+	now = now.Add(5 * time.Minute)
+	p.Once(context.Background())
+	if len(se.calls) != 1 {
+		t.Errorf("searched %d times in 5 minutes", len(se.calls))
+	}
+	now = now.Add(6 * time.Minute)
+	se.ms = []airframes.Message{textMsg(now.Add(-time.Minute), "A762CC", "N575UP", "x UPS58 x")}
+	p.Once(context.Background())
+	if w, _ := st.ListWatches(true); w[0].Hex != "A762CC" || len(se.calls) != 2 {
+		t.Errorf("entry %+v, searches %d", w[0], len(se.calls))
+	}
+	// ADS-B works for a watch: no search at all
+	st2, _ := store.Open(":memory:")
+	defer st2.Close()
+	e2, _ := watchlist.Parse("CKK624", now, time.Time{})
+	st2.AddWatch(e2)
+	a := ac(34)
+	a.Flight, a.Hex = "CKK624", "781D8D"
+	f2 := &fake{byCallsign: map[string][]adsb.Aircraft{"CKK624": {a}}, byHex: map[string][]adsb.Aircraft{}}
+	se2 := &fakeSearch{}
+	p2 := &Poller{Store: st2, ADSB: f2, Search: se2, Now: func() time.Time { return now }, WaitingEvery: time.Second}
+	p2.Once(context.Background())
+	if len(se2.calls) != 0 {
+		t.Errorf("searched although ADS-B had it: %v", se2.calls)
+	}
+}
+
+func TestNamesCallsign(t *testing.T) {
+	for text, want := range map[string]bool{"FMHUPS58,.N575UP": true, "UPS58": true, "UPS580": false, "UPS5": false, "xUPS581 UPS58": true, "ups58 pg1": true, "": false} {
+		if got := namesCallsign(text, "UPS58"); got != want {
+			t.Errorf("%q: %v", text, got)
+		}
+	}
+}

@@ -62,6 +62,7 @@ type Message struct {
 	} `json:"flight"`
 	Airframe struct {
 		Tail FlexString `json:"tail"`
+		ICAO FlexString `json:"icao"`
 	} `json:"airframe"`
 }
 
@@ -80,6 +81,21 @@ func (c *Client) Messages(ctx context.Context, hex string, since, until time.Tim
 	q.Set("limit", strconv.Itoa(PageSize))
 	q.Set("since", since.UTC().Format(time.RFC3339Nano))
 	q.Set("until", until.UTC().Format(time.RFC3339Nano))
+	return c.messages(ctx, q)
+}
+
+// SearchText returns the newest PageSize messages, across all aircraft, whose text contains s. It is how
+// a flight number is traced to an aircraft when nothing else can: the flight number is in the text of
+// many messages (flight plans, logons, performance reports), which name the airframe. Matches may be
+// from earlier flights of the same number, or stray (a short string can occur inside compressed data).
+func (c *Client) SearchText(ctx context.Context, s string) ([]Message, error) {
+	q := url.Values{}
+	q.Set("text", s)
+	q.Set("limit", strconv.Itoa(PageSize))
+	return c.messages(ctx, q)
+}
+
+func (c *Client) messages(ctx context.Context, q url.Values) ([]Message, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/messages?"+q.Encode(), nil)
 	if err != nil {
 		return nil, err

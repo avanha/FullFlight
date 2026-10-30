@@ -122,8 +122,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	afClient := airframes.NewClient()
 	p := &poller.Poller{Store: st, ADSB: adsb.NewClient(sources...), Log: log,
-		Airframes: airframes.NewClient(), WaitingEvery: cfg.Poll.Waiting, TrackingEvery: cfg.Poll.Tracking,
+		Airframes: afClient, Search: afClient, WaitingEvery: cfg.Poll.Waiting, TrackingEvery: cfg.Poll.Tracking,
 		StopoverGrace: cfg.Poll.StopoverGrace}
 	if cfg.AeroDataBox.APIKey != "" {
 		p.Flights, p.ProviderEvery = aerodatabox.NewClient(cfg.AeroDataBox.APIKey), cfg.AeroDataBox.Every

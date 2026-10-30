@@ -62,6 +62,12 @@ already follows. Each lookup uses your quota, so a watch asks at most every `aer
 Only flights that are airborne are used; an airline missing from the table needs its ICAO callsign and
 cannot be looked up.
 
+Last resort: a flight watch that ADS-B (and AeroDataBox, if set up) cannot find searches airframes.io for
+the flight's callsign in the text of recent messages (`text=UPS58`), at most every 10 minutes. Flight plans,
+logons and performance reports carry the flight number and name the airframe. The newest message within 3
+hours that names it decides the aircraft; yesterday's flight with the same number is older and ignored, and
+`UPS580` does not match `UPS58`. airframes.io allows 60 requests per window; this uses one per attempt.
+
 ## Datalink messages
 
 For every aircraft on an open watch (once its hex is known) the app pulls

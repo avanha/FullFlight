@@ -36,11 +36,17 @@ type FlightLookup interface {
 	ByNumber(ctx context.Context, number, date string) ([]aerodatabox.Flight, error)
 }
 
+// TextSearcher finds recent messages containing a string (airframes.io), across all aircraft.
+type TextSearcher interface {
+	SearchText(ctx context.Context, s string) ([]airframes.Message, error)
+}
+
 type Poller struct {
 	Store     *store.Store
 	ADSB      Source
 	Airframes AirframeLookup // optional
 	Flights   FlightLookup   // optional
+	Search    TextSearcher   // optional: last resort for a flight nothing else can find
 	Log       *slog.Logger
 	Now       func() time.Time
 
@@ -56,7 +62,14 @@ type Poller struct {
 	// ProviderMaxAge ignores a provider position older than this; default 6h.
 	ProviderMaxAge time.Duration
 
+	// TextSearchEvery is the least time between message searches for one flight watch; default 10m.
+	TextSearchEvery time.Duration
+	// TextMatchAge is how recent a message naming the flight must be to count: an aircraft in flight is
+	// heard from every few minutes, while the same flight number yesterday was another aircraft. Default 3h.
+	TextMatchAge time.Duration
+
 	providerAt map[int64]time.Time
+	searchAt   map[int64]time.Time
 	last       map[int64]time.Time
 	lookedUp   map[string]time.Time
 	noted      map[string]time.Time
@@ -87,7 +100,14 @@ func (p *Poller) defaults() {
 	if p.ProviderMaxAge == 0 {
 		p.ProviderMaxAge = 6 * time.Hour
 	}
+	if p.TextSearchEvery == 0 {
+		p.TextSearchEvery = 10 * time.Minute
+	}
+	if p.TextMatchAge == 0 {
+		p.TextMatchAge = 3 * time.Hour
+	}
 	if p.last == nil {
+		p.searchAt = map[int64]time.Time{}
 		p.providerAt = map[int64]time.Time{}
 		p.last = map[int64]time.Time{}
 		p.lookedUp = map[string]time.Time{}
@@ -189,6 +209,9 @@ func (p *Poller) poll(ctx context.Context, e watchlist.Entry, now time.Time) (er
 		changed = changed || c
 		if heard {
 			return nil
+		}
+		if e.Hex == "" {
+			changed = p.searchMessages(ctx, &e, now) || changed
 		}
 	}
 	if len(ac) == 0 {
@@ -453,4 +476,77 @@ func (p *Poller) askProvider(ctx context.Context, e *watchlist.Entry, now time.T
 		}
 	}
 	return true, changed
+}
+
+// searchMessages is the last resort for a flight watch with no aircraft: look for the flight number in the
+// text of recent datalink messages, which name the airframe. It takes the aircraft of the newest message that
+// is recent enough to be this flight, and follows it by hex from then on. changed says e was altered.
+func (p *Poller) searchMessages(ctx context.Context, e *watchlist.Entry, now time.Time) (changed bool) {
+	if p.Search == nil || e.Kind != watchlist.KindFlight || now.Sub(p.searchAt[e.ID]) < p.TextSearchEvery {
+		return false
+	}
+	icao, _ := airlines.Forms(e.Ident)
+	if icao == "" {
+		icao = strings.ToUpper(e.Ident)
+	}
+	p.searchAt[e.ID] = now
+	ms, err := p.Search.SearchText(ctx, icao)
+	if err != nil {
+		p.Log.Warn("message search failed", "watch", e.Ident, "err", err)
+		return false
+	}
+	hex, tail, ok := newestNaming(ms, icao, now, p.TextMatchAge)
+	if !ok {
+		return false
+	}
+	e.Hex, changed = hex, true
+	if e.Tail == "" {
+		e.Tail = tail
+	}
+	if e.Callsign == "" {
+		e.Callsign = icao
+	}
+	if e.Status == watchlist.StatusWaiting {
+		e.Status = watchlist.StatusTracking
+	}
+	if tail != "" {
+		if err := p.Store.RecordAirframe(store.Airframe{Hex: hex, Tail: tail, Source: "airframes.io", LastSeen: now}); err != nil {
+			p.Log.Error("record airframe", "err", err)
+		}
+	}
+	p.Log.Info("flight found in datalink messages", "watch", e.Ident, "hex", hex, "tail", tail)
+	return changed
+}
+
+// newestNaming returns the airframe of the newest message, no older than maxAge, whose text names the
+// callsign: the callsign must not run on into more digits (UPS58 is not UPS580) and the message must
+// say which airframe it came from.
+func newestNaming(ms []airframes.Message, callsign string, now time.Time, maxAge time.Duration) (hex, tail string, ok bool) {
+	var best time.Time
+	for _, m := range ms {
+		h := strings.ToUpper(string(m.Airframe.ICAO))
+		if h == "" || m.Timestamp.Before(now.Add(-maxAge)) || m.Timestamp.After(now.Add(5*time.Minute)) || !m.Timestamp.After(best) {
+			continue
+		}
+		if !namesCallsign(string(m.Text), callsign) {
+			continue
+		}
+		best, hex, tail, ok = m.Timestamp, h, strings.ToUpper(string(m.Airframe.Tail)), true
+	}
+	return
+}
+
+func namesCallsign(text, callsign string) bool {
+	text = strings.ToUpper(text)
+	for i := 0; ; {
+		j := strings.Index(text[i:], callsign)
+		if j < 0 {
+			return false
+		}
+		end := i + j + len(callsign)
+		if end >= len(text) || text[end] < '0' || text[end] > '9' {
+			return true
+		}
+		i = i + j + 1
+	}
 }
