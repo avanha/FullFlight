@@ -2,7 +2,9 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -396,5 +398,194 @@ func TestMigrationFixesCallsignsFiledAsTails(t *testing.T) {
 	defer s2.Close()
 	if all2, _ := s2.ListWatches(false); len(all2) != len(all) {
 		t.Errorf("reopen changed the watchlist: %d -> %d", len(all), len(all2))
+	}
+}
+
+func TestNotes(t *testing.T) {
+	s := open(t)
+	t1, t2 := now, now.Add(time.Hour)
+	a, err := s.AddNote("780AB8", "  The plane Yen took from SEA to HKG on 2026-10-27  \n", t1)
+	if err != nil || a.ID == 0 || a.Text != "The plane Yen took from SEA to HKG on 2026-10-27" || !a.Created.Equal(t1) {
+		t.Fatalf("add: %+v %v", a, err)
+	}
+	b, _ := s.AddNote("780AB8", "Hit a bird on 2026-10-29.\nSecond line.", t2)
+	s.AddNote("780AA4", "a different aircraft", t1)
+
+	got, err := s.Notes("780AB8")
+	if err != nil || len(got) != 2 || got[0].ID != b.ID || got[1].ID != a.ID {
+		t.Fatalf("newest first expected: %+v %v", got, err)
+	}
+	if got[0].Text != "Hit a bird on 2026-10-29.\nSecond line." {
+		t.Errorf("line breaks must survive: %q", got[0].Text)
+	}
+
+	// editing keeps the creation time and moves the update time
+	u, err := s.UpdateNote("780AB8", a.ID, "Corrected: Yen flew it on 2026-10-28", t2.Add(time.Hour))
+	if err != nil || u.Text != "Corrected: Yen flew it on 2026-10-28" || !u.Created.Equal(t1) || !u.Updated.Equal(t2.Add(time.Hour)) {
+		t.Errorf("update: %+v %v", u, err)
+	}
+	// a note can only be changed or removed through the airframe it belongs to
+	if _, err := s.UpdateNote("780AA4", a.ID, "hijack", t2); !errors.Is(err, ErrNoNote) {
+		t.Errorf("update through another airframe: %v", err)
+	}
+	if err := s.DeleteNote("780AA4", a.ID); !errors.Is(err, ErrNoNote) {
+		t.Errorf("delete through another airframe: %v", err)
+	}
+	if n, _ := s.NoteSummary("780AB8"); n != 2 {
+		t.Errorf("count = %d", n)
+	}
+	if n, latest := s.NoteSummary("780AB8"); n != 2 || latest != "Hit a bird on 2026-10-29.\nSecond line." {
+		t.Errorf("summary = %d %q", n, latest)
+	}
+	// bad input
+	for text, want := range map[string]error{"": ErrEmptyNote, "  \n\t ": ErrEmptyNote, strings.Repeat("x", MaxNoteBytes+1): ErrLongNote} {
+		if _, err := s.AddNote("780AB8", text, now); !errors.Is(err, want) {
+			t.Errorf("add %.12q: %v, want %v", text, err, want)
+		}
+		if _, err := s.UpdateNote("780AB8", a.ID, text, now); !errors.Is(err, want) {
+			t.Errorf("update %.12q: %v, want %v", text, err, want)
+		}
+	}
+	if _, err := s.AddNote("780AB8", strings.Repeat("x", MaxNoteBytes), now); err != nil {
+		t.Errorf("a note at the limit: %v", err)
+	}
+	// delete
+	if err := s.DeleteNote("780AB8", a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteNote("780AB8", a.ID); !errors.Is(err, ErrNoNote) {
+		t.Errorf("second delete: %v", err)
+	}
+	if _, err := s.UpdateNote("780AB8", 99999, "x", now); !errors.Is(err, ErrNoNote) {
+		t.Errorf("update of nothing: %v", err)
+	}
+}
+
+// An airframe with any note is never deleted: the database refuses, whoever asks.
+func TestAirframesWithNotesCannotBePurged(t *testing.T) {
+	s := open(t)
+	s.RecordAirframe(Airframe{Hex: "780AB8", Tail: "B-LRM", Type: "A359", Source: "x", LastSeen: now})
+	s.RecordAirframe(Airframe{Hex: "780AB8", Tail: "B-OLD", Source: "x", LastSeen: now.Add(-1000 * time.Hour)}) // an older registration, same aircraft
+	s.RecordAirframe(Airframe{Hex: "780AA4", Tail: "B-LRD", Source: "x", LastSeen: now})
+	n, _ := s.AddNote("780AB8", "keep this one", now)
+
+	for _, q := range []string{
+		`DELETE FROM airframe WHERE hex='780AB8'`,
+		`DELETE FROM airframe WHERE tail='B-OLD'`,            // just one of its registrations
+		`DELETE FROM airframe WHERE last_seen < 99999999999`, // a broad purge that would otherwise take everything
+		`DELETE FROM airframe`,
+	} {
+		_, err := s.db.Exec(q)
+		if err == nil || !strings.Contains(err.Error(), "never purged") {
+			t.Errorf("%s: err = %v, want a refusal", q, err)
+		}
+	}
+	all, _ := s.ListAirframes()
+	if len(all) != 3 {
+		t.Fatalf("rows survived? %d: %+v", len(all), all)
+	}
+	// the un-noted airframe can be deleted on its own
+	if _, err := s.db.Exec(`DELETE FROM airframe WHERE hex='780AA4'`); err != nil {
+		t.Errorf("an airframe without notes: %v", err)
+	}
+	// seeing it again must keep working (that is an update, not a delete-and-reinsert)
+	if err := s.RecordAirframe(Airframe{Hex: "780AB8", Tail: "B-LRM", Source: "adsb.lol", LastSeen: now.Add(time.Hour)}); err != nil {
+		t.Errorf("recording a sighting of a noted airframe: %v", err)
+	}
+	// only when its last note is gone is it purgeable again
+	s.AddNote("780AB8", "second", now)
+	s.DeleteNote("780AB8", n.ID)
+	if _, err := s.db.Exec(`DELETE FROM airframe WHERE hex='780AB8'`); err == nil {
+		t.Error("still has a note: should be refused")
+	}
+	ns, _ := s.Notes("780AB8")
+	s.DeleteNote("780AB8", ns[0].ID)
+	if _, err := s.db.Exec(`DELETE FROM airframe WHERE hex='780AB8'`); err != nil {
+		t.Errorf("no notes left: %v", err)
+	}
+}
+
+// An existing database upgrades to have the table and the protection.
+func TestNotesMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "m.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.db.Exec(`DROP TRIGGER airframe_keeps_notes`)
+	s.db.Exec(`DROP TABLE airframe_note`)
+	s.RecordAirframe(Airframe{Hex: "780AB8", Tail: "B-LRM", Source: "x", LastSeen: now})
+	s.db.Exec(`PRAGMA user_version = 7`) // as if made before notes existed
+	s.Close()
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := s.AddNote("780AB8", "after the upgrade", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM airframe`); err == nil {
+		t.Error("the upgraded database does not protect noted airframes")
+	}
+	if all, _ := s.ListAirframes(); len(all) != 1 {
+		t.Errorf("existing airframes lost: %+v", all)
+	}
+}
+
+func TestKnownAirframes(t *testing.T) {
+	s := open(t)
+	// 780AB8 has had two registrations; AAAAAA is only on a watch; BBBBBB only has a note; CCCCCC's watch is over
+	s.RecordAirframe(Airframe{Hex: "780AB8", Tail: "B-OLD", Type: "", Source: "x", FirstSeen: now.Add(-2000 * time.Hour), LastSeen: now.Add(-1000 * time.Hour)})
+	s.RecordAirframe(Airframe{Hex: "780AB8", Tail: "B-LRM", Type: "A359", Source: "x", FirstSeen: now.Add(-100 * time.Hour), LastSeen: now})
+	s.RecordAirframe(Airframe{Hex: "780AA4", Tail: "B-LRD", Type: "A359", Source: "x", FirstSeen: now.Add(-50 * time.Hour), LastSeen: now.Add(-time.Hour)})
+	w1, _ := watchlist.Parse("hex:AAAAAA", now, time.Time{})
+	s.AddWatch(w1)
+	w2, _ := watchlist.Parse("hex:CCCCCC", now, time.Time{})
+	w2, _ = s.AddWatch(w2)
+	w2.Status = watchlist.StatusDone
+	s.UpdateWatch(w2)
+	s.AddNote("BBBBBB", "a note about an aircraft we have never seen", now)
+	s.AddNote("780AB8", "first", now)
+	s.AddNote("780AB8", "second, the newest", now.Add(time.Minute))
+	s.AddMessage(Message{ID: 1, Hex: "780AB8", T: now, Label: "BA", Text: "a"})
+	s.AddMessage(Message{ID: 2, Hex: "780AB8", T: now, Label: "BA", Text: "b"})
+	s.AddPosition(Position{Hex: "780AB8", T: now, Lat: 1, Lon: 1, Source: "x"})
+
+	all, err := s.KnownAirframes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[string]KnownAirframe{}
+	var order []string
+	for _, a := range all {
+		by[a.Hex] = a
+		order = append(order, a.Hex)
+	}
+	if len(all) != 5 {
+		t.Fatalf("want 5 airframes, got %d: %v", len(all), order)
+	}
+	m := by["780AB8"]
+	if len(m.Tails) != 2 || m.Tails[0].Tail != "B-LRM" || m.Tails[1].Tail != "B-OLD" || m.Type != "A359" {
+		t.Errorf("tails newest first, type from the newest that has one: %+v", m)
+	}
+	if !m.FirstSeen.Equal(now.Add(-2000*time.Hour)) || !m.LastSeen.Equal(now) {
+		t.Errorf("seen %v .. %v", m.FirstSeen, m.LastSeen)
+	}
+	if m.Notes != 2 || m.LastNote != "second, the newest" || m.Messages != 2 || m.Positions != 1 || m.Watched {
+		t.Errorf("counts: %+v", m)
+	}
+	if a := by["AAAAAA"]; !a.Watched || len(a.Tails) != 0 || !a.LastSeen.IsZero() {
+		t.Errorf("watch-only hex: %+v", a)
+	}
+	if a := by["CCCCCC"]; a.Watched {
+		t.Errorf("a finished watch is not watching: %+v", a)
+	}
+	if a := by["BBBBBB"]; a.Notes != 1 || a.Watched || a.LastNote == "" {
+		t.Errorf("note-only hex: %+v", a)
+	}
+	if order[0] != "780AB8" || order[1] != "780AA4" {
+		t.Errorf("most recently seen first: %v", order)
 	}
 }

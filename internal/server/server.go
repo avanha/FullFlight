@@ -5,8 +5,10 @@ import (
 	"crypto/subtle"
 	"embed"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -40,6 +42,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/watches/{id}", s.deleteWatch)
 	mux.HandleFunc("GET /api/track/{hex}", s.track)
 	mux.HandleFunc("GET /api/airframes", s.airframes)
+	mux.HandleFunc("GET /api/airframes/{hex}/notes", s.listNotes)
+	mux.HandleFunc("POST /api/airframes/{hex}/notes", s.addNote)
+	mux.HandleFunc("PUT /api/airframes/{hex}/notes/{id}", s.editNote)
+	mux.HandleFunc("DELETE /api/airframes/{hex}/notes/{id}", s.deleteNote)
 	mux.HandleFunc("GET /api/messages/{hex}", s.messages)
 	mux.HandleFunc("GET /api/flights/{hex}", s.flights)
 	return s.auth(mux)
@@ -97,7 +103,9 @@ type watchJSON struct {
 	Type     string      `json:"type,omitempty"` // aircraft type, e.g. A359
 	LastPos  *lastPos    `json:"last_pos,omitempty"`
 	Route    *routeJSON  `json:"route,omitempty"`
-	Flight   *flightJSON `json:"flight,omitempty"` // tail and hex watches only: the flight it is operating
+	Flight   *flightJSON `json:"flight,omitempty"`    // tail and hex watches only: the flight it is operating
+	Notes    int         `json:"notes,omitempty"`     // notes you have written about this airframe
+	LastNote string      `json:"last_note,omitempty"` // the newest, abbreviated, for a hover
 }
 
 // flightJSON is the flight an aircraft is currently operating, from its newest ADS-B callsign
@@ -226,6 +234,9 @@ func (s *Server) withAircraft(j watchJSON) watchJSON {
 		j.Type = s.Store.TypeForHex(j.Hex)
 		j.LastPos = s.lastPosition(j.Hex)
 		j.Route = s.route(j.Hex)
+		if n, latest := s.Store.NoteSummary(j.Hex); n > 0 {
+			j.Notes, j.LastNote = n, preview(latest)
+		}
 		if j.Kind != string(watchlist.KindFlight) { // a flight watch already is a flight
 			j.Flight = s.flight(j.Hex)
 		}
@@ -339,25 +350,176 @@ func (s *Server) track(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
+// airframeJSON is one aircraft as the airframes page shows it.
+type airframeJSON struct {
+	Hex       string         `json:"hex"`
+	Tail      string         `json:"tail,omitempty"` // the registration it was last seen with
+	Tails     []tailSeenJSON `json:"tails,omitempty"`
+	Type      string         `json:"type,omitempty"`
+	FirstSeen time.Time      `json:"first_seen,omitzero"`
+	LastSeen  time.Time      `json:"last_seen,omitzero"`
+	Watched   bool           `json:"watched,omitempty"`
+	Notes     int            `json:"notes"`
+	LastNote  string         `json:"last_note,omitempty"`
+	Messages  int            `json:"messages"`
+	Positions int            `json:"positions"`
+}
+
+type tailSeenJSON struct {
+	Tail      string    `json:"tail"`
+	Type      string    `json:"type,omitempty"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+}
+
+// airframes lists every aircraft we know of, most recently seen first.
 func (s *Server) airframes(w http.ResponseWriter, r *http.Request) {
-	as, err := s.Store.ListAirframes()
+	as, err := s.Store.KnownAirframes()
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
 	}
-	type row struct {
-		Hex       string    `json:"hex"`
-		Tail      string    `json:"tail"`
-		Type      string    `json:"type,omitempty"`
-		Source    string    `json:"source"`
-		FirstSeen time.Time `json:"first_seen"`
-		LastSeen  time.Time `json:"last_seen"`
-	}
-	out := make([]row, 0, len(as))
+	out := make([]airframeJSON, 0, len(as))
 	for _, a := range as {
-		out = append(out, row{a.Hex, a.Tail, a.Type, a.Source, a.FirstSeen, a.LastSeen})
+		j := airframeJSON{Hex: a.Hex, Type: a.Type, FirstSeen: a.FirstSeen, LastSeen: a.LastSeen, Watched: a.Watched,
+			Notes: a.Notes, LastNote: preview(a.LastNote), Messages: a.Messages, Positions: a.Positions}
+		for _, t := range a.Tails {
+			j.Tails = append(j.Tails, tailSeenJSON{t.Tail, t.Type, t.FirstSeen, t.LastSeen})
+		}
+		if len(a.Tails) > 0 {
+			j.Tail = a.Tails[0].Tail
+		}
+		out = append(out, j)
 	}
 	writeJSON(w, 200, out)
+}
+
+// preview is the start of a note, for a hover.
+func preview(s string) string {
+	const max = 200
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "\u2026"
+	}
+	return s
+}
+
+type noteJSON struct {
+	ID      int64     `json:"id"`
+	Hex     string    `json:"hex"`
+	Note    string    `json:"note"`
+	Created time.Time `json:"created"`
+	Updated time.Time `json:"updated"`
+}
+
+func toNoteJSON(n store.Note) noteJSON {
+	return noteJSON{n.ID, n.Hex, n.Text, n.Created, n.Updated}
+}
+
+var hexPath = regexp.MustCompile(`^[0-9A-F]{6}$`)
+
+// noteHex reads the {hex} of a notes URL, or answers 400.
+func noteHex(w http.ResponseWriter, r *http.Request) (string, bool) {
+	h := strings.ToUpper(r.PathValue("hex"))
+	if !hexPath.MatchString(h) {
+		fail(w, 400, "an airframe is six hex digits, e.g. 780AB8")
+		return "", false
+	}
+	return h, true
+}
+
+func noteError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, store.ErrNoNote):
+		fail(w, 404, err.Error())
+	case errors.Is(err, store.ErrEmptyNote), errors.Is(err, store.ErrLongNote):
+		fail(w, 400, err.Error())
+	default:
+		fail(w, 500, err.Error())
+	}
+}
+
+func readNote(w http.ResponseWriter, r *http.Request) (string, bool) {
+	var in struct {
+		Note string `json:"note"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4*store.MaxNoteBytes)).Decode(&in); err != nil {
+		fail(w, 400, "bad JSON")
+		return "", false
+	}
+	return in.Note, true
+}
+
+func (s *Server) listNotes(w http.ResponseWriter, r *http.Request) {
+	hex, ok := noteHex(w, r)
+	if !ok {
+		return
+	}
+	ns, err := s.Store.Notes(hex)
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	out := make([]noteJSON, 0, len(ns))
+	for _, n := range ns {
+		out = append(out, toNoteJSON(n))
+	}
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) addNote(w http.ResponseWriter, r *http.Request) {
+	hex, ok := noteHex(w, r)
+	if !ok {
+		return
+	}
+	text, ok := readNote(w, r)
+	if !ok {
+		return
+	}
+	n, err := s.Store.AddNote(hex, text, s.now())
+	if err != nil {
+		noteError(w, err)
+		return
+	}
+	writeJSON(w, 201, toNoteJSON(n))
+}
+
+func (s *Server) editNote(w http.ResponseWriter, r *http.Request) {
+	hex, ok := noteHex(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		fail(w, 400, "bad note id")
+		return
+	}
+	text, ok := readNote(w, r)
+	if !ok {
+		return
+	}
+	n, err := s.Store.UpdateNote(hex, id, text, s.now())
+	if err != nil {
+		noteError(w, err)
+		return
+	}
+	writeJSON(w, 200, toNoteJSON(n))
+}
+
+func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request) {
+	hex, ok := noteHex(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		fail(w, 400, "bad note id")
+		return
+	}
+	if err := s.Store.DeleteNote(hex, id); err != nil {
+		noteError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type messageJSON struct {

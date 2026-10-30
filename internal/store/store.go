@@ -142,6 +142,23 @@ var migrations = []string{
 		OR ident GLOB '[A-Z][A-Z][A-Z][0-9][0-9][0-9][0-9]'
 		OR ident GLOB '[A-Z][A-Z][A-Z][0-9][0-9][0-9][0-9][A-Z]'
 	 );`,
+	// Notes about an airframe, as many as you like, each with its own text and times. An airframe that has
+	// any is never deleted: the database itself refuses (the airframe table is otherwise never pruned, but
+	// this holds for any future clean-up, or a hand-typed DELETE, too). Notes belong to the hex, which is
+	// the aircraft, not to a registration, which can change.
+	`CREATE TABLE IF NOT EXISTS airframe_note (
+		id      INTEGER PRIMARY KEY,
+		hex     TEXT NOT NULL,
+		note    TEXT NOT NULL,
+		created INTEGER NOT NULL,
+		updated INTEGER NOT NULL
+	 );
+	 CREATE INDEX IF NOT EXISTS airframe_note_hex ON airframe_note (hex);
+	 CREATE TRIGGER IF NOT EXISTS airframe_keeps_notes BEFORE DELETE ON airframe
+	 WHEN EXISTS (SELECT 1 FROM airframe_note WHERE hex = OLD.hex)
+	 BEGIN
+		SELECT RAISE(ABORT, 'airframe has notes and is never purged');
+	 END;`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.

@@ -541,3 +541,143 @@ func TestHowInputIsRead(t *testing.T) {
 		t.Errorf("bad prefix: %d %s", code, body)
 	}
 }
+
+func TestNotesAPI(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	clock := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return clock }}).Handler())
+	defer ts.Close()
+	base := ts.URL + "/api/airframes/780ab8/notes" // lower case works
+
+	if code, body := do(t, "GET", base, ""); code != 200 || strings.TrimSpace(body) != "[]" {
+		t.Fatalf("no notes yet: %d %s", code, body)
+	}
+	code, body := do(t, "POST", base, `{"note":"The plane Yen took from SEA to HKG on 2026-10-27"}`)
+	var a struct {
+		ID      int64     `json:"id"`
+		Hex     string    `json:"hex"`
+		Note    string    `json:"note"`
+		Created time.Time `json:"created"`
+	}
+	if err := json.Unmarshal([]byte(body), &a); err != nil || code != 201 || a.ID == 0 || a.Hex != "780AB8" || !a.Created.Equal(clock) ||
+		a.Note != "The plane Yen took from SEA to HKG on 2026-10-27" {
+		t.Fatalf("add: %d %s", code, body)
+	}
+	clock = clock.Add(time.Hour)
+	do(t, "POST", base, `{"note":"Second note\nwith two lines"}`)
+
+	_, body = do(t, "GET", base, "")
+	var list []struct {
+		ID   int64  `json:"id"`
+		Note string `json:"note"`
+	}
+	json.Unmarshal([]byte(body), &list)
+	if len(list) != 2 || list[0].Note != "Second note\nwith two lines" || list[1].ID != a.ID {
+		t.Errorf("newest first, line breaks kept: %s", body)
+	}
+
+	// edit
+	clock = clock.Add(time.Hour)
+	code, body = do(t, "PUT", fmt.Sprintf("%s/%d", base, a.ID), `{"note":"Corrected: 2026-10-28"}`)
+	if code != 200 || !strings.Contains(body, `"note":"Corrected: 2026-10-28"`) || !strings.Contains(body, `"created":"2026-10-30T12:00:00Z"`) || !strings.Contains(body, `"updated":"2026-10-30T14:00:00Z"`) {
+		t.Errorf("edit: %d %s", code, body)
+	}
+	// refusals
+	for _, c := range []struct {
+		method, url, body string
+		want              int
+		msg               string
+	}{
+		{"POST", ts.URL + "/api/airframes/NOTHEX/notes", `{"note":"x"}`, 400, "six hex digits"},
+		{"POST", base, `{"note":"   "}`, 400, "cannot be empty"},
+		{"POST", base, `{"note":"` + strings.Repeat("x", store.MaxNoteBytes+1) + `"}`, 400, "too long"},
+		{"POST", base, `not json`, 400, "bad JSON"},
+		{"PUT", base + "/99999", `{"note":"x"}`, 404, "no such note"},
+		{"PUT", base + "/abc", `{"note":"x"}`, 400, "bad note id"},
+		{"PUT", fmt.Sprintf("%s/%d", ts.URL+"/api/airframes/780AA4/notes", a.ID), `{"note":"hijack"}`, 404, "no such note"}, // another airframe's note
+		{"DELETE", fmt.Sprintf("%s/%d", ts.URL+"/api/airframes/780AA4/notes", a.ID), ``, 404, "no such note"},
+		{"DELETE", base + "/99999", ``, 404, "no such note"},
+	} {
+		code, body := do(t, c.method, c.url, c.body)
+		if code != c.want || !strings.Contains(body, c.msg) {
+			t.Errorf("%s %s: %d %s, want %d %q", c.method, c.url, code, body, c.want, c.msg)
+		}
+	}
+	// delete
+	if code, _ := do(t, "DELETE", fmt.Sprintf("%s/%d", base, a.ID), ""); code != 204 {
+		t.Errorf("delete: %d", code)
+	}
+	if _, body = do(t, "GET", base, ""); strings.Contains(body, "Corrected") || !strings.Contains(body, "Second note") {
+		t.Errorf("after delete: %s", body)
+	}
+}
+
+func TestNotesAreVisibleOnWatchesAndTheAirframeList(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 18, 0, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("B-LRM", now, time.Time{})
+	e.Hex = "780AB8"
+	st.AddWatch(e)
+	e2, _ := watchlist.Parse("B-LRD", now, time.Time{})
+	e2.Hex = "780AA4"
+	st.AddWatch(e2)
+	st.RecordAirframe(store.Airframe{Hex: "780AB8", Tail: "B-LRM", Type: "A359", Source: "x", LastSeen: now})
+	st.RecordAirframe(store.Airframe{Hex: "780AB8", Tail: "B-OLD", Source: "x", LastSeen: now.Add(-100 * time.Hour)})
+	st.AddNote("780AB8", "first", now)
+	st.AddNote("780AB8", strings.Repeat("long ", 100), now.Add(time.Minute)) // newest, 500 characters
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+
+	_, body := do(t, "GET", ts.URL+"/api/watches", "")
+	var ws []struct {
+		Ident    string
+		Notes    int    `json:"notes"`
+		LastNote string `json:"last_note"`
+	}
+	json.Unmarshal([]byte(body), &ws)
+	by := map[string]int{}
+	for i, w := range ws {
+		by[w.Ident] = i
+	}
+	m, d := ws[by["B-LRM"]], ws[by["B-LRD"]]
+	if m.Notes != 2 || !strings.HasPrefix(m.LastNote, "long long") || len([]rune(m.LastNote)) != 201 || !strings.HasSuffix(m.LastNote, "…") {
+		t.Errorf("B-LRM: %d notes, preview of %d runes: %.30q", m.Notes, len([]rune(m.LastNote)), m.LastNote)
+	}
+	if d.Notes != 0 || d.LastNote != "" {
+		t.Errorf("B-LRD has none: %+v", d)
+	}
+	if strings.Contains(body, `"notes":0`) {
+		t.Errorf("zero counts should be left out: %s", body)
+	}
+
+	_, body = do(t, "GET", ts.URL+"/api/airframes", "")
+	var af []struct {
+		Hex   string `json:"hex"`
+		Tail  string `json:"tail"`
+		Tails []struct {
+			Tail string `json:"tail"`
+		} `json:"tails"`
+		Notes   int  `json:"notes"`
+		Watched bool `json:"watched"`
+	}
+	if err := json.Unmarshal([]byte(body), &af); err != nil || len(af) != 2 {
+		t.Fatalf("%v: %s", err, body)
+	}
+	if af[0].Hex != "780AB8" || af[0].Tail != "B-LRM" || len(af[0].Tails) != 2 || af[0].Tails[1].Tail != "B-OLD" || af[0].Notes != 2 || !af[0].Watched {
+		t.Errorf("780AB8 = %+v", af[0])
+	}
+	if af[1].Hex != "780AA4" || af[1].Tail != "" || af[1].Notes != 0 { // known only from its watch
+		t.Errorf("780AA4 = %+v", af[1])
+	}
+}
+
+func TestNotesNeedTheLogin(t *testing.T) {
+	ts := setup(t, "secret")
+	for _, c := range [][2]string{{"GET", "/api/airframes"}, {"GET", "/api/airframes/780AB8/notes"}, {"POST", "/api/airframes/780AB8/notes"}, {"DELETE", "/api/airframes/780AB8/notes/1"}} {
+		if code, _ := do(t, c[0], ts.URL+c[1], `{"note":"x"}`); code != 401 {
+			t.Errorf("%s %s without credentials = %d", c[0], c[1], code)
+		}
+	}
+}
