@@ -100,6 +100,15 @@ destination, it was the first airport requested only 4 times in 16 and the last 
 On flight and hex watches the tail has a 📋 button that copies it, so an aircraft first
 followed by callsign can be re-added by registration.
 
+## ADS-B sources
+
+The configured sources are asked in order, but an empty answer is not final: sources hear
+different parts of the sky, so the next one is asked, and the results are merged (fresher
+position wins; a missing callsign, registration or type is filled in from the other). A
+complete answer (a position under 20 s old and a callsign) stops the search, so the second
+source costs nothing while the first has the aircraft. A source that errors is skipped while
+another answers.
+
 ## Web page
 
 Choosing a watch centres the map (zoom 7) on that aircraft's newest trustworthy

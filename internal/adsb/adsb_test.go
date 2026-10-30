@@ -107,3 +107,123 @@ func TestRateSpacing(t *testing.T) {
 		t.Errorf("3 requests took %v, want >= 200ms", d)
 	}
 }
+
+// twoSources serves a fixed JSON answer per source and counts the requests each receives.
+func twoSources(t *testing.T, first, second string) (*Client, *[2]int) {
+	t.Helper()
+	var n [2]int
+	mk := func(i int, body string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n[i]++
+			if body == "ERR" {
+				w.WriteHeader(500)
+				return
+			}
+			w.Write([]byte(body))
+		}))
+	}
+	a, b := mk(0, first), mk(1, second)
+	t.Cleanup(a.Close)
+	t.Cleanup(b.Close)
+	c := NewClient(Source{Name: "one", BaseURL: a.URL, RegPath: "reg"}, Source{Name: "two", BaseURL: b.URL, RegPath: "reg"})
+	c.MinSpacing = time.Millisecond
+	return c, &n
+}
+
+const (
+	none     = `{"ac":[]}`
+	full     = `{"ac":[{"hex":"a1b2c3","flight":"UAL143  ","r":"N24993","t":"B789","lat":40,"lon":-100,"seen_pos":2}]}`
+	noCall   = `{"ac":[{"hex":"a1b2c3","lat":40.1,"lon":-100.1,"seen_pos":0.5}]}` // fresher, but no callsign
+	staleBut = `{"ac":[{"hex":"a1b2c3","flight":"UAL143  ","r":"N24993","t":"B789","lat":39,"lon":-99,"seen_pos":30}]}`
+)
+
+// The N24993 case: the first source has never heard the aircraft, the second has it.
+// A position that is only just usable is worth a second opinion; a fresh complete one is not.
+func TestStalePositionAsksTheOtherSource(t *testing.T) {
+	c, n := twoSources(t, staleBut, noCall) // 30 s old against 0.5 s old
+	ac, _ := c.Hex(context.Background(), "a1b2c3")
+	if *n != [2]int{1, 1} || *ac[0].Lat != 40.1 {
+		t.Errorf("requests %v, lat %v", *n, *ac[0].Lat)
+	}
+	c, n = twoSources(t, full, noCall) // 2 s old and complete: no second request
+	c.Hex(context.Background(), "a1b2c3")
+	if *n != [2]int{1, 0} {
+		t.Errorf("requests %v", *n)
+	}
+}
+
+func TestEmptyFirstSourceFallsThrough(t *testing.T) {
+	c, n := twoSources(t, none, full)
+	ac, err := c.Reg(context.Background(), "N24993")
+	if err != nil || len(ac) != 1 || ac[0].Callsign() != "UAL143" || ac[0].Source != "two" {
+		t.Fatalf("got %+v, %v", ac, err)
+	}
+	if *n != [2]int{1, 1} {
+		t.Errorf("requests = %v", *n)
+	}
+}
+
+func TestCompleteAnswerStopsAtTheFirstSource(t *testing.T) {
+	c, n := twoSources(t, full, full)
+	ac, _ := c.Reg(context.Background(), "N24993")
+	if len(ac) != 1 || ac[0].Source != "one" || *n != [2]int{1, 0} {
+		t.Errorf("got %+v, requests %v: a complete answer should not cost a second request", ac, *n)
+	}
+}
+
+func TestMissingCallsignIsFilledFromAnotherSource(t *testing.T) {
+	// The first source has the freshest position but no callsign; the second has the callsign.
+	c, n := twoSources(t, noCall, staleBut)
+	ac, _ := c.Hex(context.Background(), "a1b2c3")
+	if len(ac) != 1 {
+		t.Fatalf("got %+v", ac)
+	}
+	a := ac[0]
+	if a.Callsign() != "UAL143" || a.Reg != "N24993" || a.Type != "B789" {
+		t.Errorf("identity not filled in: %+v", a)
+	}
+	if *a.Lat != 40.1 || a.Source != "one" {
+		t.Errorf("the fresher position should win: lat %v from %s", *a.Lat, a.Source)
+	}
+	if *n != [2]int{1, 1} {
+		t.Errorf("requests = %v", *n)
+	}
+	// ... and the other way round: the second source has the fresher position.
+	c, _ = twoSources(t, staleBut, noCall)
+	ac, _ = c.Hex(context.Background(), "a1b2c3")
+	if *ac[0].Lat != 40.1 || ac[0].Source != "two" || ac[0].Callsign() != "UAL143" {
+		t.Errorf("reverse: %+v", ac[0])
+	}
+}
+
+func TestOneSourceErroringIsTolerated(t *testing.T) {
+	c, _ := twoSources(t, "ERR", full)
+	if ac, err := c.Reg(context.Background(), "N24993"); err != nil || len(ac) != 1 {
+		t.Errorf("got %+v, %v", ac, err)
+	}
+	c, _ = twoSources(t, none, "ERR") // an empty answer plus an error is still an answer
+	if ac, err := c.Reg(context.Background(), "N24993"); err != nil || len(ac) != 0 {
+		t.Errorf("empty + error: %+v, %v", ac, err)
+	}
+	c, _ = twoSources(t, "ERR", "ERR")
+	if _, err := c.Reg(context.Background(), "N24993"); err == nil {
+		t.Error("both failing should be an error")
+	}
+}
+
+func TestBothEmptyIsEmptyNotError(t *testing.T) {
+	c, n := twoSources(t, none, none)
+	if ac, err := c.Reg(context.Background(), "N24993"); err != nil || len(ac) != 0 || *n != [2]int{1, 1} {
+		t.Errorf("got %+v, %v, requests %v", ac, err, *n)
+	}
+}
+
+func TestMergeKeepsDistinctAircraft(t *testing.T) {
+	c, _ := twoSources(t,
+		`{"ac":[{"hex":"aaaaaa","lat":1,"lon":1,"seen_pos":1}]}`, // no callsign yet, so the second source is asked too
+		`{"ac":[{"hex":"bbbbbb","flight":"DAL2","lat":2,"lon":2,"seen_pos":1},{"hex":"AAAAAA","flight":"AAL1","lat":1,"lon":1,"seen_pos":3}]}`)
+	ac, _ := c.Callsign(context.Background(), "x")
+	if len(ac) != 2 || ac[0].Hex != "AAAAAA" || ac[1].Hex != "BBBBBB" {
+		t.Fatalf("got %+v", ac)
+	}
+}

@@ -86,8 +86,12 @@ type response struct {
 	Msg string     `json:"msg"`
 }
 
-// Client tries each source in order and returns the first that answers
-// without error. An empty result is a valid answer ("not in coverage").
+// Client queries its sources in order. An empty answer is not taken as final: sources see
+// different parts of the sky (an aircraft adsb.lol has never heard may be on adsb.fi, and the
+// reverse), and a position without a callsign is not the whole story either. So it keeps asking
+// until it has an answer that is complete (every aircraft has a position and a callsign) or the
+// sources run out, then merges what it got. An error from one source is skipped as long as another
+// answers.
 type Client struct {
 	Sources    []Source
 	HTTP       *http.Client
@@ -120,21 +124,96 @@ func (c *Client) Reg(ctx context.Context, reg string) ([]Aircraft, error) {
 
 func (c *Client) query(ctx context.Context, path func(Source) string) ([]Aircraft, error) {
 	var errs []error
+	var merged []Aircraft
+	answered := false
 	for _, s := range c.Sources {
 		ac, err := c.get(ctx, s, path(s))
-		if err == nil {
-			for i := range ac {
-				ac[i].Source = s.Name
-				ac[i].Hex = strings.ToUpper(ac[i].Hex)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", s.Name, err))
+			if ctx.Err() != nil {
+				break
 			}
-			return ac, nil
+			continue
 		}
-		errs = append(errs, fmt.Errorf("%s: %w", s.Name, err))
-		if ctx.Err() != nil {
+		answered = true
+		for i := range ac {
+			ac[i].Source = s.Name
+			ac[i].Hex = strings.ToUpper(ac[i].Hex)
+		}
+		merged = merge(merged, ac)
+		if complete(merged) {
 			break
 		}
 	}
-	return nil, errors.Join(errs...)
+	if !answered {
+		return nil, errors.Join(errs...)
+	}
+	return merged, nil
+}
+
+// FreshEnough is how old a position may be (seconds since it was last updated) before another
+// source is asked for a fresher one. The poller discards positions over a minute old.
+const FreshEnough = 20.0
+
+// complete reports whether every aircraft has a recent position and a callsign, so asking
+// another source could add little.
+func complete(ac []Aircraft) bool {
+	if len(ac) == 0 {
+		return false
+	}
+	for _, a := range ac {
+		if a.Lat == nil || a.Lon == nil || strings.TrimSpace(a.Flight) == "" || (a.SeenPos != nil && *a.SeenPos > FreshEnough) {
+			return false
+		}
+	}
+	return true
+}
+
+// merge combines two sources' answers. An aircraft both report keeps the fresher position, and
+// anything it lacks (callsign, registration, type, squawk) is filled in from the other.
+func merge(have, more []Aircraft) []Aircraft {
+	for _, b := range more {
+		k := -1
+		for i := range have {
+			if have[i].Hex == b.Hex {
+				k = i
+				break
+			}
+		}
+		if k < 0 {
+			have = append(have, b)
+			continue
+		}
+		a := have[k]
+		if fresher(b, a) {
+			a, b = b, a
+		}
+		if strings.TrimSpace(a.Flight) == "" {
+			a.Flight = b.Flight
+		}
+		if a.Reg == "" {
+			a.Reg = b.Reg
+		}
+		if a.Type == "" {
+			a.Type = b.Type
+		}
+		if a.Squawk == "" {
+			a.Squawk = b.Squawk
+		}
+		have[k] = a
+	}
+	return have
+}
+
+// fresher reports whether x has a newer position than y.
+func fresher(x, y Aircraft) bool {
+	if x.Lat == nil || x.Lon == nil {
+		return false
+	}
+	if y.Lat == nil || y.Lon == nil {
+		return true
+	}
+	return x.SeenPos != nil && y.SeenPos != nil && *x.SeenPos < *y.SeenPos
 }
 
 func (c *Client) get(ctx context.Context, s Source, path string) ([]Aircraft, error) {
