@@ -5,6 +5,7 @@ package poller
 import (
 	"context"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -405,6 +406,8 @@ func (p *Poller) findFlight(ctx context.Context, e watchlist.Entry) ([]adsb.Airc
 	return nil, nil
 }
 
+var callsignShape = regexp.MustCompile(`^[A-Z]{3}\d{1,4}[A-Z]?$`)
+
 // askProvider looks the flight up by number when ADS-B has nothing. If the provider has it in the air
 // it latches the aircraft onto the watch (hex, tail, callsign, destination if none was given) so its
 // datalink messages are followed, and stores the provider's position. heard says the provider has
@@ -414,6 +417,9 @@ func (p *Poller) askProvider(ctx context.Context, e *watchlist.Entry, now time.T
 		return false, false
 	}
 	_, iata := airlines.Forms(e.Ident)
+	if iata == "" && callsignShape.MatchString(e.Ident) {
+		iata = e.Ident // an airline missing from our table: the provider also takes the ICAO callsign (FJI911)
+	}
 	if iata == "" {
 		return false, false
 	}

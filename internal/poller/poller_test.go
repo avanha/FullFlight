@@ -683,3 +683,27 @@ func TestNamesCallsign(t *testing.T) {
 		}
 	}
 }
+
+// An airline missing from the table (Fiji Airways) is looked up by its ICAO callsign, which the provider accepts;
+// a two-letter flight number for such an airline cannot be and is left alone.
+func TestProviderTakesCallsignOfUnknownAirline(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 21, 30, 0, 0, time.UTC)
+	for _, in := range []string{"FJI911", "flight:XQ911"} {
+		e, _ := watchlist.Parse(in, now, time.Time{})
+		st.AddWatch(e)
+	}
+	f := &fake{byCallsign: map[string][]adsb.Aircraft{}, byHex: map[string][]adsb.Aircraft{}}
+	pr := &fakeProvider{byDate: map[string][]aerodatabox.Flight{"2026-10-30": {{Status: "EnRoute", Hex: "C8809D", Reg: "DQ-FAJ", To: "YSSY"}}}}
+	p := &Poller{Store: st, ADSB: f, Flights: pr, Now: func() time.Time { return now }, WaitingEvery: time.Second}
+	p.Once(context.Background())
+	if len(pr.calls) == 0 || pr.calls[0] != "FJI911/2026-10-30" {
+		t.Fatalf("calls = %v", pr.calls)
+	}
+	for _, c := range pr.calls {
+		if strings.HasPrefix(c, "XQ") {
+			t.Errorf("asked for a flight number we cannot convert: %v", pr.calls)
+		}
+	}
+}
