@@ -231,7 +231,7 @@ highlightGroup = null;
   };
   const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
   // the legend lists all five sources
-  assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS']);
+  assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS', 'AeroDataBox']);
   assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Waypoints|Predictions|Projection', 'waypoints, predictions and projection have legend entries');
   // each source gets its own colour and style
   for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {
@@ -244,6 +244,10 @@ highlightGroup = null;
   const ab = (mm, lat) => ({t: `2026-10-30T16:${String(mm).padStart(2, '0')}:00Z`, lat, lon: -100, alt_ft: 35000, track: 90, source: 'adsb.lol'});
   let r = await lineOf([ab(0, 40), ab(1, 40.1), ab(2, 40.2)], []);
   assert.strictEqual(r.length, 1); assert.strictEqual(r[0].color, COLORS.adsb); assert.strictEqual(r[0].n, 3);
+  // the flight-number provider's positions are their own grey track, never part of the ADS-B line
+  const pv = (mm, lat) => ({...ab(mm, lat), source: 'aerodatabox'});
+  r = await lineOf([ab(0, 40), ab(1, 40.1), pv(2, 40.2), pv(30, 41)], []);
+  assert.deepStrictEqual(r.map(x => [x.color, x.n]), [[COLORS.adsb, 2], ['#6c757d', 2]]);
   // ... but a 25 minute silence (out of coverage) is not bridged; the stray single point draws no line
   r = await lineOf([ab(0, 40), ab(1, 40.1), ab(26, 41), ab(27, 41.1), ab(50, 42)], []);
   assert.deepStrictEqual(r.map(x => x.n), [2, 2], 'ADS-B split at the gap, lone point left out');

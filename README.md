@@ -49,6 +49,19 @@ with an IATA code, embedded from `internal/airports/airports.csv`.
 Every hex/tail pairing ever seen (from ADS-B or airframes.io) is kept in the
 `airframe` table forever, independent of watches; see `GET /api/airframes`.
 
+## Finding a flight ADS-B cannot see
+
+With an AeroDataBox key (`aerodatabox.api_key` in `config.yaml`; `config.example.yaml` has the placeholder,
+and the real file is git-ignored) a flight watch that ADS-B cannot find, or has lost, is looked up by its
+IATA number (CKK624 becomes CK624, via the airline table) and departure date, today then yesterday UTC when
+the watch has no date. If the provider has it in the air, the watch latches onto the aircraft's hex and
+registration, takes the destination if none was given, and so starts following its datalink messages. The
+provider's own position, when it has one, is stored with source `aerodatabox` and drawn as a grey dotted
+track. It is only a fallback: with ADS-B working it is never asked, and it never replaces an aircraft the watch
+already follows. Each lookup uses your quota, so a watch asks at most every `aerodatabox.every` (30m).
+Only flights that are airborne are used; an airline missing from the table needs its ICAO callsign and
+cannot be looked up.
+
 ## Datalink messages
 
 For every aircraft on an open watch (once its hex is known) the app pulls

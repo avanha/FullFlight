@@ -290,8 +290,8 @@ func (s *Store) UpdateWatch(e watchlist.Entry) error {
 	if e.Airborne {
 		airborne = 1
 	}
-	_, err := s.db.Exec(`UPDATE watch SET status=?, end_ts=?, hex=?, tail=?, callsign=?, airborne=?, landed_ts=? WHERE id=?`,
-		e.Status, ts(e.End), e.Hex, e.Tail, e.Callsign, airborne, landed, e.ID)
+	_, err := s.db.Exec(`UPDATE watch SET status=?, end_ts=?, dest=?, hex=?, tail=?, callsign=?, airborne=?, landed_ts=? WHERE id=?`,
+		e.Status, ts(e.End), e.Dest, e.Hex, e.Tail, e.Callsign, airborne, landed, e.ID)
 	return err
 }
 

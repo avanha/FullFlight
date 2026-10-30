@@ -16,3 +16,7 @@ poll:
 
 navdata:
   dir: data/navdata            # optional waypoint database; fetch it with scripts/fetch-navdata.sh
+
+aerodatabox:                   # optional: find a flight by number when ADS-B has lost it (mid-ocean)
+  api_key: ""                  # RapidAPI key for AeroDataBox; empty turns this off
+  every: 30m                   # least time between lookups for one watch; each one uses your quota

@@ -184,18 +184,18 @@ func TestHexShapedCallsign(t *testing.T) {
 
 // A two-letter airline we do not know is taken for a registration, as JA123A must be; flight: says otherwise.
 func TestExplicitPrefixes(t *testing.T) {
-	if e, _ := Parse("CK624", now, time.Time{}); e.Kind != KindTail {
-		t.Errorf("CK624 alone = %+v", e)
+	if e, _ := Parse("XQ624", now, time.Time{}); e.Kind != KindTail {
+		t.Errorf("XQ624 alone = %+v", e)
 	}
 	for in, want := range map[string]struct {
 		kind      Kind
 		ident, dt string
 		dest      string
 	}{
-		"flight:CK624":                 {KindFlight, "CK624", "", ""},
-		"FLIGHT:ck624 2026-11-05":      {KindFlight, "CK624", "2026-11-05", ""},
-		"flight:CK624 PANC":            {KindFlight, "CK624", "", "PANC"},
-		"flight:CK624 2026-11-05 PANC": {KindFlight, "CK624", "2026-11-05", "PANC"},
+		"flight:XQ624":                 {KindFlight, "XQ624", "", ""},
+		"FLIGHT:xq624 2026-11-05":      {KindFlight, "XQ624", "2026-11-05", ""},
+		"flight:XQ624 PANC":            {KindFlight, "XQ624", "", "PANC"},
+		"flight:XQ624 2026-11-05 PANC": {KindFlight, "XQ624", "2026-11-05", "PANC"},
 		"tail:CKK624":                  {KindTail, "CKK624", "", ""},
 		"reg:b-lrm":                    {KindTail, "B-LRM", "", ""},
 	} {

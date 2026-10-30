@@ -533,9 +533,9 @@ func TestHowInputIsRead(t *testing.T) {
 		}
 	}
 	// a flight whose airline we cannot turn into a callsign is refused now, with the way out
-	code, body := do(t, "POST", ts.URL+"/api/watches", `{"input":"flight:CK624"}`)
-	if code != 400 || !strings.Contains(body, `unknown airline code \"CK\"`) || !strings.Contains(body, "ICAO callsign") {
-		t.Errorf("flight:CK624 = %d %s", code, body)
+	code, body := do(t, "POST", ts.URL+"/api/watches", `{"input":"flight:XQ624"}`)
+	if code != 400 || !strings.Contains(body, `unknown airline code \"XQ\"`) || !strings.Contains(body, "ICAO callsign") {
+		t.Errorf("flight:XQ624 = %d %s", code, body)
 	}
 	if code, body = do(t, "POST", ts.URL+"/api/watches", `{"input":"bad:XYZ"}`); code != 400 || !strings.Contains(body, "unknown prefix") {
 		t.Errorf("bad prefix: %d %s", code, body)

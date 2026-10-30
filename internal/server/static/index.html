@@ -98,6 +98,7 @@ const SOURCES = {
   cpdlc:        {name: 'CPDLC', color: '#7b2cbf', dash: '10 4 2 4',   weight: 2, gapMin: 150},
   miam:         {name: 'REP081', color: '#0a9396', dash: '8 4',       weight: 2, gapMin: 90},
   fms_position: {name: 'FMS',   color: '#2b9348', dash: '2 5',        weight: 2, gapMin: 60},
+  lookup:       {name: 'AeroDataBox', color: '#6c757d', dash: '1 6', weight: 2, gapMin: 180},
 };
 for (const src of Object.values(SOURCES)) src.group = L.layerGroup().addTo(map);
 L.control.layers(null, Object.fromEntries(Object.values(SOURCES).map(src =>
@@ -579,7 +580,9 @@ async function showTrack(w, focus) {
       }
     }
   };
-  drawTrack('adsb', pts.map(p => ({lat: p.lat, lon: p.lon, t: new Date(p.t).getTime()})));
+  const fixOf = p => ({lat: p.lat, lon: p.lon, t: new Date(p.t).getTime()});
+  drawTrack('adsb', pts.filter(p => p.source !== 'aerodatabox').map(fixOf));
+  drawTrack('lookup', pts.filter(p => p.source === 'aerodatabox').map(fixOf));   // the provider's own positions, e.g. over the ocean
 
   // Positions reported inside messages: a dot in the source's colour (grey if impossible, faint and dotted if
   // their time is unverified), and a track through them.

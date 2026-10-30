@@ -22,6 +22,9 @@ var icaoByIATA = map[string]string{
 	"VN": "HVN", "CX": "CPA", "KA": "HDA", "BR": "EVA", "CI": "CAL", "JL": "JAL", "NH": "ANA",
 	"KE": "KAL", "OZ": "AAR", "CA": "CCA", "MU": "CES", "CZ": "CSN", "HU": "CHH", "QF": "QFA",
 	"NZ": "ANZ", "VA": "VOZ", "JQ": "JST",
+	// cargo, and others seen on Pacific routes
+	"CK": "CKK", "ZG": "TZP", "FX": "FDX", "5X": "UPS", "KZ": "NCA", "CV": "CLX", "LD": "AHK", "5Y": "GTI",
+	"PO": "PAC", "K4": "CKS", "QY": "BCS",
 }
 
 var icaoSet = func() map[string]bool {

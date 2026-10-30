@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/avanha/fullflight/internal/adsb"
+	"github.com/avanha/fullflight/internal/aerodatabox"
 	"github.com/avanha/fullflight/internal/airframes"
 	"github.com/avanha/fullflight/internal/config"
 	"github.com/avanha/fullflight/internal/datalink"
@@ -124,6 +125,10 @@ func main() {
 	p := &poller.Poller{Store: st, ADSB: adsb.NewClient(sources...), Log: log,
 		Airframes: airframes.NewClient(), WaitingEvery: cfg.Poll.Waiting, TrackingEvery: cfg.Poll.Tracking,
 		StopoverGrace: cfg.Poll.StopoverGrace}
+	if cfg.AeroDataBox.APIKey != "" {
+		p.Flights, p.ProviderEvery = aerodatabox.NewClient(cfg.AeroDataBox.APIKey), cfg.AeroDataBox.Every
+		log.Info("flight-number lookup enabled", "provider", "aerodatabox")
+	}
 	go p.Run(ctx)
 
 	fetcher := &datalink.Fetcher{Store: st, Source: airframes.NewClient(), Log: log}

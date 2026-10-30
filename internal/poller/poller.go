@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/avanha/fullflight/internal/adsb"
+	"github.com/avanha/fullflight/internal/aerodatabox"
 	"github.com/avanha/fullflight/internal/airframes"
+	"github.com/avanha/fullflight/internal/airlines"
 	"github.com/avanha/fullflight/internal/airports"
 	"github.com/avanha/fullflight/internal/geo"
 	"github.com/avanha/fullflight/internal/store"
@@ -28,10 +30,17 @@ type AirframeLookup interface {
 	ByTail(ctx context.Context, tail string) (*airframes.Airframe, error)
 }
 
+// FlightLookup finds a flight by IATA number and departure date (AeroDataBox). It is the fallback for a
+// flight that ADS-B cannot find or has lost, such as one over an ocean.
+type FlightLookup interface {
+	ByNumber(ctx context.Context, number, date string) ([]aerodatabox.Flight, error)
+}
+
 type Poller struct {
 	Store     *store.Store
 	ADSB      Source
 	Airframes AirframeLookup // optional
+	Flights   FlightLookup   // optional
 	Log       *slog.Logger
 	Now       func() time.Time
 
@@ -41,10 +50,16 @@ type Poller struct {
 	// StopoverGrace is how long a flight entry's aircraft may sit on the
 	// ground before the flight counts as finished; default 3h.
 	StopoverGrace time.Duration
+	// ProviderEvery is the least time between flight-number lookups for one watch; each costs a request
+	// against a quota. Default 30m.
+	ProviderEvery time.Duration
+	// ProviderMaxAge ignores a provider position older than this; default 6h.
+	ProviderMaxAge time.Duration
 
-	last     map[int64]time.Time
-	lookedUp map[string]time.Time
-	noted    map[string]time.Time
+	providerAt map[int64]time.Time
+	last       map[int64]time.Time
+	lookedUp   map[string]time.Time
+	noted      map[string]time.Time
 }
 
 func (p *Poller) defaults() {
@@ -66,7 +81,14 @@ func (p *Poller) defaults() {
 	if p.StopoverGrace == 0 {
 		p.StopoverGrace = 3 * time.Hour
 	}
+	if p.ProviderEvery == 0 {
+		p.ProviderEvery = 30 * time.Minute
+	}
+	if p.ProviderMaxAge == 0 {
+		p.ProviderMaxAge = 6 * time.Hour
+	}
 	if p.last == nil {
+		p.providerAt = map[int64]time.Time{}
 		p.last = map[int64]time.Time{}
 		p.lookedUp = map[string]time.Time{}
 		p.noted = map[string]time.Time{}
@@ -160,6 +182,14 @@ func (p *Poller) poll(ctx context.Context, e watchlist.Entry, now time.Time) (er
 	}
 	if err != nil {
 		return err
+	}
+	if len(ac) == 0 && e.Kind == watchlist.KindFlight {
+		// No ADS-B: ask the flight-number provider, which also covers mid-ocean.
+		heard, c := p.askProvider(ctx, &e, now)
+		changed = changed || c
+		if heard {
+			return nil
+		}
 	}
 	if len(ac) == 0 {
 		// Not airborne, or out of coverage. A parked aircraft often drops off
@@ -350,4 +380,77 @@ func (p *Poller) findFlight(ctx context.Context, e watchlist.Entry) ([]adsb.Airc
 		}
 	}
 	return nil, nil
+}
+
+// askProvider looks the flight up by number when ADS-B has nothing. If the provider has it in the air
+// it latches the aircraft onto the watch (hex, tail, callsign, destination if none was given) so its
+// datalink messages are followed, and stores the provider's position. heard says the provider has
+// the flight airborne, so the watch should not be treated as landed or lost; changed says e was altered.
+func (p *Poller) askProvider(ctx context.Context, e *watchlist.Entry, now time.Time) (heard, changed bool) {
+	if p.Flights == nil || now.Sub(p.providerAt[e.ID]) < p.ProviderEvery {
+		return false, false
+	}
+	_, iata := airlines.Forms(e.Ident)
+	if iata == "" {
+		return false, false
+	}
+	p.providerAt[e.ID] = now
+	dates := []string{e.Date}
+	if e.Date == "" { // the day it left, which may be yesterday for a long flight
+		dates = []string{now.UTC().Format("2006-01-02"), now.UTC().AddDate(0, 0, -1).Format("2006-01-02")}
+	}
+	var f *aerodatabox.Flight
+	for _, d := range dates {
+		fs, err := p.Flights.ByNumber(ctx, iata, d)
+		if err != nil {
+			p.Log.Warn("flight lookup failed", "watch", e.Ident, "err", err)
+			return false, false
+		}
+		for i := range fs {
+			if fs[i].Airborne() {
+				f = &fs[i]
+				break
+			}
+		}
+		if f != nil {
+			break
+		}
+	}
+	if f == nil {
+		return false, false
+	}
+	if e.Hex != "" && f.Hex != "" && f.Hex != e.Hex {
+		p.Log.Info("flight lookup found a different aircraft; ignoring", "watch", e.Ident, "have", e.Hex, "provider", f.Hex)
+		return false, false
+	}
+	if e.Hex == "" && f.Hex != "" {
+		e.Hex, changed = f.Hex, true
+		if e.Tail == "" && f.Reg != "" {
+			e.Tail = f.Reg
+		}
+		if f.Callsign != "" {
+			e.Callsign = f.Callsign
+		}
+		if err := p.Store.RecordAirframe(store.Airframe{Hex: f.Hex, Tail: f.Reg, Source: aerodatabox.Source, LastSeen: now}); err != nil {
+			p.Log.Error("record airframe", "err", err)
+		}
+		p.Log.Info("flight found by number", "watch", e.Ident, "hex", f.Hex, "tail", f.Reg, "from", f.From, "to", f.To)
+	}
+	if e.Dest == "" && f.To != "" {
+		e.Dest, changed = f.To, true
+	}
+	if e.Status == watchlist.StatusWaiting && e.Hex != "" {
+		e.Status, changed = watchlist.StatusTracking, true
+	}
+	if !e.Airborne {
+		e.Airborne, e.LandedAt, changed = true, time.Time{}, true
+	}
+	if f.HasPos && f.Hex != "" && now.Sub(f.PosAt) <= p.ProviderMaxAge {
+		_, err := p.Store.AddPosition(store.Position{Hex: f.Hex, T: f.PosAt, Lat: f.Lat, Lon: f.Lon,
+			GS: f.GS, Track: f.Track, Callsign: f.Callsign, Reg: f.Reg, Source: aerodatabox.Source})
+		if err != nil {
+			p.Log.Error("record provider position", "err", err)
+		}
+	}
+	return true, changed
 }

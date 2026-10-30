@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/avanha/fullflight/internal/adsb"
+	"github.com/avanha/fullflight/internal/aerodatabox"
 	"github.com/avanha/fullflight/internal/airframes"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/watchlist"
@@ -480,5 +481,109 @@ func TestUnknownAirlineCallsignIsNotLookedUpAsATail(t *testing.T) {
 	}
 	if len(want) != 0 {
 		t.Errorf("callsign lookups missing %v; made %v", want, f.calls)
+	}
+}
+
+type fakeProvider struct {
+	byDate map[string][]aerodatabox.Flight
+	calls  []string
+}
+
+func (f *fakeProvider) ByNumber(_ context.Context, number, date string) ([]aerodatabox.Flight, error) {
+	f.calls = append(f.calls, number+"/"+date)
+	return f.byDate[date], nil
+}
+
+// A flight ADS-B cannot see (mid-ocean) is found by number: the watch latches onto the aircraft, takes the
+// destination, stores the provider's position under its own source, and asks again only every ProviderEvery.
+func TestProviderFindsAFlightADSBCannot(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 21, 30, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("CKK624", now, time.Time{})
+	st.AddWatch(e)
+	f := &fake{byCallsign: map[string][]adsb.Aircraft{}, byHex: map[string][]adsb.Aircraft{}}
+	gs, trk := 466.0, 311.0
+	pr := &fakeProvider{byDate: map[string][]aerodatabox.Flight{"2026-10-30": {{
+		Number: "CK 624", Callsign: "CKK624", Status: "EnRoute", Hex: "781D8D", Reg: "B-221W", From: "KLAX", To: "ZSPD",
+		HasPos: true, Lat: 58.3, Lon: -143.8, PosAt: now.Add(-20 * time.Minute), GS: &gs, Track: &trk}}}}
+	p := &Poller{Store: st, ADSB: f, Flights: pr, Now: func() time.Time { return now }, WaitingEvery: time.Second, TrackingEvery: time.Second}
+
+	p.Once(context.Background())
+	w, _ := st.ListWatches(true)
+	if w[0].Hex != "781D8D" || w[0].Tail != "B-221W" || w[0].Callsign != "CKK624" || w[0].Dest != "ZSPD" ||
+		w[0].Status != watchlist.StatusTracking || !w[0].Airborne {
+		t.Fatalf("entry = %+v", w[0])
+	}
+	if !reflect.DeepEqual(pr.calls, []string{"CK624/2026-10-30"}) {
+		t.Errorf("calls = %v", pr.calls)
+	}
+	if pos, ok := st.LastPosition("781D8D"); !ok || pos.Source != aerodatabox.Source || pos.Lat != 58.3 || *pos.GS != 466 {
+		t.Errorf("position = %+v %v", pos, ok)
+	}
+	if hex, ok := st.HexForTail("B-221W"); !ok || hex != "781D8D" {
+		t.Errorf("airframe table: %q %v", hex, ok)
+	}
+
+	// still no ADS-B a minute later: no new request; after ProviderEvery, one
+	now = now.Add(time.Minute)
+	p.Once(context.Background())
+	if len(pr.calls) != 1 {
+		t.Errorf("asked again after a minute: %v", pr.calls)
+	}
+	now = now.Add(30 * time.Minute)
+	p.Once(context.Background())
+	if len(pr.calls) != 2 {
+		t.Errorf("calls after 31 min = %v", pr.calls)
+	}
+}
+
+// A flight that left yesterday (UTC) is found on the second try, and a flight not yet in the air is not latched.
+func TestProviderTriesYesterdayAndIgnoresGroundedFlights(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("CKK624", now, time.Time{})
+	st.AddWatch(e)
+	f := &fake{byCallsign: map[string][]adsb.Aircraft{}, byHex: map[string][]adsb.Aircraft{}}
+	pr := &fakeProvider{byDate: map[string][]aerodatabox.Flight{
+		"2026-10-30": {{Status: "Expected", Hex: "AAAAAA"}},
+		"2026-10-29": {{Status: "EnRoute", Hex: "781D8D", Reg: "B-221W", To: "ZSPD"}}}}
+	p := &Poller{Store: st, ADSB: f, Flights: pr, Now: func() time.Time { return now }, WaitingEvery: time.Second}
+	p.Once(context.Background())
+	if w, _ := st.ListWatches(true); w[0].Hex != "781D8D" {
+		t.Errorf("entry = %+v", w[0])
+	}
+	if !reflect.DeepEqual(pr.calls, []string{"CK624/2026-10-30", "CK624/2026-10-29"}) {
+		t.Errorf("calls = %v", pr.calls)
+	}
+	// no position from the provider: nothing stored
+	if _, ok := st.LastPosition("781D8D"); ok {
+		t.Error("a position appeared from nowhere")
+	}
+}
+
+// With ADS-B working the provider is never asked, and it never overrides an aircraft already latched.
+func TestProviderIsAFallbackOnly(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 17, 0, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("CKK624", now, time.Time{})
+	st.AddWatch(e)
+	a := ac(34)
+	a.Flight, a.Hex = "CKK624", "781D8D"
+	f := &fake{byCallsign: map[string][]adsb.Aircraft{"CKK624": {a}}, byHex: map[string][]adsb.Aircraft{"781D8D": {a}}}
+	pr := &fakeProvider{byDate: map[string][]aerodatabox.Flight{"2026-10-30": {{Status: "EnRoute", Hex: "BBBBBB"}}}}
+	p := &Poller{Store: st, ADSB: f, Flights: pr, Now: func() time.Time { return now }, WaitingEvery: time.Second, TrackingEvery: time.Second}
+	p.Once(context.Background())
+	if len(pr.calls) != 0 {
+		t.Errorf("provider asked while ADS-B was working: %v", pr.calls)
+	}
+	// ADS-B goes quiet; the provider names a different aircraft: ignore it
+	delete(f.byHex, "781D8D")
+	now = now.Add(time.Hour)
+	p.Once(context.Background())
+	if w, _ := st.ListWatches(true); w[0].Hex != "781D8D" {
+		t.Errorf("latched aircraft replaced: %+v", w[0])
 	}
 }

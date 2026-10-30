@@ -23,6 +23,13 @@ type Config struct {
 		Sources []string `yaml:"sources"` // "adsb.lol", "adsb.fi"; tried in order
 	} `yaml:"adsb"`
 
+	// AeroDataBox is the optional fallback for finding a flight by number when ADS-B has lost it, such as
+	// over an ocean. Leave the key empty to turn it off.
+	AeroDataBox struct {
+		APIKey string        `yaml:"api_key"`
+		Every  time.Duration `yaml:"every"` // least time between lookups per watch; default 30m
+	} `yaml:"aerodatabox"`
+
 	// Navdata holds the optional waypoint database (fix.dat.gz, nav.dat.gz); see scripts/fetch-navdata.sh.
 	Navdata struct {
 		Dir string `yaml:"dir"` // default data/navdata
