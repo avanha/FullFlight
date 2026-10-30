@@ -1,0 +1,7 @@
+third_party/
+/config.yaml
+/data/
+*.db
+*.db-*
+.DS_Store
+/bin/
