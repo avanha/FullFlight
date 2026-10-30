@@ -43,6 +43,12 @@ type Entry struct {
 	Hex      string // latched once a flight entry is matched to an aircraft
 	Tail     string // registration, once learned
 	Callsign string // ICAO callsign, once matched
+
+	// Flight entries: Airborne once the aircraft has been seen flying;
+	// LandedAt is set while it sits on the ground after that, and cleared if
+	// it takes off again (a stopover).
+	Airborne bool
+	LandedAt time.Time
 }
 
 var (

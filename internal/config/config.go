@@ -26,6 +26,9 @@ type Config struct {
 	Poll struct {
 		Waiting  time.Duration `yaml:"waiting"`  // unmatched flight entries; default 3m
 		Tracking time.Duration `yaml:"tracking"` // followed aircraft; default 45s
+		// A flight watch ends once its aircraft has sat on the ground this long
+		// (shorter stops count as stopovers); default 3h.
+		StopoverGrace time.Duration `yaml:"stopover_grace"`
 	} `yaml:"poll"`
 }
 

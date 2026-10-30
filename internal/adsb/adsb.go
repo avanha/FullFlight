@@ -47,6 +47,12 @@ type Aircraft struct {
 // Callsign returns the trimmed, upper-cased callsign.
 func (a Aircraft) Callsign() string { return strings.ToUpper(strings.TrimSpace(a.Flight)) }
 
+// OnGround reports whether the aircraft is on the ground: the transponder says
+// so, or it is moving too slowly to be flying.
+func (a Aircraft) OnGround() bool {
+	return a.AltBaro.OnGround || (a.GS != nil && *a.GS < 30)
+}
+
 // HasPosition reports whether lat/lon are present and fresher than maxAge.
 func (a Aircraft) HasPosition(maxAge time.Duration) bool {
 	if a.Lat == nil || a.Lon == nil {

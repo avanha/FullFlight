@@ -33,6 +33,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/watches", s.addWatch)
 	mux.HandleFunc("DELETE /api/watches/{id}", s.deleteWatch)
 	mux.HandleFunc("GET /api/track/{hex}", s.track)
+	mux.HandleFunc("GET /api/airframes", s.airframes)
 	return s.auth(mux)
 }
 
@@ -171,6 +172,27 @@ func (s *Server) track(w http.ResponseWriter, r *http.Request) {
 	out := make([]pointJSON, 0, len(ps))
 	for _, p := range ps {
 		out = append(out, pointJSON{p.T, p.Lat, p.Lon, p.AltFt, p.GS, p.Track, p.Callsign, p.Source})
+	}
+	writeJSON(w, 200, out)
+}
+
+func (s *Server) airframes(w http.ResponseWriter, r *http.Request) {
+	as, err := s.Store.ListAirframes()
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	type row struct {
+		Hex       string    `json:"hex"`
+		Tail      string    `json:"tail"`
+		Type      string    `json:"type,omitempty"`
+		Source    string    `json:"source"`
+		FirstSeen time.Time `json:"first_seen"`
+		LastSeen  time.Time `json:"last_seen"`
+	}
+	out := make([]row, 0, len(as))
+	for _, a := range as {
+		out = append(out, row{a.Hex, a.Tail, a.Type, a.Source, a.FirstSeen, a.LastSeen})
 	}
 	writeJSON(w, 200, out)
 }

@@ -44,6 +44,24 @@ CREATE TABLE IF NOT EXISTS position (
 ) WITHOUT ROWID;
 `
 
+// Migrations run in order; PRAGMA user_version records how many have run.
+var migrations = []string{
+	`ALTER TABLE watch ADD COLUMN airborne  INTEGER NOT NULL DEFAULT 0;
+	 ALTER TABLE watch ADD COLUMN landed_ts INTEGER NOT NULL DEFAULT 0;
+	 -- hex <-> registration. Kept forever; a hex can be re-registered, so a
+	 -- hex may have several rows and the newest last_seen wins.
+	 CREATE TABLE airframe (
+		hex        TEXT NOT NULL,
+		tail       TEXT NOT NULL,
+		icao_type  TEXT NOT NULL DEFAULT '',
+		source     TEXT NOT NULL,
+		first_seen INTEGER NOT NULL,
+		last_seen  INTEGER NOT NULL,
+		PRIMARY KEY (hex, tail)
+	 ) WITHOUT ROWID;
+	 CREATE INDEX airframe_tail ON airframe (tail);`,
+}
+
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.
 func Open(path string) (*Store, error) {
 	dsn := path
@@ -59,7 +77,36 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := migrate(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+func migrate(db *sql.DB) error {
+	var v int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&v); err != nil {
+		return err
+	}
+	for i := v; i < len(migrations); i++ {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(migrations[i]); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("step %d: %w", i+1, err)
+		}
+		if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, i+1)); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) Close() error { return s.db.Close() }
@@ -79,15 +126,20 @@ func (s *Store) AddWatch(e watchlist.Entry) (watchlist.Entry, error) {
 	return scanWatch(row)
 }
 
-const watchSelect = `SELECT id, kind, ident, date, start_ts, end_ts, status, hex, tail, callsign FROM watch`
+const watchSelect = `SELECT id, kind, ident, date, start_ts, end_ts, status, hex, tail, callsign, airborne, landed_ts FROM watch`
 
 type scanner interface{ Scan(...any) error }
 
 func scanWatch(r scanner) (watchlist.Entry, error) {
 	var e watchlist.Entry
-	var start, end int64
-	err := r.Scan(&e.ID, &e.Kind, &e.Ident, &e.Date, &start, &end, &e.Status, &e.Hex, &e.Tail, &e.Callsign)
+	var start, end, landed int64
+	var airborne int
+	err := r.Scan(&e.ID, &e.Kind, &e.Ident, &e.Date, &start, &end, &e.Status, &e.Hex, &e.Tail, &e.Callsign, &airborne, &landed)
 	e.Start, e.End = time.Unix(start, 0).UTC(), time.Unix(end, 0).UTC()
+	e.Airborne = airborne == 1
+	if landed != 0 {
+		e.LandedAt = time.Unix(landed, 0).UTC()
+	}
 	return e, err
 }
 
@@ -113,10 +165,18 @@ func (s *Store) ListWatches(openOnly bool) ([]watchlist.Entry, error) {
 	return out, rows.Err()
 }
 
-// UpdateWatch writes back the mutable fields: status, end, hex, tail, callsign.
+// UpdateWatch writes back the mutable fields.
 func (s *Store) UpdateWatch(e watchlist.Entry) error {
-	_, err := s.db.Exec(`UPDATE watch SET status=?, end_ts=?, hex=?, tail=?, callsign=? WHERE id=?`,
-		e.Status, ts(e.End), e.Hex, e.Tail, e.Callsign, e.ID)
+	var landed int64
+	if !e.LandedAt.IsZero() {
+		landed = ts(e.LandedAt)
+	}
+	airborne := 0
+	if e.Airborne {
+		airborne = 1
+	}
+	_, err := s.db.Exec(`UPDATE watch SET status=?, end_ts=?, hex=?, tail=?, callsign=?, airborne=?, landed_ts=? WHERE id=?`,
+		e.Status, ts(e.End), e.Hex, e.Tail, e.Callsign, airborne, landed, e.ID)
 	return err
 }
 
@@ -194,6 +254,65 @@ func (s *Store) Track(hex string, since, until time.Time) ([]Position, error) {
 		}
 		p.T, p.OnGround = time.Unix(t, 0).UTC(), g == 1
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// Airframe is one observed hex <-> registration pairing.
+type Airframe struct {
+	Hex, Tail, Type, Source string
+	FirstSeen, LastSeen     time.Time
+}
+
+// RecordAirframe remembers a hex/tail pairing, bumping last_seen if known.
+// Empty hex or tail is ignored. These rows are never deleted.
+func (s *Store) RecordAirframe(a Airframe) error {
+	if a.Hex == "" || a.Tail == "" {
+		return nil
+	}
+	if a.LastSeen.IsZero() {
+		a.LastSeen = time.Now()
+	}
+	if a.FirstSeen.IsZero() {
+		a.FirstSeen = a.LastSeen
+	}
+	_, err := s.db.Exec(`INSERT INTO airframe (hex, tail, icao_type, source, first_seen, last_seen) VALUES (?,?,?,?,?,?)
+		ON CONFLICT (hex, tail) DO UPDATE SET
+			last_seen = MAX(last_seen, excluded.last_seen),
+			icao_type = CASE WHEN excluded.icao_type != '' THEN excluded.icao_type ELSE icao_type END`,
+		a.Hex, a.Tail, a.Type, a.Source, ts(a.FirstSeen), ts(a.LastSeen))
+	return err
+}
+
+// HexForTail returns the most recently seen hex for a registration.
+func (s *Store) HexForTail(tail string) (string, bool) {
+	var hex string
+	err := s.db.QueryRow(`SELECT hex FROM airframe WHERE tail=? ORDER BY last_seen DESC LIMIT 1`, tail).Scan(&hex)
+	return hex, err == nil
+}
+
+// TailForHex returns the most recently seen registration for a hex.
+func (s *Store) TailForHex(hex string) (string, bool) {
+	var tail string
+	err := s.db.QueryRow(`SELECT tail FROM airframe WHERE hex=? ORDER BY last_seen DESC LIMIT 1`, hex).Scan(&tail)
+	return tail, err == nil
+}
+
+func (s *Store) ListAirframes() ([]Airframe, error) {
+	rows, err := s.db.Query(`SELECT hex, tail, icao_type, source, first_seen, last_seen FROM airframe ORDER BY tail, last_seen DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Airframe
+	for rows.Next() {
+		var a Airframe
+		var f, l int64
+		if err := rows.Scan(&a.Hex, &a.Tail, &a.Type, &a.Source, &f, &l); err != nil {
+			return nil, err
+		}
+		a.FirstSeen, a.LastSeen = time.Unix(f, 0).UTC(), time.Unix(l, 0).UTC()
+		out = append(out, a)
 	}
 	return out, rows.Err()
 }

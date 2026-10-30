@@ -75,6 +75,18 @@ func TestWatchAPI(t *testing.T) {
 	}
 }
 
+func TestAirframesEndpoint(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	st.RecordAirframe(store.Airframe{Hex: "780AB8", Tail: "B-LRM", Type: "A359", Source: "airframes.io", LastSeen: time.Unix(1793000000, 0)})
+	ts := httptest.NewServer((&Server{Store: st}).Handler())
+	defer ts.Close()
+	code, body := do(t, "GET", ts.URL+"/api/airframes", "")
+	if code != 200 || !strings.Contains(body, `"hex":"780AB8"`) || !strings.Contains(body, `"tail":"B-LRM"`) {
+		t.Errorf("%d %s", code, body)
+	}
+}
+
 func TestAuth(t *testing.T) {
 	ts := setup(t, "secret")
 	if code, _ := do(t, "GET", ts.URL+"/api/watches", ""); code != 401 {

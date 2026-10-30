@@ -20,7 +20,16 @@ Type into the web UI (or `POST /api/watches {"input": "...", "until": "<RFC3339>
 
 - `UA869 2026-10-31`: waits for the callsign (UAL869) to appear, then follows
   that aircraft by hex. Window: 12 h before the date (UTC) through 60 h.
-- `B-LRM` or `780AB8`: tracks now until `until`, default 36 h.
+- `B-LRM` or `780AB8`: tracks now until `until`, default 36 h. A tail is
+  resolved to its hex via airframes.io, so it can be watched before it flies.
+
+A flight watch ends when its aircraft lands and stays on the ground longer than
+`poll.stopover_grace` (default 3 h), or starts flying under a different
+callsign. A shorter stop is treated as a stopover and watching continues.
+ADS-B carries no destination, so this is inferred from behaviour.
+
+Every hex/tail pairing ever seen (from ADS-B or airframes.io) is kept in the
+`airframe` table forever, independent of watches; see `GET /api/airframes`.
 
 ## Status
 

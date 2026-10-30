@@ -12,3 +12,4 @@ adsb:
 poll:
   waiting: 3m                  # flight entries not yet matched to an aircraft
   tracking: 45s                # aircraft being followed
+  stopover_grace: 3h           # flight watch ends after this long on the ground

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/avanha/fullflight/internal/adsb"
+	"github.com/avanha/fullflight/internal/airframes"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/watchlist"
 )
@@ -20,17 +21,28 @@ type Source interface {
 	Reg(ctx context.Context, reg string) ([]adsb.Aircraft, error)
 }
 
+// AirframeLookup resolves a registration to a hex address.
+type AirframeLookup interface {
+	ByTail(ctx context.Context, tail string) (*airframes.Airframe, error)
+}
+
 type Poller struct {
-	Store *store.Store
-	ADSB  Source
-	Log   *slog.Logger
-	Now   func() time.Time
+	Store     *store.Store
+	ADSB      Source
+	Airframes AirframeLookup // optional
+	Log       *slog.Logger
+	Now       func() time.Time
 
 	WaitingEvery  time.Duration // flight entries not yet matched; default 3m
 	TrackingEvery time.Duration // entries following an aircraft; default 45s
 	MaxPosAge     time.Duration // ignore positions older than this; default 60s
+	// StopoverGrace is how long a flight entry's aircraft may sit on the
+	// ground before the flight counts as finished; default 3h.
+	StopoverGrace time.Duration
 
-	last map[int64]time.Time
+	last     map[int64]time.Time
+	lookedUp map[string]time.Time
+	noted    map[string]time.Time
 }
 
 func (p *Poller) defaults() {
@@ -49,8 +61,13 @@ func (p *Poller) defaults() {
 	if p.MaxPosAge == 0 {
 		p.MaxPosAge = 60 * time.Second
 	}
+	if p.StopoverGrace == 0 {
+		p.StopoverGrace = 3 * time.Hour
+	}
 	if p.last == nil {
 		p.last = map[int64]time.Time{}
+		p.lookedUp = map[string]time.Time{}
+		p.noted = map[string]time.Time{}
 	}
 }
 
@@ -104,9 +121,33 @@ func (p *Poller) Once(ctx context.Context) {
 	}
 }
 
-func (p *Poller) poll(ctx context.Context, e watchlist.Entry, now time.Time) error {
+// poll queries one entry, latches/updates it, and records the position.
+// Changes to the entry are written back once, on return.
+func (p *Poller) poll(ctx context.Context, e watchlist.Entry, now time.Time) (err error) {
+	changed := false
+	defer func() {
+		if changed {
+			if uerr := p.Store.UpdateWatch(e); uerr != nil && err == nil {
+				err = uerr
+			}
+		}
+	}()
+
+	if e.Kind == watchlist.KindTail && e.Tail == "" {
+		e.Tail, changed = e.Ident, true
+	}
+	if e.Hex == "" && e.Kind == watchlist.KindTail {
+		if hex := p.resolveHex(ctx, e.Ident, now); hex != "" {
+			e.Hex, changed = hex, true
+		}
+	}
+	if e.Tail == "" && e.Hex != "" {
+		if t, ok := p.Store.TailForHex(e.Hex); ok {
+			e.Tail, changed = t, true
+		}
+	}
+
 	var ac []adsb.Aircraft
-	var err error
 	switch {
 	case e.Hex != "":
 		ac, err = p.ADSB.Hex(ctx, e.Hex)
@@ -115,39 +156,117 @@ func (p *Poller) poll(ctx context.Context, e watchlist.Entry, now time.Time) err
 	case e.Kind == watchlist.KindFlight:
 		ac, err = p.findFlight(ctx, e)
 	}
-	if err != nil || len(ac) == 0 {
-		return err // empty is normal: not airborne, or out of coverage
+	if err != nil {
+		return err
+	}
+	if len(ac) == 0 {
+		// Not airborne, or out of coverage. A parked aircraft often drops off
+		// the feed, so this is also how a finished flight ends.
+		changed = p.checkStopover(&e, now) || changed
+		return nil
 	}
 	a := ac[0]
-	changed := false
 	if e.Hex == "" {
 		e.Hex, changed = a.Hex, true
 	}
 	if e.Tail == "" && a.Reg != "" {
 		e.Tail, changed = strings.ToUpper(a.Reg), true
 	}
-	if cs := a.Callsign(); cs != "" && cs != e.Callsign {
+	p.noteAirframe(a, now)
+
+	cs := a.Callsign()
+	if e.Kind == watchlist.KindFlight && !e.LandedAt.IsZero() && cs != "" && cs != e.Callsign {
+		// The aircraft landed and is now operating another flight number.
+		p.Log.Info("flight ended: callsign changed after landing", "watch", e.Ident, "was", e.Callsign, "now", cs)
+		e.Status, changed = watchlist.StatusDone, true
+		return nil
+	}
+	if cs != "" && cs != e.Callsign {
 		e.Callsign, changed = cs, true
 	}
 	if e.Status == watchlist.StatusWaiting {
 		e.Status, changed = watchlist.StatusTracking, true
 		p.Log.Info("flight matched", "watch", e.Ident, "hex", e.Hex, "tail", e.Tail, "callsign", e.Callsign)
 	}
-	if changed {
-		if err := p.Store.UpdateWatch(e); err != nil {
-			return err
+
+	if e.Kind == watchlist.KindFlight {
+		switch {
+		case !a.OnGround():
+			if !e.Airborne || !e.LandedAt.IsZero() {
+				if !e.LandedAt.IsZero() {
+					p.Log.Info("stopover over: airborne again", "watch", e.Ident)
+				}
+				e.Airborne, e.LandedAt, changed = true, time.Time{}, true
+			}
+		case e.Airborne && e.LandedAt.IsZero():
+			p.Log.Info("landed", "watch", e.Ident, "grace", p.StopoverGrace)
+			e.LandedAt, changed = now, true
 		}
+		changed = p.checkStopover(&e, now) || changed
 	}
+
 	if !a.HasPosition(p.MaxPosAge) {
 		return nil
 	}
 	pos := store.Position{
 		Hex: a.Hex, T: now.Add(-seconds(a.SeenPos)), Lat: *a.Lat, Lon: *a.Lon,
 		AltFt: a.AltBaro.Feet, OnGround: a.AltBaro.OnGround, GS: a.GS, Track: a.Track,
-		VRate: a.BaroRate, Callsign: a.Callsign(), Reg: strings.ToUpper(a.Reg), Source: a.Source,
+		VRate: a.BaroRate, Callsign: cs, Reg: strings.ToUpper(a.Reg), Source: a.Source,
 	}
 	_, err = p.Store.AddPosition(pos)
 	return err
+}
+
+// checkStopover ends a flight entry that has been on the ground for longer
+// than StopoverGrace. ADS-B carries no destination, so "landed and stayed" is
+// how we tell the end of a flight from an intermediate stop. It reports
+// whether it changed the entry.
+func (p *Poller) checkStopover(e *watchlist.Entry, now time.Time) bool {
+	if e.Kind != watchlist.KindFlight || e.Status != watchlist.StatusTracking ||
+		e.LandedAt.IsZero() || now.Sub(e.LandedAt) < p.StopoverGrace {
+		return false
+	}
+	p.Log.Info("flight ended: on the ground past the stopover grace", "watch", e.Ident, "landed", e.LandedAt)
+	e.Status = watchlist.StatusDone
+	return true
+}
+
+// resolveHex finds the hex for a registration from the permanent table, else
+// from airframes.io (at most once an hour per registration), and remembers it.
+func (p *Poller) resolveHex(ctx context.Context, tail string, now time.Time) string {
+	if hex, ok := p.Store.HexForTail(tail); ok {
+		return hex
+	}
+	if p.Airframes == nil || now.Sub(p.lookedUp[tail]) < time.Hour {
+		return ""
+	}
+	p.lookedUp[tail] = now
+	af, err := p.Airframes.ByTail(ctx, tail)
+	if err != nil {
+		p.Log.Warn("airframe lookup failed", "tail", tail, "err", err)
+		return ""
+	}
+	if af == nil {
+		p.Log.Info("airframes.io does not know this registration", "tail", tail)
+		return ""
+	}
+	if err := p.Store.RecordAirframe(store.Airframe{Hex: af.ICAO, Tail: af.Tail, Type: af.Type, Source: "airframes.io", LastSeen: now}); err != nil {
+		p.Log.Error("record airframe", "err", err)
+	}
+	return af.ICAO
+}
+
+// noteAirframe records a sighting's hex/tail pairing, at most hourly per pair.
+func (p *Poller) noteAirframe(a adsb.Aircraft, now time.Time) {
+	tail := strings.ToUpper(a.Reg)
+	key := a.Hex + "/" + tail
+	if a.Hex == "" || tail == "" || now.Sub(p.noted[key]) < time.Hour {
+		return
+	}
+	p.noted[key] = now
+	if err := p.Store.RecordAirframe(store.Airframe{Hex: a.Hex, Tail: tail, Type: a.Type, Source: a.Source, LastSeen: now}); err != nil {
+		p.Log.Error("record airframe", "err", err)
+	}
 }
 
 func seconds(f *float64) time.Duration {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/avanha/fullflight/internal/adsb"
+	"github.com/avanha/fullflight/internal/airframes"
 	"github.com/avanha/fullflight/internal/config"
 	"github.com/avanha/fullflight/internal/poller"
 	"github.com/avanha/fullflight/internal/server"
@@ -58,7 +59,8 @@ func main() {
 	defer stop()
 
 	p := &poller.Poller{Store: st, ADSB: adsb.NewClient(sources...), Log: log,
-		WaitingEvery: cfg.Poll.Waiting, TrackingEvery: cfg.Poll.Tracking}
+		Airframes: airframes.NewClient(), WaitingEvery: cfg.Poll.Waiting, TrackingEvery: cfg.Poll.Tracking,
+		StopoverGrace: cfg.Poll.StopoverGrace}
 	go p.Run(ctx)
 
 	srv := &http.Server{
