@@ -791,3 +791,39 @@ func TestBytes(t *testing.T) {
 		}
 	}
 }
+
+// A registration and its ICAO address are one aircraft: watching the second after the first is the same watch.
+func TestTailAndHexAreOneWatch(t *testing.T) {
+	s := open(t)
+	s.RecordAirframe(Airframe{Hex: "A762CC", Tail: "N575UP", Source: "x", LastSeen: now})
+	tail, _ := watchlist.Parse("N575UP", now, time.Time{})
+	a, _ := s.AddWatch(tail)
+	hex, _ := watchlist.Parse("hex:a762cc", now, now.Add(72*time.Hour))
+	b, err := s.AddWatch(hex)
+	if err != nil || b.ID != a.ID || !b.End.Equal(now.Add(72*time.Hour)) {
+		t.Fatalf("hex after tail: %+v %v (first %d)", b, err, a.ID)
+	}
+	// and the other way round, and the same tail again
+	s2 := open(t)
+	s2.RecordAirframe(Airframe{Hex: "A762CC", Tail: "N575UP", Source: "x", LastSeen: now})
+	h, _ := s2.AddWatch(hex)
+	t2, _ := s2.AddWatch(tail)
+	if t2.ID != h.ID {
+		t.Errorf("tail after hex: %d vs %d", t2.ID, h.ID)
+	}
+	// an unrelated aircraft, an unknown tail, and a flight are separate watches
+	other, _ := watchlist.Parse("N999ZZ", now, time.Time{})
+	o, _ := s2.AddWatch(other)
+	fl, _ := watchlist.Parse("UPS58", now, time.Time{})
+	f, _ := s2.AddWatch(fl)
+	if o.ID == h.ID || f.ID == h.ID || o.ID == f.ID {
+		t.Errorf("distinct watches merged: %d %d %d", h.ID, o.ID, f.ID)
+	}
+	// a finished watch does not absorb a new one
+	h.Status = watchlist.StatusDone
+	s2.UpdateWatch(h)
+	again, _ := s2.AddWatch(tail)
+	if again.ID == h.ID {
+		t.Error("reused a finished watch")
+	}
+}

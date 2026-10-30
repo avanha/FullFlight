@@ -68,6 +68,10 @@ logons and performance reports carry the flight number and name the airframe. Th
 hours that names it decides the aircraft; yesterday's flight with the same number is older and ignored, and
 `UPS580` does not match `UPS58`. airframes.io allows 60 requests per window; this uses one per attempt.
 
+A registration and its ICAO address are one aircraft, so adding a tail watch for an aircraft that already has
+an open hex watch (or the other way round) reuses that watch instead of polling it twice. This needs the
+pairing to be known (it is kept in the `airframe` table); an unknown tail is its own watch until it is.
+
 ## Datalink messages
 
 For every aircraft on an open watch (once its hex is known) the app pulls

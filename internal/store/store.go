@@ -216,11 +216,15 @@ func ts(t time.Time) int64 { return t.Unix() }
 // tracking) entry for the same kind, identifier and date already exists, that
 // one is updated instead: it takes the destination if the new entry has one and
 // the later of the two end times. Finished entries do not count, so watching
-// the same flight again starts a new one.
+// the same flight again starts a new one. A tail and a hex that are the same aircraft count as the same
+// watch (see sameAircraftWatch).
 func (s *Store) AddWatch(e watchlist.Entry) (watchlist.Entry, error) {
 	var id int64
 	err := s.db.QueryRow(`SELECT id FROM watch WHERE kind=? AND ident=? AND date=? AND status IN ('waiting','tracking')
 		ORDER BY id DESC LIMIT 1`, e.Kind, e.Ident, e.Date).Scan(&id)
+	if err == sql.ErrNoRows {
+		id, err = s.sameAircraftWatch(e)
+	}
 	if err == nil {
 		if _, err := s.db.Exec(`UPDATE watch SET dest = CASE WHEN ? != '' THEN ? ELSE dest END, end_ts = MAX(end_ts, ?) WHERE id=?`,
 			e.Dest, e.Dest, ts(e.End), id); err != nil {
@@ -239,6 +243,29 @@ func (s *Store) AddWatch(e watchlist.Entry) (watchlist.Entry, error) {
 	}
 	id, _ = res.LastInsertId()
 	return scanWatch(s.db.QueryRow(watchSelect+` WHERE id=?`, id))
+}
+
+// sameAircraftWatch finds an open tail or hex watch on the same aircraft as e, which is a tail or hex
+// watch: a registration and an ICAO address name one airframe, so watching both would poll it twice and
+// list it twice. The hex is the key. A tail whose hex we do not know yet matches only itself.
+func (s *Store) sameAircraftWatch(e watchlist.Entry) (int64, error) {
+	if e.Kind != watchlist.KindTail && e.Kind != watchlist.KindHex {
+		return 0, sql.ErrNoRows
+	}
+	hex := e.Hex
+	if e.Kind == watchlist.KindHex {
+		hex = e.Ident
+	} else if hex == "" {
+		hex, _ = s.HexForTail(e.Ident)
+	}
+	if hex == "" {
+		return 0, sql.ErrNoRows
+	}
+	var id int64
+	err := s.db.QueryRow(`SELECT id FROM watch WHERE kind IN ('tail','hex') AND status IN ('waiting','tracking')
+		AND (hex=? OR (kind='hex' AND ident=?) OR (kind='tail' AND ident IN (SELECT tail FROM airframe WHERE hex=?)))
+		ORDER BY id DESC LIMIT 1`, hex, hex, hex).Scan(&id)
+	return id, err
 }
 
 const watchSelect = `SELECT id, kind, ident, date, start_ts, end_ts, status, hex, tail, callsign, airborne, landed_ts, dest FROM watch`
