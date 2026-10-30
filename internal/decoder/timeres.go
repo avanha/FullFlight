@@ -27,6 +27,18 @@ func ResolveSecondsPastHour(secs float64, recv time.Time) time.Time {
 	return t
 }
 
+// ResolveSecondsOfDay places a time-of-day (seconds since 00:00 UTC) on a date:
+// the day that puts it at or just before recv, allowing ClockSkew. CPDLC
+// reports carry only hh:mm.
+func ResolveSecondsOfDay(secs float64, recv time.Time) time.Time {
+	recv = recv.UTC()
+	t := recv.Truncate(24 * time.Hour).Add(time.Duration(secs * float64(time.Second)))
+	if t.After(recv.Add(ClockSkew)) {
+		t = t.Add(-24 * time.Hour)
+	}
+	return t
+}
+
 type TimedPoint struct {
 	Lat, Lon float64
 	T        time.Time

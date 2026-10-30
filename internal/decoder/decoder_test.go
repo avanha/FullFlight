@@ -331,3 +331,59 @@ func TestSummariesAndPositions(t *testing.T) {
 		}
 	}
 }
+
+// Fixture 5 on the map: 19°10.3'N 115°52.3'E, FL370, 16:06Z.
+func TestCPDLCPositionReport(t *testing.T) {
+	f, r := load(t, "cpdlc_position")
+	if r.Pos == nil || r.Pos.Basis != BasisDay {
+		t.Fatalf("pos = %+v", r.Pos)
+	}
+	near(t, "lat", r.Pos.Lat, 19+10.3/60, 1e-6)
+	near(t, "lon", r.Pos.Lon, 115+52.3/60, 1e-6)
+	if r.Pos.AltFt == nil || *r.Pos.AltFt != 37000 {
+		t.Errorf("alt = %v", r.Pos.AltFt)
+	}
+	if got, want := r.Pos.At(f.Received), time.Date(2026, 10, 28, 16, 6, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("At = %v, want %v", got, want)
+	}
+	if r.Summary != "CPDLC position report 19.172N 115.872E 37000 ft" {
+		t.Errorf("summary = %q", r.Summary)
+	}
+	// Other CPDLC messages carry no position.
+	for _, n := range []string{"cpdlc_wilco", "real_cpdlc_cc1"} {
+		if _, r := load(t, n); r.Pos != nil {
+			t.Errorf("%s has a position: %+v", n, r.Pos)
+		}
+	}
+}
+
+func TestCPDLCPositionHemispheresAndFix(t *testing.T) {
+	mk := func(cur map[string]any) map[string]any {
+		return map[string]any{"arinc622": map[string]any{"cpdlc": map[string]any{"atc_downlink_msg": map[string]any{
+			"header":                      map[string]any{"timestamp": map[string]any{"hour": 23.0, "min": 59.0, "sec": 30.0}},
+			"atc_downlink_msg_element_id": map[string]any{"data": map[string]any{"pos_report": map[string]any{"pos_current": cur}}},
+		}}}}
+	}
+	// South and west are negative; no time_at_pos_current, so the header time is used.
+	ll := map[string]any{"data": map[string]any{"lat_lon": map[string]any{
+		"lat": map[string]any{"deg": 33.0, "min": 30.0, "dir": "south"},
+		"lon": map[string]any{"deg": 70.0, "min": 15.0, "dir": "west"}}}}
+	p, fix := cpdlcPosition(mk(ll))
+	if p == nil || fix != "" {
+		t.Fatalf("p=%+v fix=%q", p, fix)
+	}
+	near(t, "lat", p.Lat, -33.5, 1e-9)
+	near(t, "lon", p.Lon, -70.25, 1e-9)
+	// Received just after midnight: 23:59:30 belongs to the previous day.
+	if got, want := p.At(time.Date(2026, 10, 29, 0, 0, 10, 0, time.UTC)), time.Date(2026, 10, 28, 23, 59, 30, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("midnight rollover: %v, want %v", got, want)
+	}
+	// A report naming a fix gives no position but keeps the name.
+	p, fix = cpdlcPosition(mk(map[string]any{"choice": "fixName", "data": map[string]any{"fix": "UNTUL"}}))
+	if p != nil || fix != "UNTUL" {
+		t.Errorf("fix-only: p=%+v fix=%q", p, fix)
+	}
+	if p, fix = cpdlcPosition(map[string]any{"arinc622": map[string]any{}}); p != nil || fix != "" {
+		t.Errorf("not a position report: %+v %q", p, fix)
+	}
+}

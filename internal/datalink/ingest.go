@@ -57,7 +57,18 @@ func Ingest(st *store.Store, hexAddr string, raw airframes.Message) (bool, error
 		AFDep:    string(raw.Departing), AFDest: string(raw.Destination),
 	}
 
-	res, err := decoder.Decode(decoder.Message{Label: m.Label, Dir: dir, Text: text})
+	decodeInto(st, &m, dir)
+	return st.AddMessage(m)
+}
+
+// decodeInto fills m's derived fields (everything from our own decode of the
+// raw text, plus the checks against airframes.io's hints and other fixes).
+func decodeInto(st *store.Store, m *store.Message, dir decoder.Direction) {
+	m.Kind, m.Direction, m.Tail, m.Callsign, m.Flight = "", "", "", "", ""
+	m.Summary, m.Detail, m.Decoded, m.Route, m.Suspect = "", "", "", "", ""
+	m.Lat, m.Lon, m.AltFt, m.PosT = nil, nil, nil, nil
+
+	res, err := decoder.Decode(decoder.Message{Label: m.Label, Dir: dir, Text: m.Text})
 	if err != nil {
 		// Keep the raw message even if decoding fails.
 		m.Kind, m.Summary = string(decoder.KindUnknown), "decode error: "+err.Error()
@@ -74,11 +85,44 @@ func Ingest(st *store.Store, hexAddr string, raw airframes.Message) (bool, error
 		if res.Pos != nil {
 			t := res.Pos.At(m.T)
 			m.Lat, m.Lon, m.AltFt, m.PosT = &res.Pos.Lat, &res.Pos.Lon, res.Pos.AltFt, &t
-			m.Suspect = checkPosition(st, hexAddr, raw.ID, res.Pos.Lat, res.Pos.Lon, t)
+			m.Suspect = checkPosition(st, m.Hex, m.ID, res.Pos.Lat, res.Pos.Lon, t)
 		}
 	}
-	m.Mismatch = mismatch(st, hexAddr, m)
-	return st.AddMessage(m)
+	m.Mismatch = mismatch(st, m.Hex, *m)
+}
+
+// Redecode re-runs our decoder over every stored message, oldest first, and
+// rewrites the derived columns. Run it after improving the decoder so old
+// messages pick up the change. It returns how many messages it changed.
+func Redecode(st *store.Store) (changed int, err error) {
+	all, err := st.AllMessages()
+	if err != nil {
+		return 0, err
+	}
+	for _, old := range all {
+		m := old
+		dir := decoder.Unknown
+		switch m.Direction {
+		case "up":
+			dir = decoder.Uplink
+		case "down":
+			dir = decoder.Downlink
+		}
+		decodeInto(st, &m, dir)
+		if m.Kind == old.Kind && m.Summary == old.Summary && m.Decoded == old.Decoded && m.Route == old.Route &&
+			m.Suspect == old.Suspect && m.Mismatch == old.Mismatch && sameFloat(m.Lat, old.Lat) && sameFloat(m.Lon, old.Lon) {
+			continue
+		}
+		if err := st.UpdateDecoded(m); err != nil {
+			return changed, err
+		}
+		changed++
+	}
+	return changed, nil
+}
+
+func sameFloat(a, b *float64) bool {
+	return (a == nil) == (b == nil) && (a == nil || *a == *b)
 }
 
 func firstNonEmpty(ss ...string) string {

@@ -296,3 +296,45 @@ func TestFetcherOnlyWatchedHexes(t *testing.T) {
 		t.Errorf("fetched for an unmatched flight: %+v", src.calls)
 	}
 }
+
+func TestIngestCPDLCPositionOnMap(t *testing.T) {
+	st := newStore(t)
+	f := fixture(t, "cpdlc_position") // received 16:07, position time 16:06
+	if _, err := Ingest(st, "780AB8", msg(1, f)); err != nil {
+		t.Fatal(err)
+	}
+	ms, _ := st.Messages("780AB8", f.Received.Add(-time.Hour), f.Received.Add(time.Hour), 10)
+	m := ms[0]
+	if m.Lat == nil || *m.Lat < 19.17 || *m.Lat > 19.18 || m.Lon == nil || *m.Lon < 115.87 || *m.AltFt != 37000 {
+		t.Fatalf("position = %v %v %v", m.Lat, m.Lon, m.AltFt)
+	}
+	if want := time.Date(2026, 10, 28, 16, 6, 0, 0, time.UTC); m.PosT == nil || !m.PosT.Equal(want) {
+		t.Errorf("pos time = %v, want %v", m.PosT, want)
+	}
+	if !strings.HasPrefix(m.Summary, "CPDLC position report 19.172N") || m.Suspect != "" {
+		t.Errorf("summary=%q suspect=%q", m.Summary, m.Suspect)
+	}
+}
+
+func TestRedecodePicksUpDecoderChanges(t *testing.T) {
+	st := newStore(t)
+	f := fixture(t, "cpdlc_position")
+	// A row as an older decoder left it: raw text only, nothing derived.
+	st.AddMessage(store.Message{ID: 1, Hex: "780AB8", T: f.Received, Label: f.Label, Text: f.Text, Kind: "cpdlc", Summary: "CPDLC downlink: POSITION REPORT"})
+	st.AddMessage(store.Message{ID: 2, Hex: "780AB8", T: f.Received.Add(time.Hour), Label: "SA", Text: "0ES124056VS"})
+
+	n, err := Redecode(st)
+	if err != nil || n != 2 {
+		t.Fatalf("changed %d, err %v", n, err)
+	}
+	ms, _ := st.Messages("780AB8", f.Received.Add(-time.Hour), f.Received.Add(3*time.Hour), 10)
+	if ms[0].Lat == nil || !strings.HasPrefix(ms[0].Summary, "CPDLC position report 19.172N") || ms[0].Text != f.Text {
+		t.Errorf("not redecoded or raw changed: %+v", ms[0])
+	}
+	if ms[1].Kind != "media_advisory" || ms[1].Direction != "down" {
+		t.Errorf("second = %+v", ms[1])
+	}
+	if n, _ = Redecode(st); n != 0 {
+		t.Errorf("second pass changed %d messages; should be idempotent", n)
+	}
+}

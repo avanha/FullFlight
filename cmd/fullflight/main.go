@@ -24,6 +24,7 @@ import (
 
 func main() {
 	cfgPath := flag.String("config", "config.yaml", "path to config file")
+	redecode := flag.Bool("redecode", false, "re-decode all stored messages with the current decoder, then exit")
 	flag.Parse()
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
@@ -42,6 +43,16 @@ func main() {
 		os.Exit(1)
 	}
 	defer st.Close()
+
+	if *redecode {
+		n, err := datalink.Redecode(st)
+		if err != nil {
+			log.Error("redecode", "err", err)
+			os.Exit(1)
+		}
+		log.Info("redecoded", "changed", n)
+		return
+	}
 
 	var sources []adsb.Source
 	for _, name := range cfg.ADSB.Sources {

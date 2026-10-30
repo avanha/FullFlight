@@ -49,17 +49,20 @@ minutes with a 30 minute overlap to catch late uploads. Each is decoded by us
 from the raw text (libacars plus hand parsers), never from airframes.io's own
 fields. Those are kept as `af_*` hints, and a disagreement (tail, flight number,
 or a tail that belongs to a different hex) shows as a warning badge. A message
-heard by several stations is stored once (`rx_count`). ADS-C and REP081
+heard by several stations is stored once (`rx_count`). ADS-C, CPDLC and REP081
 positions are placed in time from their embedded timestamps, drawn on the map
 in orange, and marked suspect when they imply more than 700 kt against the
 nearest other fix. The newest ADS-C predicted route is drawn dashed.
 
 `GET /api/messages/{hex}?hours=48&limit=300` returns them, oldest first.
 
+After improving the decoder, run `bin/fullflight -config config.yaml -redecode` to
+re-decode every stored message from its raw text (idempotent).
+
 ## Status
 
 Done: watchlist, ADS-B poller with source fallback, SQLite track log, permanent
 hex/tail table, message fetcher and decoder, web UI with map, message timeline
-and UTC clock. Not yet: CPDLC position reports on the map, flight segmentation
+and UTC clock. Not yet: CPDLC reports that name a fix instead of coordinates, flight segmentation
 by tail/flight/date, MIAM continuation blocks (shown as "not decoded"),
 ADS-C predicted-vs-actual ETA error, SSE live updates, systemd/reverse-proxy docs.

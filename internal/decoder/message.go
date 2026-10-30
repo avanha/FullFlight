@@ -172,6 +172,12 @@ func Decode(m Message) (Result, error) {
 				r.Pos = &Pos{Lat: rep.Lat, Lon: rep.Lon, AltFt: &alt, Secs: float64(rep.SecsInMonth), Basis: BasisMonth}
 			}
 		}
+		if r.Kind == KindCPDLC && r.Tree != nil {
+			var fix string
+			if r.Pos, fix = cpdlcPosition(r.Tree); fix != "" {
+				r.Fields["fix"] = fix
+			}
+		}
 		if r.Kind == KindADSC {
 			r.Pos, r.Route = adscPosition(r.Tree)
 		}

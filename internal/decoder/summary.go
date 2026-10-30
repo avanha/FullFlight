@@ -10,6 +10,7 @@ import (
 const (
 	BasisHour  = "hour"  // seconds past the hour (ADS-C)
 	BasisMonth = "month" // seconds since 00:00 UTC on the 1st (REP081)
+	BasisDay   = "day"   // seconds since 00:00 UTC (CPDLC position report)
 )
 
 // Pos is a position reported inside a message, with its partial timestamp.
@@ -23,8 +24,11 @@ type Pos struct {
 // At places the position in time, using recv (when the message was received)
 // to supply the missing hour or month.
 func (p Pos) At(recv time.Time) time.Time {
-	if p.Basis == BasisMonth {
+	switch p.Basis {
+	case BasisMonth:
 		return ResolveMonthSeconds(int64(p.Secs), recv)
+	case BasisDay:
+		return ResolveSecondsOfDay(p.Secs, recv)
 	}
 	return ResolveSecondsPastHour(p.Secs, recv)
 }
@@ -74,6 +78,76 @@ func adscPosition(tree map[string]any) (*Pos, []Waypoint) {
 	return pos, route
 }
 
+// signedDegrees reads libacars' {"deg":19,"min":10.3,"dir":"north"} form.
+func signedDegrees(m map[string]any, neg string) (float64, bool) {
+	deg, min := num(m, "deg"), num(m, "min")
+	dir, _ := m["dir"].(string)
+	if deg == nil || min == nil || dir == "" {
+		return 0, false
+	}
+	v := *deg + *min/60
+	if dir == neg {
+		v = -v
+	}
+	return v, true
+}
+
+func sub(m map[string]any, keys ...string) map[string]any {
+	for _, k := range keys {
+		m, _ = m[k].(map[string]any)
+		if m == nil {
+			return nil
+		}
+	}
+	return m
+}
+
+func clock(m map[string]any) (float64, bool) {
+	h, mi := num(m, "hour"), num(m, "min")
+	if h == nil || mi == nil {
+		return 0, false
+	}
+	s := 0.0
+	if x := num(m, "sec"); x != nil {
+		s = *x
+	}
+	return *h*3600 + *mi*60 + s, true
+}
+
+// cpdlcPosition extracts the position from a FANS-1/A downlink position
+// report. Reports that name a fix instead of giving coordinates have no Pos
+// (we carry no navigation database); the fix name is returned for display.
+func cpdlcPosition(tree map[string]any) (pos *Pos, fix string) {
+	el := sub(tree, "arinc622", "cpdlc", "atc_downlink_msg")
+	rep := sub(el, "atc_downlink_msg_element_id", "data", "pos_report")
+	if rep == nil {
+		return nil, ""
+	}
+	cur := sub(rep, "pos_current")
+	if f, _ := sub(cur, "data")["fix"].(string); f != "" {
+		fix = f
+	}
+	ll := sub(cur, "data", "lat_lon")
+	lat, ok1 := signedDegrees(sub(ll, "lat"), "south")
+	lon, ok2 := signedDegrees(sub(ll, "lon"), "west")
+	if !ok1 || !ok2 {
+		return nil, fix
+	}
+	// Time at the position; fall back to the message header's time.
+	secs, ok := clock(sub(rep, "time_at_pos_current"))
+	if !ok {
+		if secs, ok = clock(sub(el, "header", "timestamp")); !ok {
+			return nil, fix
+		}
+	}
+	p := &Pos{Lat: lat, Lon: lon, Secs: secs, Basis: BasisDay}
+	if fl := num(sub(rep, "alt", "data"), "flight_level"); fl != nil {
+		ft := *fl * 100
+		p.AltFt = &ft
+	}
+	return p, fix
+}
+
 func hhmmss(s string) string {
 	if len(s) != 6 {
 		return s
@@ -107,6 +181,16 @@ func summarize(r Result) string {
 		}
 		return s
 	case KindCPDLC:
+		if r.Pos != nil {
+			s := "CPDLC position report " + latlon(r.Pos.Lat, r.Pos.Lon)
+			if r.Pos.AltFt != nil {
+				s += fmt.Sprintf(" %.0f ft", *r.Pos.AltFt)
+			}
+			return s
+		}
+		if fix, ok := r.Fields["fix"].(string); ok {
+			return "CPDLC position report at " + fix
+		}
 		if l, ok := findString(r.Tree, "choice_label"); ok {
 			return "CPDLC " + map[Direction]string{Uplink: "uplink", Downlink: "downlink"}[r.Dir] + ": " + l
 		}

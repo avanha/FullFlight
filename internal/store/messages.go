@@ -2,6 +2,7 @@ package store
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"time"
 )
@@ -81,14 +82,7 @@ const messageCols = `id, hex, ts, label, block_id, msg_num, direction, source_ty
 	kind, tail, callsign, flight, summary, detail, decoded, route, lat, lon, alt_ft, pos_ts, suspect,
 	af_tail, af_flight, af_dep, af_dest, mismatch`
 
-// Messages returns an aircraft's messages in [since, until), oldest first,
-// limited to the most recent limit rows.
-func (s *Store) Messages(hexAddr string, since, until time.Time, limit int) ([]Message, error) {
-	rows, err := s.db.Query(`SELECT `+messageCols+` FROM message WHERE hex=? AND ts>=? AND ts<?
-		ORDER BY ts DESC, id DESC LIMIT ?`, hexAddr, ts(since), ts(until), limit)
-	if err != nil {
-		return nil, err
-	}
+func scanMessages(rows *sql.Rows) ([]Message, error) {
 	defer rows.Close()
 	var out []Message
 	for rows.Next() {
@@ -107,10 +101,46 @@ func (s *Store) Messages(hexAddr string, since, until time.Time, limit int) ([]M
 		}
 		out = append(out, m)
 	}
+	return out, rows.Err()
+}
+
+// Messages returns an aircraft's messages in [since, until), oldest first,
+// limited to the most recent limit rows.
+func (s *Store) Messages(hexAddr string, since, until time.Time, limit int) ([]Message, error) {
+	rows, err := s.db.Query(`SELECT `+messageCols+` FROM message WHERE hex=? AND ts>=? AND ts<?
+		ORDER BY ts DESC, id DESC LIMIT ?`, hexAddr, ts(since), ts(until), limit)
+	if err != nil {
+		return nil, err
+	}
+	out, err := scanMessages(rows)
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 { // oldest first
 		out[i], out[j] = out[j], out[i]
 	}
-	return out, rows.Err()
+	return out, err
+}
+
+// AllMessages returns every stored message, oldest first.
+func (s *Store) AllMessages() ([]Message, error) {
+	rows, err := s.db.Query(`SELECT ` + messageCols + ` FROM message ORDER BY ts, id`)
+	if err != nil {
+		return nil, err
+	}
+	return scanMessages(rows)
+}
+
+// UpdateDecoded rewrites the columns derived from the raw text, leaving the
+// raw fields and airframes.io hints alone.
+func (s *Store) UpdateDecoded(m Message) error {
+	var posT *int64
+	if m.PosT != nil {
+		v := ts(*m.PosT)
+		posT = &v
+	}
+	_, err := s.db.Exec(`UPDATE message SET direction=?, kind=?, tail=?, callsign=?, flight=?, summary=?, detail=?, decoded=?, route=?,
+		lat=?, lon=?, alt_ft=?, pos_ts=?, suspect=?, mismatch=? WHERE id=?`,
+		m.Direction, m.Kind, m.Tail, m.Callsign, m.Flight, m.Summary, m.Detail, m.Decoded, m.Route,
+		m.Lat, m.Lon, m.AltFt, posT, m.Suspect, m.Mismatch, m.ID)
+	return err
 }
 
 // FetchedTo returns the end of the last successful fetch for an aircraft.
