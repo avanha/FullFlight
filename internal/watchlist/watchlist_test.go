@@ -90,3 +90,21 @@ func TestExpiry(t *testing.T) {
 		t.Error("should be expired at 36h")
 	}
 }
+
+func TestParseDestination(t *testing.T) {
+	for in, want := range map[string]string{"UA869 2026-11-05 sfo": "SFO", "UA869 2026-11-05 KSFO": "KSFO"} {
+		e, err := Parse(in, now, time.Time{})
+		if err != nil || e.Dest != want || e.Kind != KindFlight {
+			t.Errorf("%q: %+v %v", in, e, err)
+		}
+	}
+	e, _ := Parse("UA869 2026-11-05", now, time.Time{})
+	if e.Dest != "" {
+		t.Errorf("destination should be optional, got %q", e.Dest)
+	}
+	for _, in := range []string{"UA869 2026-11-05 SF", "UA869 2026-11-05 S-FO", "UA869 2026-11-05 SFO LAX", "B-LRM SFO"} {
+		if _, err := Parse(in, now, time.Time{}); err == nil {
+			t.Errorf("%q: expected error", in)
+		}
+	}
+}

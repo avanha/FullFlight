@@ -75,6 +75,18 @@ func TestWatchAPI(t *testing.T) {
 	}
 }
 
+func TestWatchDestinationAPI(t *testing.T) {
+	ts := setup(t, "")
+	code, body := do(t, "POST", ts.URL+"/api/watches", `{"input":"UA869 2026-10-31 sfo"}`)
+	if code != 201 || !strings.Contains(body, `"dest":"KSFO"`) || !strings.Contains(body, "San Francisco") {
+		t.Fatalf("%d %s", code, body)
+	}
+	code, body = do(t, "POST", ts.URL+"/api/watches", `{"input":"UA870 2026-10-31 ZZZ"}`)
+	if code != 400 || !strings.Contains(body, "unknown airport") {
+		t.Errorf("unknown airport: %d %s", code, body)
+	}
+}
+
 func TestAirframesEndpoint(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()

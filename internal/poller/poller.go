@@ -10,6 +10,8 @@ import (
 
 	"github.com/avanha/fullflight/internal/adsb"
 	"github.com/avanha/fullflight/internal/airframes"
+	"github.com/avanha/fullflight/internal/airports"
+	"github.com/avanha/fullflight/internal/geo"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/watchlist"
 )
@@ -162,7 +164,8 @@ func (p *Poller) poll(ctx context.Context, e watchlist.Entry, now time.Time) (er
 	if len(ac) == 0 {
 		// Not airborne, or out of coverage. A parked aircraft often drops off
 		// the feed, so this is also how a finished flight ends.
-		changed = p.checkStopover(&e, now) || changed
+		c1, c2 := p.checkStopover(&e, now), p.checkVanishedNearDest(&e, now)
+		changed = c1 || c2 || changed
 		return nil
 	}
 	a := ac[0]
@@ -175,8 +178,10 @@ func (p *Poller) poll(ctx context.Context, e watchlist.Entry, now time.Time) (er
 	p.noteAirframe(a, now)
 
 	cs := a.Callsign()
-	if e.Kind == watchlist.KindFlight && !e.LandedAt.IsZero() && cs != "" && cs != e.Callsign {
-		// The aircraft landed and is now operating another flight number.
+	if e.Kind == watchlist.KindFlight && e.Dest == "" && !e.LandedAt.IsZero() && cs != "" && cs != e.Callsign {
+		// No destination given: the aircraft landed and is now operating
+		// another flight number, so this flight is over. (With a destination
+		// we wait to arrive there instead.)
 		p.Log.Info("flight ended: callsign changed after landing", "watch", e.Ident, "was", e.Callsign, "now", cs)
 		e.Status, changed = watchlist.StatusDone, true
 		return nil
@@ -202,6 +207,10 @@ func (p *Poller) poll(ctx context.Context, e watchlist.Entry, now time.Time) (er
 			p.Log.Info("landed", "watch", e.Ident, "grace", p.StopoverGrace)
 			e.LandedAt, changed = now, true
 		}
+		if p.atDestination(e, a) {
+			p.Log.Info("flight ended: landed at destination", "watch", e.Ident, "dest", e.Dest)
+			e.Status, changed = watchlist.StatusDone, true
+		}
 		changed = p.checkStopover(&e, now) || changed
 	}
 
@@ -217,16 +226,65 @@ func (p *Poller) poll(ctx context.Context, e watchlist.Entry, now time.Time) (er
 	return err
 }
 
-// checkStopover ends a flight entry that has been on the ground for longer
-// than StopoverGrace. ADS-B carries no destination, so "landed and stayed" is
-// how we tell the end of a flight from an intermediate stop. It reports
-// whether it changed the entry.
-func (p *Poller) checkStopover(e *watchlist.Entry, now time.Time) bool {
-	if e.Kind != watchlist.KindFlight || e.Status != watchlist.StatusTracking ||
-		e.LandedAt.IsZero() || now.Sub(e.LandedAt) < p.StopoverGrace {
+// Arrival detection at a given destination.
+const (
+	// ArrivalRadiusNM is how close to the airport reference point an aircraft
+	// on the ground must be to count as having arrived (big airports have
+	// runways several miles from the reference point).
+	ArrivalRadiusNM = 10.0
+	// An aircraft last seen below ApproachAltFt within ApproachRadiusNM of the
+	// destination, then silent for VanishedAfter, is taken to have landed
+	// (many arrivals drop out of ADS-B coverage on the ground).
+	ApproachRadiusNM = 15.0
+	ApproachAltFt    = 5000.0
+	VanishedAfter    = 10 * time.Minute
+	// With a destination, a landing elsewhere is a stopover or diversion; the
+	// watch ends only after DiversionFactor x StopoverGrace on the ground.
+	DiversionFactor = 4
+)
+
+// atDestination reports whether a is on the ground at the entry's destination.
+func (p *Poller) atDestination(e watchlist.Entry, a adsb.Aircraft) bool {
+	dest, ok := airports.Lookup(e.Dest)
+	if !ok || !e.Airborne || !a.OnGround() || !a.HasPosition(p.MaxPosAge) {
 		return false
 	}
-	p.Log.Info("flight ended: on the ground past the stopover grace", "watch", e.Ident, "landed", e.LandedAt)
+	return geo.DistNM(*a.Lat, *a.Lon, dest.Lat, dest.Lon) <= ArrivalRadiusNM
+}
+
+// checkVanishedNearDest ends a flight whose aircraft was last seen low and
+// close to the destination and has not been seen since.
+func (p *Poller) checkVanishedNearDest(e *watchlist.Entry, now time.Time) bool {
+	dest, ok := airports.Lookup(e.Dest)
+	if !ok || e.Kind != watchlist.KindFlight || e.Status != watchlist.StatusTracking || !e.Airborne || e.Hex == "" {
+		return false
+	}
+	last, ok := p.Store.LastPosition(e.Hex)
+	if !ok || now.Sub(last.T) < VanishedAfter || last.AltFt == nil || *last.AltFt > ApproachAltFt {
+		return false
+	}
+	if geo.DistNM(last.Lat, last.Lon, dest.Lat, dest.Lon) > ApproachRadiusNM {
+		return false
+	}
+	p.Log.Info("flight ended: lost on approach to destination", "watch", e.Ident, "dest", e.Dest, "last_seen", last.T)
+	e.Status = watchlist.StatusDone
+	return true
+}
+
+// checkStopover ends a flight entry that has been on the ground too long.
+// Without a destination, ADS-B gives no way to tell the end of a flight from
+// an intermediate stop, so StopoverGrace decides. With one, only a much longer
+// stay (a diversion) ends it. It reports whether it changed the entry.
+func (p *Poller) checkStopover(e *watchlist.Entry, now time.Time) bool {
+	grace := p.StopoverGrace
+	if e.Dest != "" {
+		grace *= DiversionFactor
+	}
+	if e.Kind != watchlist.KindFlight || e.Status != watchlist.StatusTracking ||
+		e.LandedAt.IsZero() || now.Sub(e.LandedAt) < grace {
+		return false
+	}
+	p.Log.Info("flight ended: on the ground past the stopover grace", "watch", e.Ident, "landed", e.LandedAt, "grace", grace)
 	e.Status = watchlist.StatusDone
 	return true
 }

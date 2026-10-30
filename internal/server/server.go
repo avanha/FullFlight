@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/avanha/fullflight/internal/airports"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/watchlist"
 )
@@ -76,6 +77,8 @@ type watchJSON struct {
 	Kind     string    `json:"kind"`
 	Ident    string    `json:"ident"`
 	Date     string    `json:"date,omitempty"`
+	Dest     string    `json:"dest,omitempty"` // ICAO code
+	DestName string    `json:"dest_name,omitempty"`
 	Start    time.Time `json:"start"`
 	End      time.Time `json:"end"`
 	Status   string    `json:"status"`
@@ -85,7 +88,12 @@ type watchJSON struct {
 }
 
 func toJSON(e watchlist.Entry) watchJSON {
-	return watchJSON{e.ID, string(e.Kind), e.Ident, e.Date, e.Start, e.End, string(e.Status), e.Hex, e.Tail, e.Callsign}
+	w := watchJSON{ID: e.ID, Kind: string(e.Kind), Ident: e.Ident, Date: e.Date, Dest: e.Dest, Start: e.Start, End: e.End,
+		Status: string(e.Status), Hex: e.Hex, Tail: e.Tail, Callsign: e.Callsign}
+	if a, ok := airports.Lookup(e.Dest); ok {
+		w.DestName = a.Name
+	}
+	return w
 }
 
 func (s *Server) listWatches(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +109,7 @@ func (s *Server) listWatches(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
-// addWatch takes {"input": "UA869 2026-10-31"} or {"input": "B-LRM", "until": "<RFC3339>"}.
+// addWatch takes {"input": "UA869 2026-10-31 SFO"} or {"input": "B-LRM", "until": "<RFC3339>"}.
 func (s *Server) addWatch(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Input string `json:"input"`
@@ -123,6 +131,14 @@ func (s *Server) addWatch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fail(w, 400, err.Error())
 		return
+	}
+	if e.Dest != "" {
+		a, ok := airports.Lookup(e.Dest)
+		if !ok {
+			fail(w, 400, "unknown airport "+strconv.Quote(e.Dest))
+			return
+		}
+		e.Dest = a.ICAO
 	}
 	e, err = s.Store.AddWatch(e)
 	if err != nil {

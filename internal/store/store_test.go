@@ -181,3 +181,24 @@ func TestMigrationFromV1Database(t *testing.T) {
 		s2.Close()
 	}
 }
+
+func TestWatchDestination(t *testing.T) {
+	s := open(t)
+	e, _ := watchlist.Parse("UA869 2026-10-31", now, time.Time{})
+	a, _ := s.AddWatch(e)
+	if a.Dest != "" {
+		t.Fatalf("dest = %q", a.Dest)
+	}
+	e.Dest = "KSFO"
+	b, err := s.AddWatch(e) // same flight again, now with a destination
+	if err != nil || b.ID != a.ID || b.Dest != "KSFO" {
+		t.Fatalf("re-add: %+v %v", b, err)
+	}
+	all, _ := s.ListWatches(false)
+	if len(all) != 1 || all[0].Dest != "KSFO" {
+		t.Errorf("list = %+v", all)
+	}
+	if _, ok := s.LastPosition("NOPE"); ok {
+		t.Error("LastPosition of unknown aircraft")
+	}
+}

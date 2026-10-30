@@ -23,10 +23,20 @@ Type into the web UI (or `POST /api/watches {"input": "...", "until": "<RFC3339>
 - `B-LRM` or `780AB8`: tracks now until `until`, default 36 h. A tail is
   resolved to its hex via airframes.io, so it can be watched before it flies.
 
-A flight watch ends when its aircraft lands and stays on the ground longer than
-`poll.stopover_grace` (default 3 h), or starts flying under a different
-callsign. A shorter stop is treated as a stopover and watching continues.
-ADS-B carries no destination, so this is inferred from behaviour.
+Add an optional destination, IATA or ICAO: `UA869 2026-10-31 SFO`.
+
+- **With a destination**, the watch ends when the aircraft is on the ground
+  within 10 nm of that airport (or was last seen low, within 15 nm, and has been
+  silent for 10 min). Landing anywhere else is a stopover or diversion and
+  watching continues, even under a new callsign; it only ends after 4 x
+  `poll.stopover_grace` (12 h) on the ground.
+- **Without one**, ADS-B gives no destination, so it is inferred from
+  behaviour: the watch ends when the aircraft stays on the ground longer than
+  `poll.stopover_grace` (default 3 h) or starts flying under a different
+  callsign. A shorter stop is treated as a stopover.
+
+Airport data: OurAirports (public domain), large and medium airports plus any
+with an IATA code, embedded from `internal/airports/airports.csv`.
 
 Every hex/tail pairing ever seen (from ADS-B or airframes.io) is kept in the
 `airframe` table forever, independent of watches; see `GET /api/airframes`.

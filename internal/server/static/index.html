@@ -27,11 +27,11 @@
 <aside>
   <h3 style="margin-top:0">FullFlight</h3>
   <form id="add">
-    <input name="input" placeholder="UA869 2026-10-31   or   B-LRM   or   780AB8" required autocomplete="off">
+    <input name="input" placeholder="UA869 2026-10-31 [SFO]   or   B-LRM   or   780AB8" required autocomplete="off">
     <input name="until" type="datetime-local" title="Optional end (tail/hex only; default 36 h)">
     <button>Watch</button>
   </form>
-  <p class="hint">Flight + date waits for takeoff. A tail or hex tracks now until the end time (default 36 h).</p>
+  <p class="hint">Flight + date waits for takeoff; an optional destination (IATA or ICAO) ends the watch on arrival there instead of after a long ground stop. A tail or hex tracks now until the end time (default 36 h).</p>
   <div id="err"></div>
   <ul id="list"></ul>
 </aside>
@@ -58,7 +58,7 @@ async function refresh() {
   ul.replaceChildren(...watches.map(w => {
     const li = document.createElement('li');
     li.className = w.id === selected ? 'sel' : '';
-    const title = w.kind === 'flight' ? `${w.ident} ${w.date}` : w.ident;
+    const title = w.kind === 'flight' ? `${w.ident} ${w.date}${w.dest ? ' → ' + w.dest : ''}` : w.ident;
     const ids = [w.callsign, w.tail, w.hex].filter(Boolean).join(' · ');
     li.innerHTML = `<button class="del" title="Remove">✕</button><b></b> <span class="${w.status}">${w.status}</span><small></small>`;
     li.querySelector('b').textContent = title;

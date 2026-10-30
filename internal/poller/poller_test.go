@@ -164,7 +164,7 @@ type flightRig struct {
 	now time.Time
 }
 
-func newFlightRig(t *testing.T) *flightRig {
+func newFlightRig(t *testing.T, dest string) *flightRig {
 	st, err := store.Open(":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -173,6 +173,7 @@ func newFlightRig(t *testing.T) *flightRig {
 	r := &flightRig{t: t, st: st, f: &fake{byCallsign: map[string][]adsb.Aircraft{}, byHex: map[string][]adsb.Aircraft{}},
 		now: time.Date(2026, 10, 31, 6, 0, 0, 0, time.UTC)}
 	e, _ := watchlist.Parse("UA869 2026-10-31", r.now, time.Time{})
+	e.Dest = dest
 	st.AddWatch(e)
 	r.p = &Poller{Store: st, ADSB: r.f, Now: func() time.Time { return r.now }, WaitingEvery: time.Second, TrackingEvery: time.Second}
 	return r
@@ -192,7 +193,7 @@ func (r *flightRig) step(d time.Duration, seen *adsb.Aircraft) watchlist.Entry {
 }
 
 func TestStopoverKeepsWatching(t *testing.T) {
-	r := newFlightRig(t)
+	r := newFlightRig(t, "")
 	g := parked("UAL869")
 	if e := r.step(0, &g); e.Status != watchlist.StatusTracking || e.Airborne {
 		t.Fatalf("on the ramp before departure: %+v", e) // not "landed": it has not flown yet
@@ -230,7 +231,7 @@ func TestStopoverKeepsWatching(t *testing.T) {
 }
 
 func TestCallsignChangeAfterLandingEndsFlight(t *testing.T) {
-	r := newFlightRig(t)
+	r := newFlightRig(t, "")
 	up := flying(40, "UAL869")
 	r.step(0, &up)
 	g := parked("UAL869")
@@ -250,7 +251,7 @@ func TestCallsignChangeAfterLandingEndsFlight(t *testing.T) {
 }
 
 func TestCallsignChangeInFlightIsIgnored(t *testing.T) {
-	r := newFlightRig(t)
+	r := newFlightRig(t, "")
 	up := flying(40, "UAL869")
 	r.step(0, &up)
 	odd := flying(41, "UAL869X")
@@ -322,5 +323,99 @@ func TestUnknownTailFallsBackToRegAndRetriesHourly(t *testing.T) {
 	p.Once(context.Background())
 	if lk.calls != 2 {
 		t.Errorf("no hourly retry: %d", lk.calls)
+	}
+}
+
+// at moves a sighting to the given coordinates.
+func at(a adsb.Aircraft, lat, lon float64) adsb.Aircraft {
+	a.Lat, a.Lon = fl(lat), fl(lon)
+	return a
+}
+
+var (
+	denver = [2]float64{39.86, -104.67} // an intermediate stop
+	sfo    = [2]float64{37.62, -122.37} // KSFO
+)
+
+func TestDestinationOverridesGrace(t *testing.T) {
+	r := newFlightRig(t, "KSFO")
+	up := at(flying(40, "UAL869"), 41, -90)
+	r.step(0, &up)
+
+	// A 6 hour stop at Denver (twice the plain 3 h grace) does not end it.
+	den := at(parked("UAL869"), denver[0], denver[1])
+	if e := r.step(time.Hour, &den); e.LandedAt.IsZero() {
+		t.Fatalf("landing at Denver not recorded: %+v", e)
+	}
+	if e := r.step(6*time.Hour, &den); e.Status != watchlist.StatusTracking {
+		t.Fatalf("ended at an intermediate stop despite a destination: %+v", e)
+	}
+	// Even under a new callsign (a different flight number out of Denver).
+	other := at(parked("UAL1234"), denver[0], denver[1])
+	if e := r.step(10*time.Minute, &other); e.Status != watchlist.StatusTracking {
+		t.Fatalf("callsign change ended a watch that has a destination: %+v", e)
+	}
+	up2 := at(flying(40, "UAL869"), 39, -110)
+	if e := r.step(10*time.Minute, &up2); !e.LandedAt.IsZero() || e.Status != watchlist.StatusTracking {
+		t.Fatalf("second leg: %+v", e)
+	}
+	// Touches down at San Francisco: done at once, final position recorded.
+	sf := at(parked("UAL869"), sfo[0]+0.01, sfo[1])
+	e := r.step(2*time.Hour, &sf)
+	if e.Status != watchlist.StatusDone {
+		t.Fatalf("not done on arrival: %+v", e)
+	}
+	if last, ok := r.st.LastPosition("A1B2C3"); !ok || last.Lat != sfo[0]+0.01 {
+		t.Errorf("arrival position not stored: %+v", last)
+	}
+}
+
+func TestDestinationLandingNearbyButElsewhere(t *testing.T) {
+	r := newFlightRig(t, "KSFO")
+	up := at(flying(40, "UAL869"), 40, -115)
+	r.step(0, &up)
+	// Lands at Sacramento (~75 nm from SFO), well outside the arrival radius.
+	smf := at(parked("UAL869"), 38.70, -121.59)
+	if e := r.step(time.Hour, &smf); e.Status != watchlist.StatusTracking {
+		t.Fatalf("diversion treated as arrival: %+v", e)
+	}
+}
+
+func TestDestinationDiversionEventuallyEnds(t *testing.T) {
+	r := newFlightRig(t, "KSFO")
+	up := at(flying(40, "UAL869"), 40, -115)
+	r.step(0, &up)
+	smf := at(parked("UAL869"), 38.70, -121.59)
+	r.step(time.Hour, &smf)
+	if e := r.step(11*time.Hour, &smf); e.Status != watchlist.StatusTracking {
+		t.Fatalf("ended before 4x grace (12 h): %+v", e)
+	}
+	if e := r.step(2*time.Hour, &smf); e.Status != watchlist.StatusDone {
+		t.Fatalf("diverted aircraft never released: %+v", e)
+	}
+}
+
+func TestDestinationLostOnApproach(t *testing.T) {
+	r := newFlightRig(t, "KSFO")
+	up := at(flying(40, "UAL869"), 37.7, -122.2)
+	lowAlt := 2400.0
+	up.AltBaro = adsb.AltBaro{Feet: &lowAlt}
+	r.step(0, &up) // low, ~10 nm out, descending
+
+	// Gone from the feed. Not yet: could be a coverage blip.
+	if e := r.step(5*time.Minute, nil); e.Status != watchlist.StatusTracking {
+		t.Fatalf("ended after 5 minutes: %+v", e)
+	}
+	if e := r.step(6*time.Minute, nil); e.Status != watchlist.StatusDone {
+		t.Fatalf("not done after vanishing on approach: %+v", e)
+	}
+}
+
+func TestVanishedHighIsNotArrival(t *testing.T) {
+	r := newFlightRig(t, "KSFO")
+	up := at(flying(40, "UAL869"), 37.7, -122.3) // overhead SFO at 35,000 ft
+	r.step(0, &up)
+	if e := r.step(30*time.Minute, nil); e.Status != watchlist.StatusTracking {
+		t.Fatalf("a high-altitude dropout ended the watch: %+v", e)
 	}
 }

@@ -60,6 +60,7 @@ var migrations = []string{
 		PRIMARY KEY (hex, tail)
 	 ) WITHOUT ROWID;
 	 CREATE INDEX airframe_tail ON airframe (tail);`,
+	`ALTER TABLE watch ADD COLUMN dest TEXT NOT NULL DEFAULT '';`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.
@@ -116,17 +117,23 @@ func ts(t time.Time) int64 { return t.Unix() }
 // AddWatch inserts an entry and returns it with its ID. Adding the same
 // entry twice returns the existing one.
 func (s *Store) AddWatch(e watchlist.Entry) (watchlist.Entry, error) {
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO watch (kind, ident, date, start_ts, end_ts, status, hex, tail, callsign)
-		VALUES (?,?,?,?,?,?,?,?,?)`,
-		e.Kind, e.Ident, e.Date, ts(e.Start), ts(e.End), e.Status, e.Hex, e.Tail, e.Callsign)
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO watch (kind, ident, date, start_ts, end_ts, status, hex, tail, callsign, dest)
+		VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		e.Kind, e.Ident, e.Date, ts(e.Start), ts(e.End), e.Status, e.Hex, e.Tail, e.Callsign, e.Dest)
 	if err != nil {
 		return e, err
 	}
 	row := s.db.QueryRow(watchSelect+` WHERE kind=? AND ident=? AND date=? AND start_ts=?`, e.Kind, e.Ident, e.Date, ts(e.Start))
-	return scanWatch(row)
+	got, err := scanWatch(row)
+	if err == nil && e.Dest != "" && got.Dest != e.Dest { // re-adding with a destination sets it
+		if _, err = s.db.Exec(`UPDATE watch SET dest=? WHERE id=?`, e.Dest, got.ID); err == nil {
+			got.Dest = e.Dest
+		}
+	}
+	return got, err
 }
 
-const watchSelect = `SELECT id, kind, ident, date, start_ts, end_ts, status, hex, tail, callsign, airborne, landed_ts FROM watch`
+const watchSelect = `SELECT id, kind, ident, date, start_ts, end_ts, status, hex, tail, callsign, airborne, landed_ts, dest FROM watch`
 
 type scanner interface{ Scan(...any) error }
 
@@ -134,7 +141,7 @@ func scanWatch(r scanner) (watchlist.Entry, error) {
 	var e watchlist.Entry
 	var start, end, landed int64
 	var airborne int
-	err := r.Scan(&e.ID, &e.Kind, &e.Ident, &e.Date, &start, &end, &e.Status, &e.Hex, &e.Tail, &e.Callsign, &airborne, &landed)
+	err := r.Scan(&e.ID, &e.Kind, &e.Ident, &e.Date, &start, &end, &e.Status, &e.Hex, &e.Tail, &e.Callsign, &airborne, &landed, &e.Dest)
 	e.Start, e.End = time.Unix(start, 0).UTC(), time.Unix(end, 0).UTC()
 	e.Airborne = airborne == 1
 	if landed != 0 {
@@ -234,6 +241,27 @@ func (s *Store) AddPosition(p Position) (bool, error) {
 	}
 	n, _ := res.RowsAffected()
 	return n > 0, nil
+}
+
+// LastPosition returns the newest stored position for an aircraft.
+func (s *Store) LastPosition(hex string) (Position, bool) {
+	t := s.lastPosition(hex)
+	return t, t.Hex != ""
+}
+
+// lastPosition is the newest position or the zero value.
+func (s *Store) lastPosition(hex string) Position {
+	var p Position
+	var t int64
+	var g int
+	err := s.db.QueryRow(`SELECT hex, ts, lat, lon, alt_ft, on_ground, gs, track, vrate, callsign, reg, source
+		FROM position WHERE hex=? ORDER BY ts DESC LIMIT 1`, hex).
+		Scan(&p.Hex, &t, &p.Lat, &p.Lon, &p.AltFt, &g, &p.GS, &p.Track, &p.VRate, &p.Callsign, &p.Reg, &p.Source)
+	if err != nil {
+		return Position{}
+	}
+	p.T, p.OnGround = time.Unix(t, 0).UTC(), g == 1
+	return p
 }
 
 // Track returns an aircraft's positions in [since, until), oldest first.

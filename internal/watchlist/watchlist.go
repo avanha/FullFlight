@@ -37,6 +37,7 @@ type Entry struct {
 	Kind     Kind
 	Ident    string // normalized: "UA869", "B-LRM", "780AB8"
 	Date     string // flight entries only, "2006-01-02"
+	Dest     string // flight entries only, optional: IATA or ICAO code (the server normalises it to ICAO)
 	Start    time.Time
 	End      time.Time
 	Status   Status
@@ -54,21 +55,29 @@ type Entry struct {
 var (
 	flightRe = regexp.MustCompile(`^([A-Z0-9]{2}|[A-Z]{3})(\d{1,4}[A-Z]?)$`)
 	hexRe    = regexp.MustCompile(`^[0-9A-F]{6}$`)
+	destRe   = regexp.MustCompile(`^([A-Z]{3}|[A-Z0-9]{4})$`)
 	tailRe   = regexp.MustCompile(`^[A-Z0-9]{1,2}-?[A-Z0-9]{2,5}$`)
 )
 
 // Parse builds an entry from user input such as "UA869 2026-10-31",
-// "B-LRM" or "780AB8". The end of a tail/hex watch is until if non-zero,
+// "UA869 2026-10-31 SFO" (with destination), "B-LRM" or "780AB8". The end of a tail/hex watch is until if non-zero,
 // otherwise now + TailDuration. A date on a tail/hex entry is rejected.
 func Parse(input string, now, until time.Time) (Entry, error) {
 	f := strings.Fields(strings.ToUpper(input))
 	switch len(f) {
 	case 1:
 		return parseAircraft(f[0], now, until)
-	case 2:
-		return parseFlight(f[0], f[1], now)
+	case 2, 3:
+		e, err := parseFlight(f[0], f[1], now)
+		if err == nil && len(f) == 3 {
+			if !destRe.MatchString(f[2]) {
+				return Entry{}, fmt.Errorf("%q is not an airport code (3-letter IATA or 4-character ICAO)", f[2])
+			}
+			e.Dest = f[2]
+		}
+		return e, err
 	}
-	return Entry{}, fmt.Errorf("expected \"UA869 2026-10-31\", a tail, or a hex; got %q", input)
+	return Entry{}, fmt.Errorf("expected \"UA869 2026-10-31 [SFO]\", a tail, or a hex; got %q", input)
 }
 
 func parseFlight(ident, date string, now time.Time) (Entry, error) {

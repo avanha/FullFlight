@@ -3,6 +3,8 @@ package decoder
 import (
 	"math"
 	"time"
+
+	"github.com/avanha/fullflight/internal/geo"
 )
 
 // ClockSkew is how far a receiving station's clock may lag the embedded time
@@ -36,16 +38,7 @@ func ImpliedSpeedKt(a, b TimedPoint) float64 {
 	if dt == 0 {
 		return math.Inf(1)
 	}
-	return distNM(a.Lat, a.Lon, b.Lat, b.Lon) / dt
-}
-
-func distNM(lat1, lon1, lat2, lon2 float64) float64 {
-	const r = 3440.065 // earth radius in nautical miles
-	rad := math.Pi / 180
-	dLat, dLon := (lat2-lat1)*rad, (lon2-lon1)*rad
-	h := math.Sin(dLat/2)*math.Sin(dLat/2) +
-		math.Cos(lat1*rad)*math.Cos(lat2*rad)*math.Sin(dLon/2)*math.Sin(dLon/2)
-	return 2 * r * math.Asin(math.Sqrt(h))
+	return geo.DistNM(a.Lat, a.Lon, b.Lat, b.Lon) / dt
 }
 
 // Plausible reports whether the move from a to b is physically reasonable.
