@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FullFlight</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  body { margin: 0; font: 14px system-ui, sans-serif; display: grid; grid-template-columns: 340px 1fr; height: 100vh; }
+  aside { padding: 12px; overflow: auto; border-right: 1px solid #ccc; }
+  #map { height: 100%; }
+  form { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+  input[name=input] { flex: 1 1 100%; padding: 6px; }
+  input[name=until] { flex: 1; padding: 6px; }
+  .hint { color: #666; font-size: 12px; margin: 0 0 12px; }
+  #err { color: #b00; min-height: 1.2em; }
+  ul { list-style: none; padding: 0; margin: 0; }
+  li { padding: 8px; border-bottom: 1px solid #eee; cursor: pointer; }
+  li.sel { background: #eef4ff; }
+  li small { color: #666; display: block; }
+  .waiting { color: #a60; } .tracking { color: #070; } .done, .expired { color: #888; }
+  button.del { float: right; }
+  @media (max-width: 700px) { body { grid-template-columns: 1fr; grid-template-rows: auto 50vh; height: auto; } }
+</style>
+</head>
+<body>
+<aside>
+  <h3 style="margin-top:0">FullFlight</h3>
+  <form id="add">
+    <input name="input" placeholder="UA869 2026-10-31   or   B-LRM   or   780AB8" required autocomplete="off">
+    <input name="until" type="datetime-local" title="Optional end (tail/hex only; default 36 h)">
+    <button>Watch</button>
+  </form>
+  <p class="hint">Flight + date waits for takeoff. A tail or hex tracks now until the end time (default 36 h).</p>
+  <div id="err"></div>
+  <ul id="list"></ul>
+</aside>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const map = L.map('map').setView([30, -40], 3);
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 18, attribution: '&copy; OpenStreetMap'}).addTo(map);
+let layer = L.layerGroup().addTo(map), selected = null, watches = [];
+const $ = s => document.querySelector(s);
+const fmt = t => new Date(t).toISOString().slice(0, 16).replace('T', ' ') + 'Z';
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (r.status === 204) return null;
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+async function refresh() {
+  watches = await api('/api/watches');
+  const ul = $('#list');
+  ul.replaceChildren(...watches.map(w => {
+    const li = document.createElement('li');
+    li.className = w.id === selected ? 'sel' : '';
+    const title = w.kind === 'flight' ? `${w.ident} ${w.date}` : w.ident;
+    const ids = [w.callsign, w.tail, w.hex].filter(Boolean).join(' · ');
+    li.innerHTML = `<button class="del" title="Remove">✕</button><b></b> <span class="${w.status}">${w.status}</span><small></small>`;
+    li.querySelector('b').textContent = title;
+    li.querySelector('small').textContent = `${ids ? ids + ' — ' : ''}${fmt(w.start)} → ${fmt(w.end)}`;
+    li.querySelector('.del').onclick = async e => { e.stopPropagation(); await api('/api/watches/' + w.id, {method: 'DELETE'}); refresh(); };
+    li.onclick = () => { selected = w.id; refresh(); showTrack(w); };
+    return li;
+  }));
+}
+
+async function showTrack(w) {
+  layer.clearLayers();
+  if (!w.hex) return;
+  const pts = await api(`/api/track/${w.hex}?hours=96`);
+  if (!pts.length) return;
+  const line = L.polyline(pts.map(p => [p.lat, p.lon]), {color: '#06c', weight: 3}).addTo(layer);
+  const last = pts[pts.length - 1];
+  L.circleMarker([last.lat, last.lon], {radius: 6, color: '#c00'}).addTo(layer)
+    .bindTooltip(`${last.callsign || w.hex} ${last.alt_ft ?? '?'} ft ${fmt(last.t)}`);
+  map.fitBounds(line.getBounds(), {maxZoom: 8, padding: [30, 30]});
+}
+
+$('#add').onsubmit = async e => {
+  e.preventDefault();
+  $('#err').textContent = '';
+  const f = new FormData(e.target), body = {input: f.get('input')};
+  if (f.get('until')) body.until = new Date(f.get('until')).toISOString();
+  try {
+    await api('/api/watches', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    e.target.reset();
+    refresh();
+  } catch (err) { $('#err').textContent = err.message; }
+};
+
+refresh();
+setInterval(() => { refresh().then(() => { const w = watches.find(x => x.id === selected); if (w) showTrack(w); }); }, 30000);
+</script>
+</body>
+</html>

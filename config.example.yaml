@@ -1,0 +1,14 @@
+# Copy to config.yaml (git-ignored) and edit.
+listen: 127.0.0.1:8080        # a non-loopback address requires auth below
+db_path: data/fullflight.db
+
+auth:                          # HTTP basic auth; leave empty only on loopback
+  username: ""
+  password: ""
+
+adsb:
+  sources: [adsb.lol, adsb.fi] # tried in order; first to answer wins
+
+poll:
+  waiting: 3m                  # flight entries not yet matched to an aircraft
+  tracking: 45s                # aircraft being followed

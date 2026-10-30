@@ -2,7 +2,10 @@ module github.com/avanha/fullflight
 
 go 1.27.3
 
-require modernc.org/sqlite v1.61.0
+require (
+	gopkg.in/yaml.v3 v3.0.1
+	modernc.org/sqlite v1.61.0
+)
 
 require (
 	github.com/dustin/go-humanize v1.1.0 // indirect
