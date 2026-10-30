@@ -22,18 +22,20 @@ const document = {
   createTextNode: t => ({text: t}),
 };
 // --- a recording Leaflet ---
-const calls = { fitBounds: 0, setView: [], panTo: [], markers: [], circles: [], polylines: 0, tooltipsOpened: 0, highlightAdds: [] };
+const calls = { lines: [], legend: null, addLayer: 0, fitBounds: 0, setView: [], panTo: [], markers: [], circles: [], polylines: 0, tooltipsOpened: 0, highlightAdds: [] };
 const allLayers = [];
-class Layer { constructor(){ this.items = []; this.open = false; allLayers.push(this); } addTo(t) { this.target = t; t.items && t.items.push(this); if (t === highlightGroup) calls.highlightAdds.push(this); return this; }
+class Layer { constructor(){ this.items = []; this.open = false; allLayers.push(this); } addTo(t) { this.target = t; this.onMap = (t === mapObj); t.items && t.items.push(this); if (t === highlightGroup) calls.highlightAdds.push(this); return this; }
   bindTooltip(c) { this.tooltip = c; return this; } openTooltip() { calls.tooltipsOpened++; this.open = true; return this; } closeTooltip() { this.open = false; return this; } getBounds() { return {}; } }
 let highlightGroup;
 const groups = [];
 const mapObj = { setView(ll, z) { calls.setView.push([ll, z]); return this; }, eachLayer(f) { allLayers.forEach(f); }, fitBounds() { calls.fitBounds++; }, panTo(ll) { calls.panTo.push(ll); },
+  hasLayer: g => !!g.onMap, addLayer(g) { calls.addLayer++; g.onMap = true; }, removeLayer(g) { g.onMap = false; },
   getBounds: () => ({ pad: () => ({ contains: ll => !(ll[0] > 50) }) }) };   // "in view" unless lat > 50
 const L = {
   map: () => mapObj, tileLayer: () => ({ addTo() {} }),
   layerGroup() { const g = new Layer(); g.clearLayers = () => { g.items = []; }; groups.push(g); return g; },
-  polyline() { calls.polylines++; return new Layer(); },
+  polyline(ll, o) { calls.polylines++; const l = new Layer(); l.ll = ll; l.o = o; calls.lines.push(l); return l; },
+  control: { layers: (base, overlays) => ({ addTo() { calls.legend = overlays; return this; } }) },
   circleMarker(ll, o) { const l = new Layer(); l.ll = ll; l.o = o; calls.circles.push(l); return l; },
   marker(ll, o) { const l = new Layer(); l.ll = ll; l.o = o; calls.markers.push(l); return l; },
   divIcon: o => o, featureGroup: () => ({ getBounds: () => ({}) }),
@@ -62,7 +64,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -199,6 +201,60 @@ highlightGroup = null;
   assert.strictEqual(await focusOn([], [msg(1, '20:00', 41, -105, {pos_t: '2026-10-30T10:00:00Z'}), msg(2, '12:00', 42, -106)]), '[[42,-106],7]');
   // nothing with a position: the map is left where it is
   assert.strictEqual(await focusOn([], [{id: 9, t: '2026-10-30T15:00:00Z', kind: 'cpdlc', summary: 's', raw: 'r', label: 'BA', rx_count: 1}]), null);
+
+  // 8c. a track per source, in the source's colour; broken at long silences and impossible jumps
+  const COLORS = {adsb: '#0b66d0', adsc: '#e8590c', cpdlc: '#7b2cbf', miam: '#0a9396', fms_position: '#2b9348'};
+  const lineOf = async (ptsArr, msgsArr) => {
+    const sp = pts.slice(), sm = msgs.slice();
+    pts.splice(0, pts.length, ...ptsArr); msgs.splice(0, msgs.length, ...msgsArr);
+    calls.lines.length = 0;
+    await t.showTrack(t.watches()[0], false);
+    pts.splice(0, pts.length, ...sp); msgs.splice(0, msgs.length, ...sm);
+    return calls.lines.map(l => ({color: l.o.color, n: l.ll.length, dash: l.o.dashArray, ll: l.ll}));
+  };
+  const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
+  // the legend lists all five sources
+  assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS']);
+  // each source gets its own colour and style
+  for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {
+    const r = await lineOf([], [at2(0, 41, -105, kind), at2(10, 41.1, -104, kind), at2(20, 41.2, -103, kind)]);
+    assert.strictEqual(r.length, 1, kind + ': one line');
+    assert.strictEqual(r[0].color, COLORS[kind]); assert.strictEqual(r[0].n, 3);
+  }
+  assert.strictEqual((await lineOf([], [at2(0, 41, -105, 'cpdlc'), at2(10, 41.1, -104, 'cpdlc')]))[0].dash, '10 4 2 4');
+  // ADS-B is a line in its own colour
+  const ab = (mm, lat) => ({t: `2026-10-30T16:${String(mm).padStart(2, '0')}:00Z`, lat, lon: -100, alt_ft: 35000, track: 90, source: 'adsb.lol'});
+  let r = await lineOf([ab(0, 40), ab(1, 40.1), ab(2, 40.2)], []);
+  assert.strictEqual(r.length, 1); assert.strictEqual(r[0].color, COLORS.adsb); assert.strictEqual(r[0].n, 3);
+  // ... but a 25 minute silence (out of coverage) is not bridged; the stray single point draws no line
+  r = await lineOf([ab(0, 40), ab(1, 40.1), ab(26, 41), ab(27, 41.1), ab(50, 42)], []);
+  assert.deepStrictEqual(r.map(x => x.n), [2, 2], 'ADS-B split at the gap, lone point left out');
+  // a datalink silence of 100 minutes (> the 90 min allowed for ADS-C) splits it
+  r = await lineOf([], [at2(0, 41, -105, 'adsc'), at2(10, 41.1, -104, 'adsc'), at2(50, 41.5, -100, 'adsc'), at2(51, 41.51, -100, 'adsc')].map((m, i) => i < 2 ? m : {...m, t: m.t.replace('T15:', 'T17:')}));
+  assert.deepStrictEqual(r.map(x => x.n), [2, 2], 'ADS-C split at a long gap');
+  // an impossible jump (Los Angeles to Boston in 10 minutes) ends a track instead of drawing across the country
+  r = await lineOf([], [at2(0, 34.0, -118.4, 'fms_position'), at2(5, 34.1, -118.0, 'fms_position'), at2(15, 41.5, -72.2, 'fms_position'), at2(20, 41.6, -72.0, 'fms_position')]);
+  assert.deepStrictEqual(r.map(x => x.n), [2, 2], 'two tracks, none across the continent');
+  assert.ok(r.every(x => x.ll.every(p => (p[1] < -100) === (x.ll[0][1] < -100))), 'no line mixes the two clusters');
+  // positions flagged impossible are left out of the line; the rest still join up
+  r = await lineOf([], [at2(0, 41, -105, 'adsc'), at2(10, 5, 5, 'adsc', {suspect: 'x'}), at2(20, 41.2, -103, 'adsc')]);
+  assert.strictEqual(r.length, 1); assert.strictEqual(JSON.stringify(r[0].ll.map(p => p[0])), '[41,41.2]');
+  // input in any order is drawn in time order, by when the position says it was
+  r = await lineOf([], [at2(30, 41.3, -102, 'adsc'), at2(0, 41, -105, 'adsc', {pos_t: '2026-10-30T15:00:00Z'}), at2(15, 41.15, -103.5, 'adsc')]);
+  assert.strictEqual(JSON.stringify(r[0].ll.map(p => p[0])), '[41,41.15,41.3]');
+  // the dot for each message position takes its source's colour
+  calls.circles.length = 0;
+  await lineOf([], [at2(0, 41, -105, 'cpdlc'), at2(10, 5, 5, 'cpdlc', {suspect: 'x'})]);
+  const dots = calls.circles.filter(c => c.o.radius === 4);
+  assert.deepStrictEqual(dots.map(c => c.o.color), [COLORS.cpdlc, '#888'], 'source colour, grey if impossible');
+
+  // 8d. a message from a source switched off in the legend turns that track back on when selected
+  await t.showTrack(t.watches()[0], false);
+  t.SOURCES.adsc.group.onMap = false;            // as if unticked in the legend
+  const added = calls.addLayer;
+  t.rows.get(1).onclick();                        // message 1 is an ADS-C position
+  assert.strictEqual(t.SOURCES.adsc.group.onMap, true);
+  assert.strictEqual(calls.addLayer, added + 1);
 
   // 9. a watch with no aircraft yet clears the map without error
   await t.showTrack({id: 9, hex: ''}, true);

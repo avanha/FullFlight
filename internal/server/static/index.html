@@ -59,6 +59,20 @@ const map = L.map('map').setView([30, -40], 3);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 18, attribution: '&copy; OpenStreetMap'}).addTo(map);
 const layer = L.layerGroup().addTo(map);      // track, message positions, route: redrawn on refresh
 const highlight = L.layerGroup().addTo(map);  // ring around the selected message's position
+
+// One layer per position source, so each track can be switched on and off from the legend.
+// gapMin: a silence longer than this ends a track rather than being bridged by a straight line.
+const SOURCES = {
+  adsb:         {name: 'ADS-B', color: '#0b66d0', dash: null,         weight: 3, gapMin: 20},
+  adsc:         {name: 'ADS-C', color: '#e8590c', dash: null,         weight: 2, gapMin: 90},
+  cpdlc:        {name: 'CPDLC', color: '#7b2cbf', dash: '10 4 2 4',   weight: 2, gapMin: 150},
+  miam:         {name: 'REP081', color: '#0a9396', dash: '8 4',       weight: 2, gapMin: 90},
+  fms_position: {name: 'FMS',   color: '#2b9348', dash: '2 5',        weight: 2, gapMin: 60},
+};
+for (const src of Object.values(SOURCES)) src.group = L.layerGroup().addTo(map);
+L.control.layers(null, Object.fromEntries(Object.values(SOURCES).map(src =>
+  [`<span style="color:${src.color};font-weight:bold">&#9472;&#9472;</span> ${src.name}`, src.group])),
+  {collapsed: false, position: 'bottomleft'}).addTo(map);
 let selected = null, watches = [];
 const $ = s => document.querySelector(s);
 const fmt = t => new Date(t).toISOString().slice(0, 16).replace('T', ' ') + 'Z';
@@ -152,6 +166,31 @@ function planeIcon(track) {
 
 const markers = new Map();   // message id -> its marker on the map
 let showSeq = 0;             // discards the result of a slower, superseded request
+function distNM(lat1, lon1, lat2, lon2) {
+  const r = Math.PI / 180, dLat = (lat2 - lat1) * r, dLon = (lon2 - lon1) * r;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin(dLon / 2) ** 2;
+  return 2 * 3440.065 * Math.asin(Math.sqrt(h));
+}
+
+// Split fixes (any order) into tracks: sorted by time, broken wherever the aircraft was silent for longer
+// than maxGapMin or the move to the next fix is impossible (over 700 kt). A lone fix draws no line.
+function segments(fixes, maxGapMin) {
+  const sorted = fixes.slice().sort((a, b) => a.t - b.t);
+  const out = [];
+  let cur = [];
+  for (const f of sorted) {
+    const p = cur[cur.length - 1];
+    if (p) {
+      const dt = f.t - p.t, d = distNM(p.lat, p.lon, f.lat, f.lon);
+      const impossible = dt <= 0 ? d > 20 : d / (dt / 3600000) > 700;
+      if (dt > maxGapMin * 60000 || impossible) { out.push(cur); cur = []; }
+    }
+    cur.push(f);
+  }
+  out.push(cur);
+  return out.filter(seg => seg.length >= 2);
+}
+
 const FOCUS_ZOOM = 7;   // regional: a few hundred miles across
 
 // The newest position we hold for an aircraft, from ADS-B or from a message. Trustworthy ones come
@@ -174,26 +213,40 @@ async function showTrack(w, focus) {
   const [pts, msgs] = await Promise.all([api(`/api/track/${w.hex}?hours=96`), api(`/api/messages/${w.hex}?hours=96`)]);
   if (seq !== showSeq) return;
   layer.clearLayers();
+  Object.values(SOURCES).forEach(src => src.group.clearLayers());
   markers.clear();
-  if (pts.length) L.polyline(pts.map(p => [p.lat, p.lon]), {color: '#06c', weight: 3}).addTo(layer);
 
-  // Positions reported inside messages: orange; grey if impossible; faint and dotted if their time is unverified.
+  // A track per source. Lines run through each source's positions in time order, skipping ones flagged impossible.
+  const drawTrack = (key, fixes) => {
+    const src = SOURCES[key];
+    for (const seg of segments(fixes, src.gapMin)) {
+      L.polyline(seg.map(f => [f.lat, f.lon]), {color: src.color, weight: src.weight, dashArray: src.dash, opacity: .9}).addTo(src.group);
+    }
+  };
+  drawTrack('adsb', pts.map(p => ({lat: p.lat, lon: p.lon, t: new Date(p.t).getTime()})));
+
+  // Positions reported inside messages: a dot in the source's colour (grey if impossible, faint and dotted if
+  // their time is unverified), and a track through them.
+  const byKind = {};
   for (const m of msgs) {
     if (m.lat == null) continue;
+    const src = SOURCES[m.kind];
     const mk = L.circleMarker([m.lat, m.lon], {
-      radius: 4, weight: 1, color: m.suspect ? '#888' : '#d60',
+      radius: 4, weight: 1, color: m.suspect ? '#888' : (src ? src.color : '#e8590c'),
       fillOpacity: m.time_unverified ? .2 : .8, dashArray: m.time_unverified ? '2 2' : null,
-    }).addTo(layer);
+    }).addTo(src ? src.group : layer);
     mk.bindTooltip(tip(m.summary, fmt(m.pos_t || m.t), m.suspect ? '⚠ ' + m.suspect : '', m.time_unverified ? '⏱ time unverified' : ''));
     markers.set(m.id, mk);
+    if (src && !m.suspect) (byKind[m.kind] ||= []).push({lat: m.lat, lon: m.lon, t: new Date(m.pos_t || m.t).getTime()});
   }
+  for (const [kind, fixes] of Object.entries(byKind)) drawTrack(kind, fixes);
 
   // Predicted route from the newest ADS-C report that has one.
   const withRoute = msgs.filter(m => m.route && m.lat != null && !m.suspect).pop();
   if (withRoute) {
     const line = [[withRoute.lat, withRoute.lon], ...withRoute.route.map(p => [p.Lat, p.Lon])];
-    L.polyline(line, {color: '#d60', weight: 2, dashArray: '6 6'}).addTo(layer);
-    withRoute.route.forEach(p => L.circleMarker([p.Lat, p.Lon], {radius: 3, color: '#d60', fillColor: '#fff', fillOpacity: 1}).addTo(layer)
+    L.polyline(line, {color: SOURCES.adsc.color, weight: 2, dashArray: '6 6'}).addTo(SOURCES.adsc.group);
+    withRoute.route.forEach(p => L.circleMarker([p.Lat, p.Lon], {radius: 3, color: SOURCES.adsc.color, fillColor: '#fff', fillOpacity: 1}).addTo(SOURCES.adsc.group)
       .bindTooltip(tip('predicted waypoint', p.ETASec != null ? `ETA +${Math.round(p.ETASec / 60)} min from ${fmt(withRoute.pos_t || withRoute.t)}` : '')));
   }
 
@@ -236,6 +289,8 @@ function applyHighlight(pan) {
   L.circleMarker([m.lat, m.lon], {radius: 13, color: '#0a58ca', weight: 3, fillColor: '#ffd43b', fillOpacity: .35, interactive: false}).addTo(highlight);
   if (pan && !map.getBounds().pad(-0.1).contains([m.lat, m.lon])) map.panTo([m.lat, m.lon]);
   const mk = markers.get(m.id);
+  const src = SOURCES[m.kind];
+  if (src && !map.hasLayer(src.group)) map.addLayer(src.group);   // it was switched off in the legend
   if (mk) mk.openTooltip();
 }
 

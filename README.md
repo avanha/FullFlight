@@ -77,7 +77,11 @@ re-decode every stored message from its raw text (idempotent).
 ## Web page
 
 Choosing a watch centres the map (zoom 7) on that aircraft's newest trustworthy
-fix, from ADS-B or a datalink message, whichever is later. Click a message that
+fix, from ADS-B or a datalink message, whichever is later. Each position source has its own track
+and colour (ADS-B blue, ADS-C orange, CPDLC purple, REP081 teal, FMS green) with a
+legend to switch them on and off. A track is broken, not bridged, across a long
+silence (ADS-B 20 min, ADS-C 90, CPDLC 150, REP081 90, FMS 60) or an impossible
+jump (over 700 kt), and positions flagged impossible are left out. Click a message that
 has a position (orange bar on its left) to ring it on the map and show its popup
 (only one popup is ever open); the map pans only if it is out of view. Hover a message's time for its age.
 The aircraft is drawn as a plane turned to its track; hovering it shows altitude,
