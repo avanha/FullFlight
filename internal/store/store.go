@@ -111,6 +111,23 @@ var migrations = []string{
 	// time: both, and whether they disagree by enough to distrust the placement.
 	`ALTER TABLE message ADD COLUMN time_note TEXT NOT NULL DEFAULT '';
 	 ALTER TABLE message ADD COLUMN time_flag INTEGER NOT NULL DEFAULT 0;`,
+	// Weather at the report, the speed and track it gave, and the waypoints a CPDLC position report
+	// names. Plus the waypoint coordinates we have learned: a name matched to an ADS-C predicted
+	// waypoint by its ETA, one row of evidence per message so that learning again changes nothing.
+	`ALTER TABLE message ADD COLUMN wx_dir  REAL;
+	 ALTER TABLE message ADD COLUMN wx_kt   REAL;
+	 ALTER TABLE message ADD COLUMN wx_temp REAL;
+	 ALTER TABLE message ADD COLUMN gs      REAL;
+	 ALTER TABLE message ADD COLUMN trk     REAL;
+	 ALTER TABLE message ADD COLUMN fixes   TEXT NOT NULL DEFAULT '';
+	 CREATE TABLE fix (
+		name    TEXT NOT NULL,
+		msg_id  INTEGER NOT NULL,
+		lat     REAL NOT NULL,
+		lon     REAL NOT NULL,
+		source  TEXT NOT NULL,
+		PRIMARY KEY (name, msg_id)
+	 ) WITHOUT ROWID;`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.

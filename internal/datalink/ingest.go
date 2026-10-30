@@ -63,6 +63,7 @@ func decodeInto(st *store.Store, m *store.Message, dir decoder.Direction) {
 	m.Kind, m.Direction, m.Tail, m.Callsign, m.Flight = "", "", "", "", ""
 	m.Summary, m.Detail, m.Decoded, m.Route, m.Suspect = "", "", "", "", ""
 	m.Lat, m.Lon, m.AltFt, m.PosT = nil, nil, nil, nil
+	m.WxDir, m.WxKt, m.WxTemp, m.GS, m.Trk, m.Fixes = nil, nil, nil, nil, nil, ""
 
 	res, err := decoder.Decode(decoder.Message{Label: m.Label, Dir: dir, Text: m.Text})
 	if err != nil {
@@ -83,6 +84,11 @@ func decodeInto(st *store.Store, m *store.Message, dir decoder.Direction) {
 			m.Lat, m.Lon, m.AltFt, m.PosT = &res.Pos.Lat, &res.Pos.Lon, res.Pos.AltFt, &t
 			m.Suspect = checkPosition(st, m.Hex, m.ID, res.Pos.Lat, res.Pos.Lon, t)
 		}
+		if res.Wx != nil {
+			m.WxDir, m.WxKt, m.WxTemp = res.Wx.WindDirDeg, res.Wx.WindKt, res.Wx.TempC
+		}
+		m.GS, m.Trk = res.GS, res.Track
+		m.Fixes = fixList(res, m)
 	}
 	m.Mismatch = mismatch(st, m.Hex, *m)
 	if res.Kind == decoder.KindFMS {
@@ -128,6 +134,29 @@ func compareTimes(arrived time.Time, hhmmss string) (note string, flag bool) {
 	return note, flag
 }
 
+// fixList records the waypoints a CPDLC position report names, with their times placed on the
+// right day (the date nearest the report: an ETA can be just after midnight), and the report's
+// own speed and track for projecting the next one.
+func fixList(res decoder.Result, m *store.Message) string {
+	if len(res.Fixes) == 0 {
+		return ""
+	}
+	ref := m.T
+	if m.PosT != nil {
+		ref = *m.PosT
+	}
+	fl := store.FixList{GS: res.GS, Trk: res.Track}
+	for _, f := range res.Fixes {
+		e := store.FixEntry{Name: f.Name, Role: f.Role, AltFt: f.AltFt}
+		if f.Secs != nil {
+			e.T = decoder.NearestTimeOfDay(*f.Secs, ref).Unix()
+		}
+		fl.List = append(fl.List, e)
+	}
+	b, _ := json.Marshal(fl)
+	return string(b)
+}
+
 // Redecode re-runs our decoder over every stored message, oldest first, and
 // rewrites the derived columns. Run it after improving the decoder so old
 // messages pick up the change. It returns how many messages it changed.
@@ -141,7 +170,8 @@ func Redecode(st *store.Store) (changed int, err error) {
 		// Not the stored direction: that may itself have been a guess.
 		decodeInto(st, &m, directionOf(m.AFDir, m.FromHex, m.ToHex, m.Hex))
 		if m.Kind == old.Kind && m.Summary == old.Summary && m.Decoded == old.Decoded && m.Route == old.Route &&
-			m.Suspect == old.Suspect && m.Mismatch == old.Mismatch && sameFloat(m.Lat, old.Lat) && sameFloat(m.Lon, old.Lon) {
+			m.Suspect == old.Suspect && m.Mismatch == old.Mismatch && sameFloat(m.Lat, old.Lat) && sameFloat(m.Lon, old.Lon) &&
+			m.Fixes == old.Fixes && sameFloat(m.WxKt, old.WxKt) && sameFloat(m.WxTemp, old.WxTemp) && sameFloat(m.GS, old.GS) && sameFloat(m.Trk, old.Trk) {
 			continue
 		}
 		if err := st.UpdateDecoded(m); err != nil {

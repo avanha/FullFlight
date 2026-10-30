@@ -39,6 +39,20 @@ func ResolveSecondsOfDay(secs float64, recv time.Time) time.Time {
 	return t
 }
 
+// NearestTimeOfDay places a time of day on the date that puts it closest to ref. An ETA can be
+// a little before or after the report that carries it, either side of midnight.
+func NearestTimeOfDay(secs float64, ref time.Time) time.Time {
+	ref = ref.UTC()
+	base := ref.Truncate(24 * time.Hour).Add(time.Duration(secs * float64(time.Second)))
+	best := base
+	for _, d := range []time.Duration{-24 * time.Hour, 24 * time.Hour} {
+		if c := base.Add(d); c.Sub(ref).Abs() < best.Sub(ref).Abs() {
+			best = c
+		}
+	}
+	return best
+}
+
 type TimedPoint struct {
 	Lat, Lon float64
 	T        time.Time

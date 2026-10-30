@@ -50,6 +50,11 @@ type Result struct {
 	Text    string     // multi-line human-readable decode (libacars text, else Summary)
 	Pos     *Pos       // a reported position, if the message carries one
 	Route   []Waypoint // ADS-C predicted route, if any
+
+	Wx    *Weather // wind and temperature at the report, if it carries them
+	GS    *float64 // ground speed in knots, if reported
+	Track *float64 // true track in degrees, if reported
+	Fixes []FixRef // waypoints named by a CPDLC position report
 }
 
 var (
@@ -185,6 +190,8 @@ func Decode(m Message) (Result, error) {
 				r.Fields["rep081"] = rep
 				alt := float64(rep.AltFt)
 				r.Pos = &Pos{Lat: rep.Lat, Lon: rep.Lon, AltFt: &alt, Secs: float64(rep.SecsInMonth), Basis: BasisMonth}
+				dir, kt, temp := float64(rep.WindDirDeg), float64(rep.WindKt), rep.TempC
+				r.Wx = &Weather{WindDirDeg: &dir, WindKt: &kt, TempC: &temp}
 			}
 		}
 		if r.Kind == KindCPDLC && r.Tree != nil {
@@ -192,9 +199,11 @@ func Decode(m Message) (Result, error) {
 			if r.Pos, fix = cpdlcPosition(r.Tree); fix != "" {
 				r.Fields["fix"] = fix
 			}
+			r.GS, r.Track, r.Wx, r.Fixes = cpdlcExtras(r.Tree)
 		}
 		if r.Kind == KindADSC {
 			r.Pos, r.Route = adscPosition(r.Tree)
+			r.GS, r.Track, r.Wx = adscMotionWeather(r.Tree)
 		}
 	case KindFMS:
 		parseFMS(body, &r)

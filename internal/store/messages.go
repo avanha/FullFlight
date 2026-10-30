@@ -5,7 +5,9 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -46,6 +48,29 @@ type Message struct {
 	// TimeFlag is set when they disagree by more than TimeTolerance.
 	TimeNote string
 	TimeFlag bool
+
+	// Weather at the report, and the speed and track it gave.
+	WxDir, WxKt, WxTemp *float64
+	GS, Trk             *float64
+	// Fixes is a JSON FixList: the waypoints a CPDLC position report names.
+	Fixes string
+}
+
+// FixEntry is one waypoint named by a CPDLC position report. T is the unix time it was passed
+// (role "passed") or is expected (role "next"); 0 for "then", which carries none.
+type FixEntry struct {
+	Name  string   `json:"name"`
+	Role  string   `json:"role"`
+	T     int64    `json:"t,omitempty"`
+	AltFt *float64 `json:"alt,omitempty"`
+}
+
+// FixList is what Message.Fixes holds. GS and Trk (knots, degrees true) are the report's own
+// speed and track, used to project the next fix when its coordinates are not known.
+type FixList struct {
+	GS   *float64   `json:"gs,omitempty"`
+	Trk  *float64   `json:"trk,omitempty"`
+	List []FixEntry `json:"list"`
 }
 
 // DupKey identifies a message independent of which station heard it.
@@ -74,13 +99,25 @@ func (s *Store) AddMessage(m Message) (bool, error) {
 		v := ts(*m.PosT)
 		posT = &v
 	}
-	res, err := s.db.Exec(`INSERT OR IGNORE INTO message (id, hex, ts, label, block_id, msg_num, direction, source_type, station, freq,
-		text, dup_key, kind, tail, callsign, flight, summary, detail, decoded, route, lat, lon, alt_ft, pos_ts, suspect,
-		af_tail, af_flight, af_dep, af_dest, mismatch, from_hex, to_hex, af_dir, time_note, time_flag)
-		VALUES (?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?)`,
-		m.ID, m.Hex, ts(m.T), m.Label, m.BlockID, m.MsgNum, m.Direction, m.SourceType, m.Station, m.Freq,
-		m.Text, key, m.Kind, m.Tail, m.Callsign, m.Flight, m.Summary, m.Detail, m.Decoded, m.Route, m.Lat, m.Lon, m.AltFt, posT, m.Suspect,
-		m.AFTail, m.AFFlight, m.AFDep, m.AFDest, m.Mismatch, m.FromHex, m.ToHex, m.AFDir, m.TimeNote, boolInt(m.TimeFlag))
+	cols := []struct {
+		name string
+		val  any
+	}{
+		{"id", m.ID}, {"hex", m.Hex}, {"ts", ts(m.T)}, {"label", m.Label}, {"block_id", m.BlockID}, {"msg_num", m.MsgNum},
+		{"direction", m.Direction}, {"source_type", m.SourceType}, {"station", m.Station}, {"freq", m.Freq},
+		{"text", m.Text}, {"dup_key", key}, {"kind", m.Kind}, {"tail", m.Tail}, {"callsign", m.Callsign}, {"flight", m.Flight},
+		{"summary", m.Summary}, {"detail", m.Detail}, {"decoded", m.Decoded}, {"route", m.Route},
+		{"lat", m.Lat}, {"lon", m.Lon}, {"alt_ft", m.AltFt}, {"pos_ts", posT}, {"suspect", m.Suspect},
+		{"af_tail", m.AFTail}, {"af_flight", m.AFFlight}, {"af_dep", m.AFDep}, {"af_dest", m.AFDest}, {"mismatch", m.Mismatch},
+		{"from_hex", m.FromHex}, {"to_hex", m.ToHex}, {"af_dir", m.AFDir}, {"time_note", m.TimeNote}, {"time_flag", boolInt(m.TimeFlag)},
+		{"wx_dir", m.WxDir}, {"wx_kt", m.WxKt}, {"wx_temp", m.WxTemp}, {"gs", m.GS}, {"trk", m.Trk}, {"fixes", m.Fixes},
+	}
+	names, marks := make([]string, len(cols)), make([]string, len(cols))
+	vals := make([]any, len(cols))
+	for i, c := range cols {
+		names[i], marks[i], vals[i] = c.name, "?", c.val
+	}
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO message (`+strings.Join(names, ", ")+`) VALUES (`+strings.Join(marks, ",")+`)`, vals...)
 	if err != nil {
 		return false, err
 	}
@@ -90,7 +127,8 @@ func (s *Store) AddMessage(m Message) (bool, error) {
 
 const messageCols = `id, hex, ts, label, block_id, msg_num, direction, source_type, station, freq, text, rx_count,
 	kind, tail, callsign, flight, summary, detail, decoded, route, lat, lon, alt_ft, pos_ts, suspect,
-	af_tail, af_flight, af_dep, af_dest, mismatch, from_hex, to_hex, af_dir, time_note, time_flag`
+	af_tail, af_flight, af_dep, af_dest, mismatch, from_hex, to_hex, af_dir, time_note, time_flag,
+	wx_dir, wx_kt, wx_temp, gs, trk, fixes`
 
 func scanMessages(rows *sql.Rows) ([]Message, error) {
 	defer rows.Close()
@@ -102,7 +140,8 @@ func scanMessages(rows *sql.Rows) ([]Message, error) {
 		var tflag int
 		if err := rows.Scan(&m.ID, &m.Hex, &t, &m.Label, &m.BlockID, &m.MsgNum, &m.Direction, &m.SourceType, &m.Station, &m.Freq,
 			&m.Text, &m.RxCount, &m.Kind, &m.Tail, &m.Callsign, &m.Flight, &m.Summary, &m.Detail, &m.Decoded, &m.Route,
-			&m.Lat, &m.Lon, &m.AltFt, &posT, &m.Suspect, &m.AFTail, &m.AFFlight, &m.AFDep, &m.AFDest, &m.Mismatch, &m.FromHex, &m.ToHex, &m.AFDir, &m.TimeNote, &tflag); err != nil {
+			&m.Lat, &m.Lon, &m.AltFt, &posT, &m.Suspect, &m.AFTail, &m.AFFlight, &m.AFDep, &m.AFDest, &m.Mismatch, &m.FromHex, &m.ToHex, &m.AFDir, &m.TimeNote, &tflag,
+			&m.WxDir, &m.WxKt, &m.WxTemp, &m.GS, &m.Trk, &m.Fixes); err != nil {
 			return nil, err
 		}
 		m.T, m.TimeFlag = time.Unix(t, 0).UTC(), tflag == 1
@@ -148,9 +187,11 @@ func (s *Store) UpdateDecoded(m Message) error {
 		posT = &v
 	}
 	_, err := s.db.Exec(`UPDATE message SET direction=?, kind=?, tail=?, callsign=?, flight=?, summary=?, detail=?, decoded=?, route=?,
-		lat=?, lon=?, alt_ft=?, pos_ts=?, suspect=?, mismatch=?, time_note=?, time_flag=? WHERE id=?`,
+		lat=?, lon=?, alt_ft=?, pos_ts=?, suspect=?, mismatch=?, time_note=?, time_flag=?,
+		wx_dir=?, wx_kt=?, wx_temp=?, gs=?, trk=?, fixes=? WHERE id=?`,
 		m.Direction, m.Kind, m.Tail, m.Callsign, m.Flight, m.Summary, m.Detail, m.Decoded, m.Route,
-		m.Lat, m.Lon, m.AltFt, posT, m.Suspect, m.Mismatch, m.TimeNote, boolInt(m.TimeFlag), m.ID)
+		m.Lat, m.Lon, m.AltFt, posT, m.Suspect, m.Mismatch, m.TimeNote, boolInt(m.TimeFlag),
+		m.WxDir, m.WxKt, m.WxTemp, m.GS, m.Trk, m.Fixes, m.ID)
 	return err
 }
 
@@ -298,4 +339,45 @@ func (s *Store) LastFlight(hexAddr string) (FlightID, bool) {
 	}
 	f.T = time.Unix(t, 0).UTC()
 	return f, true
+}
+
+// LearnedFix is a waypoint position matched from the aircraft's own data, with how many messages
+// agreed on it.
+type LearnedFix struct {
+	Lat, Lon float64
+	N        int
+}
+
+// AddFix records that message msgID, which named waypoint name, matches a waypoint at (lat, lon).
+// Recording the same evidence again changes nothing.
+func (s *Store) AddFix(name string, msgID int64, lat, lon float64, source string) error {
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO fix (name, msg_id, lat, lon, source) VALUES (?,?,?,?,?)`, name, msgID, lat, lon, source)
+	return err
+}
+
+// LearnedFixes returns the positions learned for a waypoint name, most supported first. Positions
+// within a quarter of a degree count as the same place.
+func (s *Store) LearnedFixes(name string) []LearnedFix {
+	rows, err := s.db.Query(`SELECT lat, lon FROM fix WHERE name=?`, name)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []LearnedFix
+next:
+	for rows.Next() {
+		var la, lo float64
+		if rows.Scan(&la, &lo) != nil {
+			continue
+		}
+		for i := range out {
+			if math.Abs(out[i].Lat-la) < 0.25 && math.Abs(out[i].Lon-lo) < 0.25 {
+				out[i].N++
+				continue next
+			}
+		}
+		out = append(out, LearnedFix{la, lo, 1})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].N > out[j].N })
+	return out
 }

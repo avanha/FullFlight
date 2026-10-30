@@ -178,6 +178,7 @@ func parseFMS(body string, r *Result) {
 		p.AltFt = &ft
 	}
 	r.Pos = p
+	r.Wx = fmsWeather(get(7), get(8))
 	if t := get(2); len(t) == 6 {
 		r.Fields["wpt_time"] = t // hhmmss, as sent
 	}
@@ -186,4 +187,32 @@ func parseFMS(body string, r *Result) {
 			r.Fields[k] = v
 		}
 	}
+}
+
+// fmsWeather reads the temperature ("M51" = -51 C, "P05" = +5 C) and wind ("264080" = from 264
+// degrees at 80 knots) groups of an FMS position report. Values outside what is physically
+// plausible are dropped rather than shown.
+func fmsWeather(temp, wind string) *Weather {
+	w := &Weather{}
+	if len(temp) >= 2 && (temp[0] == 'M' || temp[0] == 'P') {
+		if v, err := strconv.Atoi(temp[1:]); err == nil && v <= 90 {
+			c := float64(v)
+			if temp[0] == 'M' {
+				c = -c
+			}
+			w.TempC = &c
+		}
+	}
+	if len(wind) == 6 {
+		d, e1 := strconv.Atoi(wind[:3])
+		k, e2 := strconv.Atoi(wind[3:])
+		if e1 == nil && e2 == nil && d <= 360 && k <= 250 {
+			dd, kk := float64(d), float64(k)
+			w.WindDirDeg, w.WindKt = &dd, &kk
+		}
+	}
+	if w.empty() {
+		return nil
+	}
+	return w
 }

@@ -629,3 +629,35 @@ func TestFlightFromMessages(t *testing.T) {
 		t.Errorf("flight from a bare CPDLC: %+v", got)
 	}
 }
+
+func TestIngestKeepsWeatherSpeedAndFixes(t *testing.T) {
+	st := newStore(t)
+	f := fixture(t, "cpdlc_position") // received Oct 28 16:07Z; position 16:06
+	if _, err := Ingest(st, "780AB8", msg(1, f)); err != nil {
+		t.Fatal(err)
+	}
+	ms, _ := st.Messages("780AB8", f.Received.Add(-time.Hour), f.Received.Add(time.Hour), 5)
+	m := ms[0]
+	if m.WxDir == nil || *m.WxDir != 70 || *m.WxKt != 50 || *m.WxTemp != -45 || *m.GS != 520 || *m.Trk != 184 {
+		t.Errorf("wx/motion = %v %v %v %v %v", m.WxDir, m.WxKt, m.WxTemp, m.GS, m.Trk)
+	}
+	var fl store.FixList
+	if err := json.Unmarshal([]byte(m.Fixes), &fl); err != nil {
+		t.Fatalf("fixes %q: %v", m.Fixes, err)
+	}
+	day := func(h, mi int) int64 { return time.Date(2026, 10, 28, h, mi, 0, 0, time.UTC).Unix() }
+	if len(fl.List) != 3 || fl.List[0].Name != "UNTUL" || fl.List[0].T != day(15, 58) || *fl.List[0].AltFt != 34300 ||
+		fl.List[1].Name != "SABNO" || fl.List[1].T != day(16, 7) || fl.List[2].Name != "DALRA" || fl.List[2].T != 0 {
+		t.Errorf("fix list = %+v", fl)
+	}
+	if *fl.GS != 520 || *fl.Trk != 184 {
+		t.Errorf("fix list motion = %v %v", fl.GS, fl.Trk)
+	}
+	// A message with none of this stores none of it.
+	w := fixture(t, "cpdlc_wilco")
+	Ingest(st, "780AA4", msg(2, w))
+	ms, _ = st.Messages("780AA4", w.Received.Add(-time.Hour), w.Received.Add(time.Hour), 5)
+	if ms[0].Fixes != "" || ms[0].WxKt != nil || ms[0].GS != nil {
+		t.Errorf("wilco: %+v", ms[0])
+	}
+}

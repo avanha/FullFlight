@@ -449,3 +449,133 @@ func TestFMSPositionSouthAndEast(t *testing.T) {
 		t.Errorf("POSITION OK: %v", r.Kind)
 	}
 }
+
+func wxOf(t *testing.T, r Result) (dir, kt, temp float64) {
+	t.Helper()
+	if r.Wx == nil || r.Wx.WindDirDeg == nil || r.Wx.WindKt == nil || r.Wx.TempC == nil {
+		t.Fatalf("incomplete weather: %+v", r.Wx)
+	}
+	return *r.Wx.WindDirDeg, *r.Wx.WindKt, *r.Wx.TempC
+}
+
+// Wind (from, true) and temperature come from every kind of position report, ground speed and
+// track from the ones that give them.
+func TestWeatherAndMotion(t *testing.T) {
+	_, r := load(t, "adsc_meteo")
+	d, k, c := wxOf(t, r)
+	near(t, "wind dir", d, 235.5, 0.1)
+	near(t, "wind kt", k, 34.5, 0.01)
+	near(t, "temp", c, -52.5, 0.01)
+	near(t, "gs", *r.GS, 483, 0.5)
+	near(t, "trk", *r.Track, 153.6, 0.1)
+
+	_, r = load(t, "adsc_periodic") // no meteo group, but speed and track
+	if r.Wx != nil || r.GS == nil || r.Track == nil {
+		t.Errorf("adsc_periodic: wx=%+v gs=%v trk=%v", r.Wx, r.GS, r.Track)
+	}
+	near(t, "gs", *r.GS, 472.5, 0.01)
+	near(t, "trk", *r.Track, 256.2, 0.05)
+
+	_, r = load(t, "cpdlc_position")
+	d, k, c = wxOf(t, r)
+	near(t, "wind dir", d, 70, 0)
+	near(t, "wind kt", k, 50, 0)
+	near(t, "temp", c, -45, 0)
+	near(t, "gs", *r.GS, 520, 0)
+	near(t, "trk", *r.Track, 184, 0)
+
+	_, r = load(t, "rep081_handoff")
+	d, k, c = wxOf(t, r)
+	near(t, "wind dir", d, 237, 0)
+	near(t, "wind kt", k, 39, 0)
+	near(t, "temp", c, -52.7, 1e-9)
+
+	_, r = load(t, "dal_fms_posn") // ...,M27,261027,...
+	d, k, c = wxOf(t, r)
+	near(t, "wind dir", d, 261, 0)
+	near(t, "wind kt", k, 27, 0)
+	near(t, "temp", c, -27, 0)
+
+	// Messages with no weather say so.
+	for _, n := range []string{"cpdlc_wilco", "afn_contact", "media_established", "datis_arrival"} {
+		if _, r := load(t, n); r.Wx != nil || r.GS != nil {
+			t.Errorf("%s: wx=%+v gs=%v", n, r.Wx, r.GS)
+		}
+	}
+}
+
+func TestFMSWeatherParsing(t *testing.T) {
+	cases := []struct {
+		temp, wind string
+		dir, kt, c *float64
+	}{
+		{"M51", "264080", fp(264), fp(80), fp(-51)},
+		{"P05", "090012", fp(90), fp(12), fp(5)},
+		{"M99", "264080", fp(264), fp(80), nil}, // -99 C is not an atmosphere
+		{"M51", "264999", nil, nil, fp(-51)},    // 999 kt is not a wind
+		{"M51", "999080", nil, nil, fp(-51)},    // neither is 999 degrees
+		{"X12", "26408", nil, nil, nil},         // garbage
+		{"", "", nil, nil, nil},
+	}
+	for _, c := range cases {
+		w := fmsWeather(c.temp, c.wind)
+		if c.dir == nil && c.kt == nil && c.c == nil {
+			if w != nil {
+				t.Errorf("%q %q: %+v", c.temp, c.wind, w)
+			}
+			continue
+		}
+		if w == nil || !eq(w.WindDirDeg, c.dir) || !eq(w.WindKt, c.kt) || !eq(w.TempC, c.c) {
+			t.Errorf("%q %q: got %+v", c.temp, c.wind, w)
+		}
+	}
+}
+
+func fp(v float64) *float64 { return &v }
+func eq(a, b *float64) bool { return (a == nil) == (b == nil) && (a == nil || *a == *b) }
+
+// A CPDLC position report names the waypoint it has just passed (with when), the next one (with
+// its ETA) and the one after (with neither).
+func TestCPDLCNamedFixes(t *testing.T) {
+	_, r := load(t, "cpdlc_position")
+	if len(r.Fixes) != 3 {
+		t.Fatalf("fixes = %+v", r.Fixes)
+	}
+	want := []struct {
+		name, role string
+		secs, alt  *float64
+	}{
+		{"UNTUL", "passed", fp(15*3600 + 58*60), fp(34300)},
+		{"SABNO", "next", fp(16*3600 + 7*60), nil},
+		{"DALRA", "then", nil, nil},
+	}
+	for i, w := range want {
+		g := r.Fixes[i]
+		if g.Name != w.name || g.Role != w.role || !eq(g.Secs, w.secs) || !eq(g.AltFt, w.alt) {
+			t.Errorf("fix %d = %+v, want %+v", i, g, w)
+		}
+	}
+	// Other CPDLC messages name no fixes.
+	if _, r := load(t, "cpdlc_wilco"); len(r.Fixes) != 0 {
+		t.Errorf("wilco: %+v", r.Fixes)
+	}
+}
+
+func TestNearestTimeOfDay(t *testing.T) {
+	at := func(d, h, m int) time.Time { return time.Date(2026, 10, d, h, m, 0, 0, time.UTC) }
+	cases := []struct {
+		secs float64
+		ref  time.Time
+		want time.Time
+	}{
+		{16*3600 + 7*60, at(28, 16, 6), at(28, 16, 7)},   // an ETA a minute ahead
+		{15*3600 + 58*60, at(28, 16, 6), at(28, 15, 58)}, // a time just passed
+		{0*3600 + 5*60, at(28, 23, 55), at(29, 0, 5)},    // an ETA just after midnight
+		{23*3600 + 50*60, at(29, 0, 4), at(28, 23, 50)},  // a time just before midnight
+	}
+	for _, c := range cases {
+		if got := NearestTimeOfDay(c.secs, c.ref); !got.Equal(c.want) {
+			t.Errorf("%v around %v = %v, want %v", c.secs, c.ref, got, c.want)
+		}
+	}
+}

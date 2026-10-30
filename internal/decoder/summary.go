@@ -256,3 +256,94 @@ func undecodedSummary(r Result) string {
 	}
 	return fmt.Sprintf("Undecoded %s message: %s", label, snippet)
 }
+
+// Weather is the wind (direction it blows FROM, true) and temperature a report carries.
+type Weather struct {
+	WindDirDeg, WindKt, TempC *float64
+}
+
+func (w *Weather) empty() bool {
+	return w == nil || (w.WindDirDeg == nil && w.WindKt == nil && w.TempC == nil)
+}
+
+// FixRef is a waypoint a CPDLC position report names. Role is "passed" (with the time it was
+// passed), "next" (with its ETA) or "then" (the one after, with no time). Secs is the time of day.
+type FixRef struct {
+	Name, Role string
+	Secs       *float64
+	AltFt      *float64
+}
+
+// adscMotionWeather reads ground speed, true track and the meteo group from an ADS-C tree.
+func adscMotionWeather(tree map[string]any) (gs, trk *float64, wx *Weather) {
+	arinc, _ := tree["arinc622"].(map[string]any)
+	adsc, _ := arinc["adsc"].(map[string]any)
+	tags, _ := adsc["tags"].([]any)
+	for _, t := range tags {
+		tm, _ := t.(map[string]any)
+		if e, _ := tm["earth_ref_data"].(map[string]any); e != nil {
+			gs = num(e, "gnd_spd_kts")
+			if v, ok := e["true_trk_valid"].(bool); ok && !v {
+				continue
+			}
+			trk = num(e, "true_trk_deg")
+		}
+		if m, _ := tm["meteo_data"].(map[string]any); m != nil {
+			w := &Weather{WindKt: num(m, "wind_spd_kts"), TempC: num(m, "temp_c")}
+			if v, ok := m["wind_dir_valid"].(bool); !ok || v {
+				w.WindDirDeg = num(m, "wind_dir_true_deg")
+			}
+			if !w.empty() {
+				wx = w
+			}
+		}
+	}
+	return
+}
+
+// cpdlcExtras reads ground speed, track, wind, temperature and the named waypoints from a
+// FANS-1/A downlink position report.
+func cpdlcExtras(tree map[string]any) (gs, trk *float64, wx *Weather, fixes []FixRef) {
+	rep := sub(tree, "arinc622", "cpdlc", "atc_downlink_msg", "atc_downlink_msg_element_id", "data", "pos_report")
+	if rep == nil {
+		return
+	}
+	if v := sub(rep, "speed_gnd"); v != nil && v["unit"] == "kts" {
+		gs = num(v, "val")
+	}
+	if c, _ := sub(rep, "trk_angle")["choice"].(string); c == "degreesTrue" {
+		trk = num(sub(rep, "trk_angle", "data", "deg_true"), "val")
+	}
+	w := &Weather{}
+	if wind := sub(rep, "winds"); wind != nil {
+		w.WindDirDeg = num(sub(wind, "wind_dir"), "val")
+		w.WindKt = num(sub(wind, "wind_speed", "data", "wind_speed_english"), "val")
+	}
+	w.TempC = num(sub(rep, "temp", "data", "temp_deg_c"), "val")
+	if !w.empty() {
+		wx = w
+	}
+	name := func(key string) string { s, _ := sub(rep, key, "data")["fix"].(string); return s }
+	if n := name("reported_wpt_pos"); n != "" {
+		f := FixRef{Name: n, Role: "passed"}
+		if secs, ok := clock(sub(rep, "reported_wpt_time")); ok {
+			f.Secs = &secs
+		}
+		if fl := num(sub(rep, "reported_wpt_alt", "data"), "flight_level"); fl != nil {
+			ft := *fl * 100
+			f.AltFt = &ft
+		}
+		fixes = append(fixes, f)
+	}
+	if n := name("next_fix"); n != "" {
+		f := FixRef{Name: n, Role: "next"}
+		if secs, ok := clock(sub(rep, "eta_at_fix_next")); ok {
+			f.Secs = &secs
+		}
+		fixes = append(fixes, f)
+	}
+	if n := name("next_next_fix"); n != "" {
+		fixes = append(fixes, FixRef{Name: n, Role: "then"})
+	}
+	return
+}
