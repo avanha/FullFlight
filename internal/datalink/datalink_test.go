@@ -3,12 +3,14 @@ package datalink
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/avanha/fullflight/internal/airframes"
+	"github.com/avanha/fullflight/internal/decoder"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/watchlist"
 )
@@ -18,6 +20,8 @@ type fx struct {
 	Label    string    `json:"label"`
 	Text     string    `json:"text"`
 	Received time.Time `json:"received"`
+	FromHex  string    `json:"fromHex"`
+	ToHex    string    `json:"toHex"`
 }
 
 func fixture(t *testing.T, name string) fx {
@@ -38,7 +42,8 @@ func fixture(t *testing.T, name string) fx {
 }
 
 func msg(id int64, f fx) airframes.Message {
-	return airframes.Message{ID: id, Timestamp: f.Received, Label: airframes.FlexString(f.Label), Text: airframes.FlexString(f.Text)}
+	return airframes.Message{ID: id, Timestamp: f.Received, Label: airframes.FlexString(f.Label), Text: airframes.FlexString(f.Text),
+		FromHex: airframes.FlexString(f.FromHex), ToHex: airframes.FlexString(f.ToHex)}
 }
 
 func newStore(t *testing.T) *store.Store {
@@ -336,5 +341,157 @@ func TestRedecodePicksUpDecoderChanges(t *testing.T) {
 	}
 	if n, _ = Redecode(st); n != 0 {
 		t.Errorf("second pass changed %d messages; should be idempotent", n)
+	}
+}
+
+func TestDirectionOf(t *testing.T) {
+	cases := []struct {
+		afDir, from, to string
+		want            decoder.Direction
+	}{
+		{"uplink", "", "", decoder.Uplink},
+		{"downlink", "291085", "A48E3A", decoder.Downlink}, // airframes.io's word wins
+		{"", "A48E3A", "260705", decoder.Downlink},
+		{"", "291085", "a48e3a", decoder.Uplink},
+		{"", "291085", "260705", decoder.Unknown},
+		{"", "", "", decoder.Unknown},
+	}
+	for _, c := range cases {
+		if got := directionOf(c.afDir, c.from, c.to, "A48E3A"); got != c.want {
+			t.Errorf("%+v: got %v, want %v", c, got, c.want)
+		}
+	}
+}
+
+func TestIngestDeltaH1(t *testing.T) {
+	st := newStore(t)
+	up := fixture(t, "dal_cpdlc_noslash_uplink") // 291085 -> A48E3A
+	if _, err := Ingest(st, "A48E3A", msg(1, up)); err != nil {
+		t.Fatal(err)
+	}
+	pos := fixture(t, "dal_fms_posn")
+	Ingest(st, "A48E3A", msg(2, pos))
+	eng := fixture(t, "dal_engine_data")
+	Ingest(st, "A48E3A", msg(3, eng))
+
+	ms, _ := st.Messages("A48E3A", up.Received.Add(-24*time.Hour), up.Received.Add(24*time.Hour), 10)
+	if len(ms) != 3 {
+		t.Fatalf("stored %d", len(ms))
+	}
+	by := map[int64]store.Message{}
+	for _, m := range ms {
+		by[m.ID] = m
+	}
+	if m := by[1]; m.Kind != "cpdlc" || m.Direction != "up" || m.Tail != "N393DA" || m.FromHex != "291085" || m.ToHex != "A48E3A" {
+		t.Errorf("uplink: %+v", m)
+	}
+	if m := by[2]; m.Kind != "fms_position" || m.Lat == nil || *m.Lat < 34.74 || !m.PosT.Equal(pos.Received.Truncate(time.Second)) {
+		t.Errorf("posn: %+v", m)
+	}
+	if m := by[3]; m.Kind != "unknown" || !strings.HasPrefix(m.Summary, "Undecoded H1") {
+		t.Errorf("engine: %+v", m)
+	}
+
+	// A stale decode (as an older build left it, e.g. unknown) is repaired by -redecode.
+	st2 := newStore(t)
+	st2.AddMessage(store.Message{ID: 1, Hex: "A48E3A", T: up.Received, Label: "H1", Text: up.Text, FromHex: "291085", ToHex: "A48E3A",
+		Kind: "unknown", Summary: "Unrecognised H1 message", Direction: "down"})
+	if n, err := Redecode(st2); err != nil || n != 1 {
+		t.Fatalf("redecode: %d %v", n, err)
+	}
+	r, _ := st2.Messages("A48E3A", up.Received.Add(-time.Hour), up.Received.Add(time.Hour), 5)
+	if r[0].Kind != "cpdlc" || r[0].Direction != "up" {
+		t.Errorf("after redecode: %+v", r[0])
+	}
+}
+
+// posn builds an FMS position report for the given degrees and minutes.
+func posn(latDeg int, latMin float64, lonDeg int, lonMin float64) string {
+	return fmt.Sprintf("POSN%02d%03dW%03d%03d,WPT,000000,350,NXT,000000,NX2,M50,270050,0", latDeg, int(latMin*10), lonDeg, int(lonMin*10))
+}
+
+func fmsMsg(id int64, at time.Time, text string) airframes.Message {
+	return airframes.Message{ID: id, Timestamp: at, Label: "H1", Text: airframes.FlexString(text), FromHex: "A48E3A", ToHex: "260705"}
+}
+
+// The aircraft appears in southern California and, 25 minutes later, near Boston. Each run of
+// fixes is coherent on its own, so neither should be flagged because the other exists, and the
+// answer must not depend on which one was stored first.
+func TestSuspectIsOrderIndependent(t *testing.T) {
+	t0 := time.Date(2026, 10, 28, 21, 17, 0, 0, time.UTC)
+	ca := []airframes.Message{ // descending toward LAX, ~100 kt apart
+		fmsMsg(1, t0, posn(34, 9.8, 115, 41.8)),
+		fmsMsg(2, t0.Add(3*time.Minute), posn(34, 7.8, 115, 59.4)),
+		fmsMsg(3, t0.Add(7*time.Minute), posn(34, 6.0, 116, 18.0)),
+	}
+	bos := []airframes.Message{
+		fmsMsg(11, t0.Add(29*time.Minute), posn(41, 28.9, 72, 12.2)),
+		fmsMsg(12, t0.Add(30*time.Minute), posn(41, 33.5, 71, 59.5)),
+		fmsMsg(13, t0.Add(31*time.Minute), posn(41, 36.0, 71, 51.6)),
+	}
+	for name, order := range map[string][]airframes.Message{
+		"newest first": {bos[2], bos[1], bos[0], ca[2], ca[1], ca[0]},
+		"oldest first": {ca[0], ca[1], ca[2], bos[0], bos[1], bos[2]},
+	} {
+		st := newStore(t)
+		for _, m := range order {
+			if _, err := Ingest(st, "A48E3A", m); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := Recheck(st, "A48E3A", t0.Add(-time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		ms, _ := st.Messages("A48E3A", t0.Add(-time.Hour), t0.Add(2*time.Hour), 20)
+		if len(ms) != 6 {
+			t.Fatalf("%s: stored %d", name, len(ms))
+		}
+		for _, m := range ms {
+			if m.Suspect != "" {
+				t.Errorf("%s: message %d flagged: %s", name, m.ID, m.Suspect)
+			}
+		}
+	}
+
+	// A single fix in the wrong place between two good ones is an outlier.
+	st := newStore(t)
+	for _, m := range []airframes.Message{ca[0], ca[2], fmsMsg(99, t0.Add(5*time.Minute), posn(41, 28.9, 72, 12.2))} {
+		Ingest(st, "A48E3A", m)
+	}
+	Recheck(st, "A48E3A", t0.Add(-time.Hour))
+	ms, _ := st.Messages("A48E3A", t0.Add(-time.Hour), t0.Add(2*time.Hour), 20)
+	for _, m := range ms {
+		if (m.ID == 99) != (m.Suspect != "") {
+			t.Errorf("message %d suspect=%q", m.ID, m.Suspect)
+		}
+	}
+}
+
+func TestRecheckClearsFlagsOnceNeighboursArrive(t *testing.T) {
+	st := newStore(t)
+	t0 := time.Date(2026, 10, 28, 21, 17, 0, 0, time.UTC)
+	Ingest(st, "A48E3A", fmsMsg(1, t0, posn(34, 9.8, 115, 41.8)))
+	// With one conflicting neighbour and nothing else to go on, the Boston fix is flagged.
+	Ingest(st, "A48E3A", fmsMsg(2, t0.Add(20*time.Minute), posn(41, 28.9, 72, 12.2)))
+	ms, _ := st.Messages("A48E3A", t0.Add(-time.Hour), t0.Add(2*time.Hour), 20)
+	if ms[1].Suspect == "" {
+		t.Fatalf("expected an interim flag, got none")
+	}
+	// The next report in the same run arrives; the earlier verdict is now stale.
+	Ingest(st, "A48E3A", fmsMsg(3, t0.Add(21*time.Minute), posn(41, 33.5, 71, 59.5)))
+	n, err := Recheck(st, "A48E3A", t0.Add(-time.Hour))
+	if err != nil || n == 0 {
+		t.Fatalf("recheck changed %d, err %v", n, err)
+	}
+	ms, _ = st.Messages("A48E3A", t0.Add(-time.Hour), t0.Add(2*time.Hour), 20)
+	// The pair now vouch for each other; the lone California fix is the odd one out.
+	for _, m := range ms {
+		if want := m.ID == 1; (m.Suspect != "") != want {
+			t.Errorf("message %d suspect=%q, want flagged=%v", m.ID, m.Suspect, want)
+		}
+	}
+	// And nothing changes the second time.
+	if n, _ := Recheck(st, "A48E3A", t0.Add(-time.Hour)); n != 0 {
+		t.Errorf("second recheck changed %d", n)
 	}
 }

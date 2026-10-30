@@ -86,6 +86,33 @@ type watchJSON struct {
 	Hex      string    `json:"hex,omitempty"`
 	Tail     string    `json:"tail,omitempty"`
 	Callsign string    `json:"callsign,omitempty"`
+	Type     string    `json:"type,omitempty"` // aircraft type, e.g. A359
+	LastPos  *lastPos  `json:"last_pos,omitempty"`
+}
+
+// lastPos is the newest position we hold for a watched aircraft, from ADS-B or
+// from a datalink message, whichever is later.
+type lastPos struct {
+	T     time.Time `json:"t"`
+	Kind  string    `json:"kind"` // ADS-B, ADS-C, CPDLC or REP081
+	Lat   float64   `json:"lat"`
+	Lon   float64   `json:"lon"`
+	AltFt *float64  `json:"alt_ft,omitempty"`
+}
+
+func (s *Server) lastPosition(hex string) *lastPos {
+	var best *lastPos
+	if p, ok := s.Store.LastPosition(hex); ok {
+		best = &lastPos{T: p.T, Kind: "ADS-B", Lat: p.Lat, Lon: p.Lon, AltFt: p.AltFt}
+	}
+	if m, ok := s.Store.LastMessagePosition(hex); ok && (best == nil || m.T.After(best.T)) {
+		kind := map[string]string{"adsc": "ADS-C", "cpdlc": "CPDLC", "miam": "REP081", "fms_position": "FMS"}[m.Kind]
+		if kind == "" {
+			kind = m.Kind
+		}
+		best = &lastPos{T: m.T, Kind: kind, Lat: m.Lat, Lon: m.Lon, AltFt: m.AltFt}
+	}
+	return best
 }
 
 func toJSON(e watchlist.Entry) watchJSON {
@@ -97,6 +124,15 @@ func toJSON(e watchlist.Entry) watchJSON {
 	return w
 }
 
+// withAircraft adds what we know about the followed aircraft.
+func (s *Server) withAircraft(j watchJSON) watchJSON {
+	if j.Hex != "" {
+		j.Type = s.Store.TypeForHex(j.Hex)
+		j.LastPos = s.lastPosition(j.Hex)
+	}
+	return j
+}
+
 func (s *Server) listWatches(w http.ResponseWriter, r *http.Request) {
 	es, err := s.Store.ListWatches(false)
 	if err != nil {
@@ -105,7 +141,7 @@ func (s *Server) listWatches(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]watchJSON, 0, len(es))
 	for _, e := range es {
-		out = append(out, toJSON(e))
+		out = append(out, s.withAircraft(toJSON(e)))
 	}
 	writeJSON(w, 200, out)
 }
@@ -146,7 +182,7 @@ func (s *Server) addWatch(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 201, toJSON(e))
+	writeJSON(w, 201, s.withAircraft(toJSON(e)))
 }
 
 func (s *Server) deleteWatch(w http.ResponseWriter, r *http.Request) {
@@ -221,6 +257,7 @@ type messageJSON struct {
 	Kind      string     `json:"kind"`
 	Direction string     `json:"dir,omitempty"`
 	Summary   string     `json:"summary"`
+	Undecoded bool       `json:"undecoded,omitempty"` // we have no decoder for it (vendor data, MIAM fragments)
 	Detail    string     `json:"detail,omitempty"`
 	Raw       string     `json:"raw"`
 	Tail      string     `json:"tail,omitempty"`
@@ -259,7 +296,7 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]messageJSON, 0, len(ms))
 	for _, m := range ms {
-		j := messageJSON{ID: m.ID, T: m.T, Label: m.Label, Kind: m.Kind, Direction: m.Direction, Summary: m.Summary,
+		j := messageJSON{Undecoded: m.Kind == "unknown" || m.Summary == "MIAM (not decoded)", ID: m.ID, T: m.T, Label: m.Label, Kind: m.Kind, Direction: m.Direction, Summary: m.Summary,
 			Detail: m.Detail, Raw: m.Text, Tail: m.Tail, Flight: m.Flight, Callsign: m.Callsign, Station: m.Station,
 			RxCount: m.RxCount, Lat: m.Lat, Lon: m.Lon, AltFt: m.AltFt, PosT: m.PosT, Suspect: m.Suspect,
 			Mismatch: m.Mismatch, AFTail: m.AFTail, AFFlight: m.AFFlight}

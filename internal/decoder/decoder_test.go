@@ -387,3 +387,62 @@ func TestCPDLCPositionHemispheresAndFix(t *testing.T) {
 		t.Errorf("not a position report: %+v %q", p, fix)
 	}
 }
+
+// Real DAL1317 (N393DA) traffic, label H1.
+func TestDeltaH1(t *testing.T) {
+	// VDL2 sometimes drops the leading "/" of an ARINC 622 message.
+	_, r := load(t, "dal_cpdlc_noslash_uplink")
+	if r.Kind != KindCPDLC || !strings.HasPrefix(r.Body, "/USADCXA.AT1.") || r.Identity.Tail != "N393DA" || r.Tree == nil {
+		t.Fatalf("no-slash CPDLC: %v %q %+v", r.Kind, r.Body, r.Identity)
+	}
+	// Direction unknown: it only parses as an uplink, so that is what we settle on.
+	if r.Dir != Uplink || !strings.Contains(r.Summary, "uplink") {
+		t.Errorf("dir = %v, summary %q", r.Dir, r.Summary)
+	}
+	if _, r = load(t, "dal_cpdlc_cc1"); r.Kind != KindCPDLC || r.Dir != Downlink || r.Tree == nil {
+		t.Errorf("CC1: %v dir %v", r.Kind, r.Dir)
+	}
+
+	// An explicit direction is respected rather than second-guessed.
+	f, _ := load(t, "dal_cpdlc_noslash_uplink")
+	r, _ = Decode(Message{Label: f.Label, Dir: Downlink, Text: f.Text})
+	if r.Dir != Downlink {
+		t.Errorf("explicit downlink overridden: %v", r.Dir)
+	}
+
+	// FMS position report: 34°44.7'N 119°19.5'W, FL250, heading for MDOTS.
+	f, r = load(t, "dal_fms_posn")
+	if r.Kind != KindFMS || r.Pos == nil {
+		t.Fatalf("POSN: %v %+v", r.Kind, r.Pos)
+	}
+	near(t, "lat", r.Pos.Lat, 34+44.7/60, 1e-9)
+	near(t, "lon", r.Pos.Lon, -(119 + 19.5/60), 1e-9)
+	if r.Pos.AltFt == nil || *r.Pos.AltFt != 25000 || r.Fields["next_waypoint"] != "MDOTS" || r.Fields["waypoint"] != "MUPTT" {
+		t.Errorf("alt/fields: %v %v", r.Pos.AltFt, r.Fields)
+	}
+	if !r.Pos.At(f.Received).Equal(f.Received) {
+		t.Error("a POSN report should be placed at its receipt time")
+	}
+	if r.Summary != "FMS position report 34.745N 119.325W FL250, next MDOTS" {
+		t.Errorf("summary = %q", r.Summary)
+	}
+
+	// Airline engine data: no decoder, and the summary says so without claiming more.
+	_, r = load(t, "dal_engine_data")
+	if r.Kind != KindUnknown || !strings.HasPrefix(r.Summary, "Undecoded H1 message: 239N393DA") || r.Pos != nil {
+		t.Errorf("engine data: %v %q", r.Kind, r.Summary)
+	}
+}
+
+func TestFMSPositionSouthAndEast(t *testing.T) {
+	r, _ := Decode(Message{Label: "H1", Text: "POSS33510E151100,ABCDE,010203,380,FGHIJ,010304,KLMNO,M55,270090,1234"})
+	if r.Kind != KindFMS || r.Pos == nil {
+		t.Fatalf("%v %+v", r.Kind, r.Pos)
+	}
+	near(t, "lat", r.Pos.Lat, -(33 + 51.0/60), 1e-9)
+	near(t, "lon", r.Pos.Lon, 151+10.0/60, 1e-9)
+	// Other things that merely start with "POS" are not position reports.
+	if r, _ := Decode(Message{Label: "H1", Text: "POSITION OK"}); r.Kind != KindUnknown {
+		t.Errorf("POSITION OK: %v", r.Kind)
+	}
+}

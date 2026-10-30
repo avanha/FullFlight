@@ -142,6 +142,13 @@ func (f *Fetcher) fetchHex(ctx context.Context, hex string, now time.Time) error
 	}
 	if added > 0 {
 		f.Log.Info("messages stored", "hex", hex, "new", added)
+		// Pages arrive newest first, so early verdicts were made with half the
+		// neighbours missing; settle them now.
+		if n, err := Recheck(f.Store, hex, since.Add(-FixWindow)); err != nil {
+			f.Log.Error("recheck positions", "hex", hex, "err", err)
+		} else if n > 0 {
+			f.Log.Info("position flags updated", "hex", hex, "changed", n)
+		}
 	}
 	return f.Store.SetFetchedTo(hex, now)
 }

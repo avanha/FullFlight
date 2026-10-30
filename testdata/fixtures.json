@@ -126,5 +126,55 @@
   "received": "2026-10-29T20:31:35.059Z",
   "airframes_id": 7960124797,
   "station": "IS-LBSF-VDL2"
+ },
+ {
+  "name": "dal_fms_posn",
+  "label": "H1",
+  "text": "POSN34447W119195,MUPTT,232718,250,MDOTS,232820,GRIPR,M27,261027,889534",
+  "received": "2026-10-30T16:34:19.135Z",
+  "airframes_id": 7967390621,
+  "station": "EL-KPRB1-VDL",
+  "fromHex": "A48E3A",
+  "toHex": "260705"
+ },
+ {
+  "name": "dal_cpdlc_noslash_uplink",
+  "label": "H1",
+  "text": "USADCXA.AT1.N393DA235B019D693E0CB99067440BE4E06D63",
+  "received": "2026-10-30T16:03:58.078Z",
+  "airframes_id": 7967149811,
+  "station": "SCH-KRDD-VDLM2",
+  "fromHex": "291085",
+  "toHex": "A48E3A"
+ },
+ {
+  "name": "dal_cpdlc_noslash_either",
+  "label": "H1",
+  "text": "USADCXA.AT1.N393DA65977602000448",
+  "received": "2026-10-30T16:32:14.790Z",
+  "airframes_id": 7967373713,
+  "station": "EL-KPRB1-VDL",
+  "fromHex": "A48E3A",
+  "toHex": "260705"
+ },
+ {
+  "name": "dal_cpdlc_cc1",
+  "label": "H1",
+  "text": "USADCXA.CC1.N393DA61055A824910E214",
+  "received": "2026-10-30T14:40:07.064Z",
+  "airframes_id": 7966527707,
+  "station": "KS-KBFI-03",
+  "fromHex": "A48E3A",
+  "toHex": "299437"
+ },
+ {
+  "name": "dal_engine_data",
+  "label": "H1",
+  "text": "239N393DA28301027262327 4688 3477-11935250 -4-27262 28AA-528  8760\r\n 287 4340023134200030PSZKSEAKLAX",
+  "received": "2026-10-30T16:34:14.058Z",
+  "airframes_id": 7967390069,
+  "station": "EL-KPRB1-VDL",
+  "fromHex": "A48E3A",
+  "toHex": "260705"
  }
 ]

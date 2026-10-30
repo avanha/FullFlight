@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/avanha/fullflight/internal/store"
+	"github.com/avanha/fullflight/internal/watchlist"
 )
 
 func setup(t *testing.T, pw string) *httptest.Server {
@@ -145,5 +146,55 @@ func TestAuth(t *testing.T) {
 	req.SetBasicAuth("me", "wrong")
 	if resp, _ = http.DefaultClient.Do(req); resp.StatusCode != 401 {
 		t.Errorf("bad creds: %d", resp.StatusCode)
+	}
+}
+
+func TestWatchShowsLastPositionAndType(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 18, 0, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("B-LRM", now, time.Time{})
+	e.Hex = "780AB8"
+	st.AddWatch(e)
+	st.RecordAirframe(store.Airframe{Hex: "780AB8", Tail: "B-LRM", Type: "A359", Source: "adsb.lol", LastSeen: now})
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+
+	_, body := do(t, "GET", ts.URL+"/api/watches", "")
+	if strings.Contains(body, "last_pos") || !strings.Contains(body, `"type":"A359"`) {
+		t.Errorf("before any position: %s", body)
+	}
+
+	alt := 38000.0
+	st.AddPosition(store.Position{Hex: "780AB8", T: now.Add(-10 * time.Minute), Lat: 40, Lon: -100, AltFt: &alt, Source: "adsb.lol"})
+	_, body = do(t, "GET", ts.URL+"/api/watches", "")
+	if !strings.Contains(body, `"kind":"ADS-B"`) || !strings.Contains(body, `"t":"2026-10-30T17:50:00Z"`) {
+		t.Errorf("ADS-B only: %s", body)
+	}
+
+	// A later ADS-C report wins; a later but suspect one is ignored.
+	lat, lon := 45.0, -150.0
+	pt := now.Add(-3 * time.Minute)
+	st.AddMessage(store.Message{ID: 1, Hex: "780AB8", T: now.Add(-2 * time.Minute), Label: "B6", Text: "a", Kind: "adsc", Lat: &lat, Lon: &lon, PosT: &pt})
+	bad := now.Add(-time.Minute)
+	st.AddMessage(store.Message{ID: 2, Hex: "780AB8", T: now, Label: "BA", Text: "b", Kind: "cpdlc", Lat: &lat, Lon: &lon, PosT: &bad, Suspect: "implies 900 kt"})
+	_, body = do(t, "GET", ts.URL+"/api/watches", "")
+	if !strings.Contains(body, `"kind":"ADS-C"`) || !strings.Contains(body, `"t":"2026-10-30T17:57:00Z"`) || strings.Contains(body, "CPDLC") {
+		t.Errorf("ADS-C later than ADS-B: %s", body)
+	}
+}
+
+func TestMessagesFlagUndecoded(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 14, 0, 0, 0, time.UTC)
+	st.AddMessage(store.Message{ID: 1, Hex: "A48E3A", T: now.Add(-time.Hour), Label: "H1", Text: "x1", Kind: "unknown", Summary: "Undecoded H1 message: 239N393DA"})
+	st.AddMessage(store.Message{ID: 2, Hex: "A48E3A", T: now.Add(-time.Hour), Label: "MA", Text: "x2", Kind: "miam", Summary: "MIAM (not decoded)"})
+	st.AddMessage(store.Message{ID: 3, Hex: "A48E3A", T: now.Add(-time.Hour), Label: "BA", Text: "x3", Kind: "cpdlc", Summary: "CPDLC downlink: WILCO"})
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	_, body := do(t, "GET", ts.URL+"/api/messages/A48E3A", "")
+	if strings.Count(body, `"undecoded":true`) != 2 {
+		t.Errorf("want 2 undecoded: %s", body)
 	}
 }

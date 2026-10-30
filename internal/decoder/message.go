@@ -16,6 +16,7 @@ const (
 	KindMIAM    Kind = "miam"
 	KindMedia   Kind = "media_advisory"
 	KindDATIS   Kind = "datis_request"
+	KindFMS     Kind = "fms_position"
 	KindUnknown Kind = "unknown"
 )
 
@@ -56,6 +57,8 @@ var (
 	bodyAnchor = regexp.MustCompile(`^(/|T[-0-9]|0[EL][A-Z0-9])`)
 	flightID   = regexp.MustCompile(`^([A-Z0-9]{2})(\d{1,4})[A-Z]?$`)
 	ownerAddr  = regexp.MustCompile(`^/[A-Z0-9]{7}\.([A-Z0-9]{3})\.`)
+	// Some VDL2 traffic arrives with the leading "/" missing.
+	noSlashARINC = regexp.MustCompile(`^[A-Z0-9]{7}\.(ADS|AT1|CR1|CC1|DR1|AFN|TI2)[./]`)
 )
 
 // SplitPrefix separates the 4-char message number + 6-char flight ID that
@@ -104,6 +107,8 @@ func classify(label, body string) (Kind, string, Direction) {
 	}
 	switch {
 	case k != "":
+	case posnRe.MatchString(body):
+		k, defLabel = KindFMS, "H1"
 	case strings.Contains(body, ".AFN/"):
 		k, defLabel = KindAFN, "B0"
 	case strings.Contains(body, ".TI2/"):
@@ -131,6 +136,9 @@ func classify(label, body string) (Kind, string, Direction) {
 func Decode(m Message) (Result, error) {
 	prefix, body := SplitPrefix(m.Text)
 	body = strings.TrimRight(body, "\r\n")
+	if noSlashARINC.MatchString(body) {
+		body = "/" + body
+	}
 	r := Result{Prefix: prefix, Body: body, Identity: parsePrefix(prefix), Fields: map[string]any{}}
 
 	var dir Direction
@@ -148,6 +156,13 @@ func Decode(m Message) (Result, error) {
 		d, err := DecodeAppsFull(r.Label, body, r.Dir)
 		if err != nil {
 			return r, err
+		}
+		if m.Dir == Unknown && (r.Kind == KindADSC || r.Kind == KindCPDLC) && parseFailed(d) {
+			// The direction was a guess and the text does not parse that way: try the other.
+			other := map[Direction]Direction{Uplink: Downlink, Downlink: Uplink}[r.Dir]
+			if d2, err2 := DecodeAppsFull(r.Label, body, other); err2 == nil && d2 != nil && !parseFailed(d2) {
+				d, r.Dir = d2, other
+			}
 		}
 		if d != nil {
 			r.Tree, r.Text = d.Tree, d.Text
@@ -181,6 +196,8 @@ func Decode(m Message) (Result, error) {
 		if r.Kind == KindADSC {
 			r.Pos, r.Route = adscPosition(r.Tree)
 		}
+	case KindFMS:
+		parseFMS(body, &r)
 	case KindAFN:
 		parseAFN(body, &r)
 	case KindDATIS:
@@ -215,4 +232,19 @@ func findString(v any, key string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// parseFailed reports whether libacars could not make sense of an ARINC 622
+// ADS-C or CPDLC message in the direction it was given.
+func parseFailed(d *Decoded) bool {
+	if d == nil {
+		return true
+	}
+	a, _ := d.Tree["arinc622"].(map[string]any)
+	for _, k := range []string{"adsc", "cpdlc"} {
+		if app, _ := a[k].(map[string]any); app != nil && app["err"] == true {
+			return true
+		}
+	}
+	return false
 }

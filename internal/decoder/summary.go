@@ -8,9 +8,10 @@ import (
 
 // How a Pos time is expressed.
 const (
-	BasisHour  = "hour"  // seconds past the hour (ADS-C)
-	BasisMonth = "month" // seconds since 00:00 UTC on the 1st (REP081)
-	BasisDay   = "day"   // seconds since 00:00 UTC (CPDLC position report)
+	BasisHour    = "hour"    // seconds past the hour (ADS-C)
+	BasisMonth   = "month"   // seconds since 00:00 UTC on the 1st (REP081)
+	BasisDay     = "day"     // seconds since 00:00 UTC (CPDLC position report)
+	BasisReceipt = "receipt" // no usable embedded time: placed at when it was received
 )
 
 // Pos is a position reported inside a message, with its partial timestamp.
@@ -25,6 +26,8 @@ type Pos struct {
 // to supply the missing hour or month.
 func (p Pos) At(recv time.Time) time.Time {
 	switch p.Basis {
+	case BasisReceipt:
+		return recv.UTC()
 	case BasisMonth:
 		return ResolveMonthSeconds(int64(p.Secs), recv)
 	case BasisDay:
@@ -224,6 +227,32 @@ func summarize(r Result) string {
 		return "Media advisory"
 	case KindDATIS:
 		return fmt.Sprintf("D-ATIS %v request for %v", r.Fields["atis_type"], r.Fields["airport"])
+	case KindFMS:
+		if r.Pos == nil {
+			return "FMS position report"
+		}
+		s := "FMS position report " + latlon(r.Pos.Lat, r.Pos.Lon)
+		if r.Pos.AltFt != nil {
+			s += fmt.Sprintf(" FL%03.0f", *r.Pos.AltFt/100)
+		}
+		if n, ok := r.Fields["next_waypoint"]; ok {
+			s += fmt.Sprintf(", next %v", n)
+		}
+		return s
 	}
-	return "Unrecognised " + r.Label + " message"
+	return undecodedSummary(r)
+}
+
+// undecodedSummary describes a message we have no decoder for, such as the
+// airline-specific engine and performance reports sent as label H1.
+func undecodedSummary(r Result) string {
+	snippet := strings.Join(strings.Fields(r.Body), " ")
+	if len(snippet) > 44 {
+		snippet = snippet[:44] + "…"
+	}
+	label := r.Label
+	if label == "" {
+		label = "?"
+	}
+	return fmt.Sprintf("Undecoded %s message: %s", label, snippet)
 }

@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
+	"sort"
 	"time"
 )
 
@@ -36,6 +38,9 @@ type Message struct {
 
 	AFTail, AFFlight, AFDep, AFDest string
 	Mismatch                        string
+
+	// Raw link-layer facts used to work out the direction.
+	FromHex, ToHex, AFDir string
 }
 
 // DupKey identifies a message independent of which station heard it.
@@ -66,11 +71,11 @@ func (s *Store) AddMessage(m Message) (bool, error) {
 	}
 	res, err := s.db.Exec(`INSERT OR IGNORE INTO message (id, hex, ts, label, block_id, msg_num, direction, source_type, station, freq,
 		text, dup_key, kind, tail, callsign, flight, summary, detail, decoded, route, lat, lon, alt_ft, pos_ts, suspect,
-		af_tail, af_flight, af_dep, af_dest, mismatch)
-		VALUES (?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?)`,
+		af_tail, af_flight, af_dep, af_dest, mismatch, from_hex, to_hex, af_dir)
+		VALUES (?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?)`,
 		m.ID, m.Hex, ts(m.T), m.Label, m.BlockID, m.MsgNum, m.Direction, m.SourceType, m.Station, m.Freq,
 		m.Text, key, m.Kind, m.Tail, m.Callsign, m.Flight, m.Summary, m.Detail, m.Decoded, m.Route, m.Lat, m.Lon, m.AltFt, posT, m.Suspect,
-		m.AFTail, m.AFFlight, m.AFDep, m.AFDest, m.Mismatch)
+		m.AFTail, m.AFFlight, m.AFDep, m.AFDest, m.Mismatch, m.FromHex, m.ToHex, m.AFDir)
 	if err != nil {
 		return false, err
 	}
@@ -80,7 +85,7 @@ func (s *Store) AddMessage(m Message) (bool, error) {
 
 const messageCols = `id, hex, ts, label, block_id, msg_num, direction, source_type, station, freq, text, rx_count,
 	kind, tail, callsign, flight, summary, detail, decoded, route, lat, lon, alt_ft, pos_ts, suspect,
-	af_tail, af_flight, af_dep, af_dest, mismatch`
+	af_tail, af_flight, af_dep, af_dest, mismatch, from_hex, to_hex, af_dir`
 
 func scanMessages(rows *sql.Rows) ([]Message, error) {
 	defer rows.Close()
@@ -91,7 +96,7 @@ func scanMessages(rows *sql.Rows) ([]Message, error) {
 		var posT *int64
 		if err := rows.Scan(&m.ID, &m.Hex, &t, &m.Label, &m.BlockID, &m.MsgNum, &m.Direction, &m.SourceType, &m.Station, &m.Freq,
 			&m.Text, &m.RxCount, &m.Kind, &m.Tail, &m.Callsign, &m.Flight, &m.Summary, &m.Detail, &m.Decoded, &m.Route,
-			&m.Lat, &m.Lon, &m.AltFt, &posT, &m.Suspect, &m.AFTail, &m.AFFlight, &m.AFDep, &m.AFDest, &m.Mismatch); err != nil {
+			&m.Lat, &m.Lon, &m.AltFt, &posT, &m.Suspect, &m.AFTail, &m.AFFlight, &m.AFDep, &m.AFDest, &m.Mismatch, &m.FromHex, &m.ToHex, &m.AFDir); err != nil {
 			return nil, err
 		}
 		m.T = time.Unix(t, 0).UTC()
@@ -158,42 +163,77 @@ func (s *Store) SetFetchedTo(hexAddr string, t time.Time) error {
 	return err
 }
 
-// NearestFix is a known position of an aircraft, from ADS-B or a message.
-type NearestFix struct {
+// Fix is a known position of an aircraft, from ADS-B or a message.
+type Fix struct {
 	Lat, Lon float64
 	T        time.Time
 	From     string // "adsb" or "message"
 }
 
-// NearestFix returns the stored position (ADS-B, or a message position not
-// itself flagged suspect) closest in time to t within window, ignoring message
-// excludeID.
-func (s *Store) NearestFix(hexAddr string, t time.Time, window time.Duration, excludeID int64) (NearestFix, bool) {
-	var best NearestFix
-	found := false
-	consider := func(f NearestFix) {
-		d := f.T.Sub(t).Abs()
-		if !found || d < best.T.Sub(t).Abs() {
-			best, found = f, true
+// Neighbors returns up to k fixes before and k after t (each within window)
+// from ADS-B and from messages, nearest first on each side, ignoring message
+// excludeID. Message fixes count whether or not they are flagged suspect, so
+// that a coherent run of fixes can vouch for one another.
+func (s *Store) Neighbors(hexAddr string, t time.Time, window time.Duration, excludeID int64, k int) []Fix {
+	lo, hi, at := ts(t.Add(-window)), ts(t.Add(window)), ts(t)
+	collect := func(q, from string, args ...any) []Fix {
+		rows, err := s.db.Query(q, args...)
+		if err != nil {
+			return nil
 		}
+		defer rows.Close()
+		var out []Fix
+		for rows.Next() {
+			var f Fix
+			var u int64
+			if rows.Scan(&f.Lat, &f.Lon, &u) == nil {
+				f.T, f.From = time.Unix(u, 0).UTC(), from
+				out = append(out, f)
+			}
+		}
+		return out
 	}
-	lo, hi := ts(t.Add(-window)), ts(t.Add(window))
-	for _, q := range []struct{ from, sql string }{
-		{"adsb", `SELECT lat, lon, ts FROM position WHERE hex=? AND ts BETWEEN ? AND ? ORDER BY ABS(ts-?) LIMIT 1`},
-		{"message", `SELECT lat, lon, pos_ts FROM message WHERE hex=? AND pos_ts BETWEEN ? AND ? AND suspect='' AND id<>? ORDER BY ABS(pos_ts-?) LIMIT 1`},
-	} {
-		var f NearestFix
-		var u int64
-		var row interface{ Scan(...any) error }
-		if q.from == "adsb" {
-			row = s.db.QueryRow(q.sql, hexAddr, lo, hi, ts(t))
-		} else {
-			row = s.db.QueryRow(q.sql, hexAddr, lo, hi, excludeID, ts(t))
+	nearest := func(fs []Fix) []Fix {
+		sort.Slice(fs, func(i, j int) bool { return fs[i].T.Sub(t).Abs() < fs[j].T.Sub(t).Abs() })
+		if len(fs) > k {
+			fs = fs[:k]
 		}
-		if row.Scan(&f.Lat, &f.Lon, &u) == nil {
-			f.T, f.From = time.Unix(u, 0).UTC(), q.from
-			consider(f)
-		}
+		return fs
 	}
-	return best, found
+	const adsb = `SELECT lat, lon, ts FROM position WHERE hex=? AND ts BETWEEN ? AND ? ORDER BY ts %s LIMIT ?`
+	const msg = `SELECT lat, lon, pos_ts FROM message WHERE hex=? AND pos_ts BETWEEN ? AND ? AND lat IS NOT NULL AND id<>? ORDER BY pos_ts %s LIMIT ?`
+	before := append(collect(fmt.Sprintf(adsb, "DESC"), "adsb", hexAddr, lo, at, k),
+		collect(fmt.Sprintf(msg, "DESC"), "message", hexAddr, lo, at, excludeID, k)...)
+	after := append(collect(fmt.Sprintf(adsb, "ASC"), "adsb", hexAddr, at, hi, k),
+		collect(fmt.Sprintf(msg, "ASC"), "message", hexAddr, at, hi, excludeID, k)...)
+	return append(nearest(before), nearest(after)...)
+}
+
+// SetSuspect records (or clears, with "") why a message's position looks wrong.
+func (s *Store) SetSuspect(id int64, why string) error {
+	_, err := s.db.Exec(`UPDATE message SET suspect=? WHERE id=?`, why, id)
+	return err
+}
+
+// MessagePosition is the newest position reported inside a message.
+type MessagePosition struct {
+	T        time.Time
+	Kind     string // adsc, cpdlc, miam (REP081) or fms_position
+	Lat, Lon float64
+	AltFt    *float64
+}
+
+// LastMessagePosition returns the newest position carried by a message for the
+// aircraft, skipping ones flagged suspect.
+func (s *Store) LastMessagePosition(hexAddr string) (MessagePosition, bool) {
+	var p MessagePosition
+	var t int64
+	err := s.db.QueryRow(`SELECT pos_ts, kind, lat, lon, alt_ft FROM message
+		WHERE hex=? AND pos_ts IS NOT NULL AND lat IS NOT NULL AND suspect=''
+		ORDER BY pos_ts DESC LIMIT 1`, hexAddr).Scan(&t, &p.Kind, &p.Lat, &p.Lon, &p.AltFt)
+	if err != nil {
+		return MessagePosition{}, false
+	}
+	p.T = time.Unix(t, 0).UTC()
+	return p, true
 }

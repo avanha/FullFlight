@@ -52,12 +52,19 @@ minutes with a 30 minute overlap to catch late uploads. Each is decoded by us
 from the raw text (libacars plus hand parsers), never from airframes.io's own
 fields. Those are kept as `af_*` hints, and a disagreement (tail, flight number,
 or a tail that belongs to a different hex) shows as a warning badge. A message
-heard by several stations is stored once (`rx_count`). ADS-C, CPDLC and REP081
+heard by several stations is stored once (`rx_count`). ADS-C, CPDLC, REP081 and FMS (`POS…`)
 positions are placed in time from their embedded timestamps, drawn on the map
-in orange, and marked suspect when they imply more than 700 kt against the
-nearest other fix. The newest ADS-C predicted route is drawn dashed.
+in orange, and marked suspect only when they are impossible (over 700 kt) against every one of
+the two nearest fixes on each side, so a coherent run of fixes is never
+condemned by a conflicting one and the result does not depend on fetch order.
+FMS position reports carry no usable embedded time and are placed at their
+receipt time, which is only as good as the receiving station's clock. The newest ADS-C predicted route is drawn dashed.
 
-`GET /api/messages/{hex}?hours=48&limit=300` returns them, oldest first.
+`GET /api/messages/{hex}?hours=48&limit=300` returns them, oldest first. Airline-
+specific engine/performance data (label H1 and others) has no public format; it
+is kept raw and hidden in the timeline behind a "show N undecoded" link.
+Uplink vs downlink is taken from airframes.io when given, else from which end of
+the link is the aircraft (`fromHex`/`toHex`), else tried both ways.
 
 After improving the decoder, run `bin/fullflight -config config.yaml -redecode` to
 re-decode every stored message from its raw text (idempotent).

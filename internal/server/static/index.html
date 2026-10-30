@@ -18,6 +18,7 @@
   li { padding: 8px; border-bottom: 1px solid #eee; cursor: pointer; }
   li.sel { background: #eef4ff; }
   li small { color: #666; display: block; }
+  li small.lastpos { color: #333; }
   .waiting { color: #a60; } .tracking { color: #070; } .done, .expired { color: #888; }
   button.del { float: right; }
   h4 { margin: 14px 0 4px; }
@@ -56,6 +57,15 @@ let layer = L.layerGroup().addTo(map), selected = null, watches = [];
 const $ = s => document.querySelector(s);
 const fmt = t => new Date(t).toISOString().slice(0, 16).replace('T', ' ') + 'Z';
 
+const fmtTime = t => new Date(t).toISOString().slice(11, 19) + 'Z';
+function ago(t) {
+  const s = Math.max(0, Math.round((Date.now() - new Date(t)) / 1000));
+  if (s < 90) return s + 's ago';
+  if (s < 5400) return Math.round(s / 60) + 'm ago';
+  if (s < 48 * 3600) return (s / 3600).toFixed(1).replace(/\.0$/, '') + 'h ago';
+  return Math.round(s / 86400) + 'd ago';
+}
+
 async function api(path, opts) {
   const r = await fetch(path, opts);
   if (r.status === 204) return null;
@@ -75,6 +85,12 @@ async function refresh() {
     li.innerHTML = `<button class="del" title="Remove">✕</button><b></b> <span class="${w.status}">${w.status}</span><small></small>`;
     li.querySelector('b').textContent = title;
     li.querySelector('small').textContent = `${ids ? ids + ' — ' : ''}${fmt(w.start)} → ${fmt(w.end)}`;
+    if (w.last_pos || w.type) {
+      const lp = document.createElement('small');
+      lp.className = 'lastpos';
+      lp.textContent = [w.last_pos && `last ${w.last_pos.kind} ${fmtTime(w.last_pos.t)} (${ago(w.last_pos.t)})`, w.type].filter(Boolean).join(' · ');
+      li.append(lp);
+    }
     li.querySelector('.del').onclick = async e => { e.stopPropagation(); await api('/api/watches/' + w.id, {method: 'DELETE'}); refresh(); };
     li.onclick = () => { selected = w.id; refresh(); showTrack(w); };
     return li;
@@ -118,14 +134,28 @@ async function showTrack(w) {
   if (group.length) map.fitBounds(L.featureGroup(group).getBounds(), {maxZoom: 8, padding: [30, 30]});
 }
 
+let showUndecoded = false, lastMsgs = [];
 function renderMessages(msgs) {
+  lastMsgs = msgs;
   const box = $('#msgs');
   if (!msgs.length) { box.innerHTML = '<div class="empty">No messages yet.</div>'; return; }
-  box.replaceChildren(...msgs.slice().reverse().map(m => {
+  const hidden = msgs.filter(m => m.undecoded).length;
+  const shown = showUndecoded ? msgs : msgs.filter(m => !m.undecoded);
+  const toggle = document.createElement('div');
+  toggle.className = 'empty';
+  if (hidden) {
+    const a = document.createElement('a');
+    a.href = '#';
+    a.textContent = showUndecoded ? `hide ${hidden} undecoded` : `show ${hidden} undecoded`;
+    a.onclick = e => { e.preventDefault(); showUndecoded = !showUndecoded; renderMessages(lastMsgs); };
+    toggle.append(a, document.createTextNode(' (airline-specific data and message fragments)'));
+  }
+  box.replaceChildren(...(hidden ? [toggle] : []), ...shown.slice().reverse().map(m => {
     const d = document.createElement('div');
     d.className = 'msg';
     const t = document.createElement('time');
     t.textContent = new Date(m.t).toISOString().slice(5, 19).replace('T', ' ') + 'Z';
+    t.onmouseenter = () => { t.title = ago(m.t); };  // computed on hover so it is never stale
     const k = document.createElement('span');
     k.className = 'kind';
     k.textContent = m.kind.replace('_', ' ');

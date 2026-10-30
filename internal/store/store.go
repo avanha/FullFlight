@@ -102,6 +102,11 @@ var migrations = []string{
 		hex        TEXT PRIMARY KEY,
 		fetched_to INTEGER NOT NULL   -- the end of the last successful fetch, unix seconds
 	) WITHOUT ROWID;`,
+	// Who sent it and what airframes.io said about direction, so a later
+	// re-decode can work out uplink vs downlink without guessing.
+	`ALTER TABLE message ADD COLUMN from_hex TEXT NOT NULL DEFAULT '';
+	 ALTER TABLE message ADD COLUMN to_hex   TEXT NOT NULL DEFAULT '';
+	 ALTER TABLE message ADD COLUMN af_dir   TEXT NOT NULL DEFAULT '';`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.
@@ -375,6 +380,13 @@ func (s *Store) TailForHex(hex string) (string, bool) {
 	var tail string
 	err := s.db.QueryRow(`SELECT tail FROM airframe WHERE hex=? ORDER BY last_seen DESC LIMIT 1`, hex).Scan(&tail)
 	return tail, err == nil
+}
+
+// TypeForHex returns the aircraft type code (e.g. "A359") last recorded for a hex.
+func (s *Store) TypeForHex(hex string) string {
+	var t string
+	s.db.QueryRow(`SELECT icao_type FROM airframe WHERE hex=? AND icao_type != '' ORDER BY last_seen DESC LIMIT 1`, hex).Scan(&t)
+	return t
 }
 
 func (s *Store) ListAirframes() ([]Airframe, error) {

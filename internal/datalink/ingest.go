@@ -40,22 +40,17 @@ func Ingest(st *store.Store, hexAddr string, raw airframes.Message) (bool, error
 	if text == "" {
 		return false, nil
 	}
-	dir := decoder.Unknown
-	switch strings.ToLower(string(raw.LinkDirection)) {
-	case "uplink":
-		dir = decoder.Uplink
-	case "downlink":
-		dir = decoder.Downlink
-	}
-
 	m := store.Message{
 		ID: raw.ID, Hex: hexAddr, T: raw.Timestamp.UTC(), Label: string(raw.Label), BlockID: string(raw.BlockID),
 		MsgNum: string(raw.MessageNumber), SourceType: string(raw.SourceType), Station: string(raw.Station.Ident),
 		Freq: raw.Frequency, Text: text,
+		FromHex: strings.ToUpper(string(raw.FromHex)), ToHex: strings.ToUpper(string(raw.ToHex)),
+		AFDir:    strings.ToLower(string(raw.LinkDirection)),
 		AFTail:   firstNonEmpty(string(raw.Tail), string(raw.Airframe.Tail)),
 		AFFlight: firstNonEmpty(string(raw.FlightNumber), string(raw.Flight.Flight)),
 		AFDep:    string(raw.Departing), AFDest: string(raw.Destination),
 	}
+	dir := directionOf(m.AFDir, m.FromHex, m.ToHex, hexAddr)
 
 	decodeInto(st, &m, dir)
 	return st.AddMessage(m)
@@ -101,14 +96,8 @@ func Redecode(st *store.Store) (changed int, err error) {
 	}
 	for _, old := range all {
 		m := old
-		dir := decoder.Unknown
-		switch m.Direction {
-		case "up":
-			dir = decoder.Uplink
-		case "down":
-			dir = decoder.Downlink
-		}
-		decodeInto(st, &m, dir)
+		// Not the stored direction: that may itself have been a guess.
+		decodeInto(st, &m, directionOf(m.AFDir, m.FromHex, m.ToHex, m.Hex))
 		if m.Kind == old.Kind && m.Summary == old.Summary && m.Decoded == old.Decoded && m.Route == old.Route &&
 			m.Suspect == old.Suspect && m.Mismatch == old.Mismatch && sameFloat(m.Lat, old.Lat) && sameFloat(m.Lon, old.Lon) {
 			continue
@@ -118,11 +107,42 @@ func Redecode(st *store.Store) (changed int, err error) {
 		}
 		changed++
 	}
+	// With everything re-decoded, settle the suspect flags against full neighbourhoods.
+	hexes := map[string]bool{}
+	for _, m := range all {
+		hexes[m.Hex] = true
+	}
+	for h := range hexes {
+		n, err := Recheck(st, h, time.Time{})
+		if err != nil {
+			return changed, err
+		}
+		changed += n
+	}
 	return changed, nil
 }
 
 func sameFloat(a, b *float64) bool {
 	return (a == nil) == (b == nil) && (a == nil || *a == *b)
+}
+
+// directionOf says whether a message went up to or down from the aircraft.
+// airframes.io's own direction field is usually empty, so fall back on which
+// end of the link is the aircraft; Unknown if neither says.
+func directionOf(afDir, from, to, hexAddr string) decoder.Direction {
+	switch afDir {
+	case "uplink":
+		return decoder.Uplink
+	case "downlink":
+		return decoder.Downlink
+	}
+	switch {
+	case from != "" && strings.EqualFold(from, hexAddr):
+		return decoder.Downlink
+	case to != "" && strings.EqualFold(to, hexAddr):
+		return decoder.Uplink
+	}
+	return decoder.Unknown
 }
 
 func firstNonEmpty(ss ...string) string {
@@ -134,25 +154,69 @@ func firstNonEmpty(ss ...string) string {
 	return ""
 }
 
+// NeighbourFixes is how many fixes each side of a position it is judged against.
+const NeighbourFixes = 2
+
 // checkPosition returns a reason if the reported position cannot be right
-// given the nearest other fix of the same aircraft.
+// given the fixes around it in time. A position is only suspect if it is
+// impossible against every one of them: a coherent run of fixes vouch for one
+// another, so one conflicting cluster does not condemn another, a single
+// outlier does not condemn its good neighbours, and the verdict does not
+// depend on which was stored first.
 func checkPosition(st *store.Store, hexAddr string, id int64, lat, lon float64, t time.Time) string {
-	fix, ok := st.NearestFix(hexAddr, t, FixWindow, id)
-	if !ok {
+	fixes := st.Neighbors(hexAddr, t, FixWindow, id, NeighbourFixes)
+	var why []string
+	for i := range fixes {
+		if w := impossible(lat, lon, t, &fixes[i]); w != "" {
+			why = append(why, w)
+		}
+	}
+	if len(fixes) == 0 || len(why) < len(fixes) {
 		return ""
 	}
-	dt := fix.T.Sub(t).Abs()
-	dist := geo.DistNM(lat, lon, fix.Lat, fix.Lon)
+	if len(why) > 2 {
+		why = why[:2]
+	}
+	return strings.Join(why, "; ")
+}
+
+// impossible explains why an aircraft cannot be at (lat, lon) at t given
+// fix f, or returns "".
+func impossible(lat, lon float64, t time.Time, f *store.Fix) string {
+	dt := f.T.Sub(t).Abs()
+	dist := geo.DistNM(lat, lon, f.Lat, f.Lon)
 	if dt < 30*time.Second {
 		if dist > 20 {
-			return fmt.Sprintf("%.0f nm from the %s fix at the same time", dist, fix.From)
+			return fmt.Sprintf("%.0f nm from the %s fix at the same time", dist, f.From)
 		}
 		return ""
 	}
 	if kt := dist / dt.Hours(); kt > decoder.MaxPlausibleKt {
-		return fmt.Sprintf("implies %.0f kt against the %s fix %s away", kt, fix.From, dt.Round(time.Second))
+		return fmt.Sprintf("implies %.0f kt against the %s fix %s away", kt, f.From, dt.Round(time.Second))
 	}
 	return ""
+}
+
+// Recheck re-evaluates the suspect flag of every positioned message for an
+// aircraft since the given time, now that more of its neighbours are stored.
+// It returns how many flags changed.
+func Recheck(st *store.Store, hexAddr string, since time.Time) (changed int, err error) {
+	ms, err := st.Messages(hexAddr, since, time.Now().Add(48*time.Hour), 100000)
+	if err != nil {
+		return 0, err
+	}
+	for _, m := range ms {
+		if m.PosT == nil || m.Lat == nil || m.Lon == nil {
+			continue
+		}
+		if why := checkPosition(st, hexAddr, m.ID, *m.Lat, *m.Lon, *m.PosT); why != m.Suspect {
+			if err := st.SetSuspect(m.ID, why); err != nil {
+				return changed, err
+			}
+			changed++
+		}
+	}
+	return changed, nil
 }
 
 // mismatch lists where airframes.io's idea of the message disagrees with our

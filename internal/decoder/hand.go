@@ -8,6 +8,8 @@ import (
 )
 
 var (
+	// ARINC 702 FMS position report: POS<N|S><lat><E|W><lon>,<wpt>,<time>,<FL>,<next>,<eta>,<next+1>,...
+	posnRe  = regexp.MustCompile(`^POS([NS])(\d{2})(\d{3})([EW])(\d{3})(\d{3})(,|$)`)
 	afnRe   = regexp.MustCompile(`^/([A-Z0-9]{7})\.AFN/(.*)$`)
 	datisRe = regexp.MustCompile(`^/([A-Z0-9]{4,7})\.TI2/\d{3}([A-Z0-9]{4})([A-Z])`)
 	mediaRe = regexp.MustCompile(`^0([EL])([A-Z0-9])(\d{6})([A-Z0-9]*)/?$`)
@@ -143,4 +145,42 @@ func ResolveMonthSeconds(secs int64, ref time.Time) time.Time {
 		t = first.Add(time.Duration(secs) * time.Second)
 	}
 	return t
+}
+
+// parseFMS decodes a "POS" report from the flight management system: position
+// as degrees and tenths of minutes, then flight level and the waypoints. The
+// time fields in these reports do not match UTC in any sample we have seen, so
+// the report is placed at its receipt time and the embedded times are ignored.
+func parseFMS(body string, r *Result) {
+	m := posnRe.FindStringSubmatch(body)
+	if m == nil {
+		return
+	}
+	atof := func(s string) float64 { v, _ := strconv.ParseFloat(s, 64); return v }
+	lat := atof(m[2]) + atof(m[3])/10/60
+	lon := atof(m[5]) + atof(m[6])/10/60
+	if m[1] == "S" {
+		lat = -lat
+	}
+	if m[4] == "W" {
+		lon = -lon
+	}
+	p := &Pos{Lat: lat, Lon: lon, Basis: BasisReceipt}
+	f := strings.Split(strings.TrimSpace(body), ",")
+	get := func(i int) string {
+		if i < len(f) {
+			return strings.TrimSpace(f[i])
+		}
+		return ""
+	}
+	if fl, err := strconv.Atoi(get(3)); err == nil && fl > 0 && fl < 700 {
+		ft := float64(fl) * 100
+		p.AltFt = &ft
+	}
+	r.Pos = p
+	for k, i := range map[string]int{"waypoint": 1, "next_waypoint": 4, "next_next_waypoint": 6} {
+		if v := get(i); v != "" {
+			r.Fields[k] = v
+		}
+	}
 }
