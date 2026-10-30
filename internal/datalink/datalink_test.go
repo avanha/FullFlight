@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -703,4 +704,127 @@ func TestMisdatedFMSIsUnverifiedNotImpossible(t *testing.T) {
 	st.SetSuspect(3, "left over from before")
 	Recheck(st, "A48E3A", t0.Add(-time.Hour))
 	check()
+}
+
+// A flight plan names the flight (and so labels messages that were undecoded); a progress report filed days
+// after it was written does not get to name the flight the aircraft is on now.
+func TestPlanAndProgressNameTheFlight(t *testing.T) {
+	st := newStore(t)
+	t0 := time.Date(2026, 10, 30, 18, 47, 0, 0, time.UTC)
+	fpn := airframes.Message{ID: 1, Timestamp: t0, Label: "H1", FromHex: "A762CC",
+		Text: "FPN/FNUPS58/RI:DA:PHNL:AA:VHHH:F:LILIA..N25000W170000..TUNTO.Q13..PICHU,N21557E120506FA3A"}
+	late := airframes.Message{ID: 2, Timestamp: t0.Add(72 * time.Minute), Label: "H1", FromHex: "A762CC",
+		Text: "PRG/TS040501,281026/DTKONT,26L,400,043500,041/FNUPS57003B"} // written two days earlier
+	ontime := airframes.Message{ID: 3, Timestamp: t0.Add(73 * time.Minute), Label: "H1", FromHex: "A762CC",
+		Text: "PRG/TS195622,301026/DTVHHH,07R,408,064946,048/FNUPS58FA3A"}
+	ontime.Timestamp = time.Date(2026, 10, 30, 19, 56, 30, 0, time.UTC)
+	for _, m := range []airframes.Message{fpn, late, ontime} {
+		if _, err := Ingest(st, "A762CC", m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ms, _ := st.Messages("A762CC", t0.Add(-time.Hour), t0.Add(3*time.Hour), 10)
+	by := map[int64]store.Message{}
+	for _, m := range ms {
+		by[m.ID] = m
+	}
+	if m := by[1]; m.Kind != "flight_plan" || m.Callsign != "UPS58" || m.Flight != "5X58" || !strings.Contains(m.Summary, "PHNL") {
+		t.Errorf("plan: %+v", m)
+	}
+	if m := by[2]; m.Kind != "progress" || m.Flight != "" || m.Callsign != "" || m.TimeNote == "" {
+		t.Errorf("late progress report must not name the flight: %+v", m)
+	}
+	if m := by[3]; m.Kind != "progress" || m.Callsign != "UPS58" || !strings.Contains(m.Summary, "VHHH") {
+		t.Errorf("on-time progress report: %+v", m)
+	}
+}
+
+type fakeSearch struct {
+	msgs  []airframes.Message
+	by    map[string][]airframes.Message // results for a given query, when set
+	calls []string
+}
+
+func (s *fakeSearch) SearchText(_ context.Context, q string) ([]airframes.Message, error) {
+	s.calls = append(s.calls, q)
+	if s.by != nil {
+		return s.by[q], nil
+	}
+	return s.msgs, nil
+}
+
+// Flight plans carry no hex address, so the by-address fetch cannot return them: they are searched for by the
+// callsign the aircraft is known to be flying, and only this aircraft's are kept.
+func TestFlightPlansFoundByCallsign(t *testing.T) {
+	st := newStore(t)
+	now := time.Date(2026, 10, 30, 22, 0, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("hex:A762CC", now, time.Time{})
+	st.AddWatch(e)
+	mine := airframes.Message{ID: 10, Timestamp: now.Add(-3 * time.Hour), Label: "H1",
+		Text: "FPN/FNUPS58/RI:DA:PHNL:AA:VHHH:F:LILIA..TUNTO..IGURU.Q13..PICHU6CDE"}
+	mine.Airframe.ICAO = "A762CC"
+	other := airframes.Message{ID: 11, Timestamp: now.Add(-3 * time.Hour), Label: "H1",
+		Text: "FPN/FNUPS58/RI:DA:KONT:AA:PHNL:F:LILIA..TUNTO6CDE"} // yesterday's UPS58, another aircraft
+	other.Airframe.ICAO = "A11111"
+	// the aircraft's recent message names its callsign
+	st.AddMessage(store.Message{ID: 1, Hex: "A762CC", T: now.Add(-time.Hour), Label: "H1", Text: "x", Callsign: "UPS58"})
+	se := &fakeSearch{msgs: []airframes.Message{mine, other}}
+	f := &Fetcher{Store: st, Source: &fakeSource{}, Search: se, Now: func() time.Time { return now }}
+
+	f.Once(context.Background())
+	if len(se.calls) != 1 || se.calls[0] != "FPN/FNUPS58" {
+		t.Fatalf("searches %v", se.calls)
+	}
+	ms, _ := st.Messages("A762CC", now.Add(-6*time.Hour), now, 20)
+	var plans []store.Message
+	for _, m := range ms {
+		if m.Kind == "flight_plan" {
+			plans = append(plans, m)
+		}
+	}
+	if len(plans) != 1 || plans[0].ID != 10 || plans[0].Callsign != "UPS58" {
+		t.Fatalf("plans: %+v", plans)
+	}
+	// throttled
+	now = now.Add(time.Minute)
+	f.last = map[string]time.Time{}
+	f.Once(context.Background())
+	if len(se.calls) != 1 {
+		t.Errorf("searched again after a minute: %v", se.calls)
+	}
+	now = now.Add(16 * time.Minute)
+	f.last = map[string]time.Time{}
+	f.Once(context.Background())
+	if len(se.calls) != 2 {
+		t.Errorf("not searched after 16 minutes: %v", se.calls)
+	}
+}
+
+// Nothing tells a hex watch which flight its aircraft is on, if the messages that say so carry no hex address.
+// A search for the registration finds a logon that names the flight; that flight's plan is then searched for in
+// the same round.
+func TestRegistrationSearchFindsTheFlightThenThePlan(t *testing.T) {
+	st := newStore(t)
+	now := time.Date(2026, 10, 30, 22, 0, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("hex:A762CC", now, time.Time{})
+	st.AddWatch(e)
+	st.RecordAirframe(store.Airframe{Hex: "A762CC", Tail: "N575UP", Source: "x", LastSeen: now})
+	logon := airframes.Message{ID: 20, Timestamp: now.Add(-2 * time.Hour), Label: "H1", Text: "/OAKODYA.AFN/FMHUPS58,.N575UP,,200552/FAK0,KZAK"}
+	logon.Airframe.ICAO = "A762CC"
+	plan := airframes.Message{ID: 21, Timestamp: now.Add(-3 * time.Hour), Label: "H1", Text: "FPN/FNUPS58/RI:DA:PHNL:AA:VHHH:F:LILIA..TUNTO6CDE"}
+	plan.Airframe.ICAO = "A762CC"
+	se := &fakeSearch{by: map[string][]airframes.Message{"N575UP": {logon}, "FPN/FNUPS58": {plan}}}
+	f := &Fetcher{Store: st, Source: &fakeSource{}, Search: se, Now: func() time.Time { return now }}
+	f.Once(context.Background())
+	if !reflect.DeepEqual(se.calls, []string{"N575UP", "FPN/FNUPS58"}) {
+		t.Fatalf("searches %v", se.calls)
+	}
+	ms, _ := st.Messages("A762CC", now.Add(-6*time.Hour), now, 20)
+	kinds := map[string]bool{}
+	for _, m := range ms {
+		kinds[m.Kind] = true
+	}
+	if !kinds["afn"] || !kinds["flight_plan"] {
+		t.Errorf("stored kinds %v", kinds)
+	}
 }

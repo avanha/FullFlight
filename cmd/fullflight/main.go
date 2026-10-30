@@ -132,7 +132,7 @@ func main() {
 	}
 	go p.Run(ctx)
 
-	fetcher := &datalink.Fetcher{Store: st, Source: airframes.NewClient(), Log: log}
+	fetcher := &datalink.Fetcher{Store: st, Source: afClient, Search: afClient, Log: log}
 	go fetcher.Run(ctx)
 
 	srv := &http.Server{

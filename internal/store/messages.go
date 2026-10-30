@@ -299,6 +299,7 @@ func boolInt(b bool) int {
 type Route struct {
 	From, To string // ICAO codes
 	T        time.Time
+	Source   string // "REP081" or "flight plan"
 }
 
 // LastRoute returns the newest origin/destination reported by the aircraft in a
@@ -307,13 +308,7 @@ type Route struct {
 func (s *Store) LastRoute(hexAddr string) (Route, bool) {
 	var r Route
 	var t int64
-	err := s.db.QueryRow(`SELECT COALESCE(pos_ts, ts),
-			COALESCE(json_extract(decoded, '$.fields.rep081.Origin'), ''),
-			json_extract(decoded, '$.fields.rep081.Dest')
-		FROM message
-		WHERE hex=? AND kind='miam' AND json_extract(decoded, '$.fields.rep081.Dest') IS NOT NULL
-		  AND json_extract(decoded, '$.fields.rep081.Dest') != ''
-		ORDER BY COALESCE(pos_ts, ts) DESC LIMIT 1`, hexAddr).Scan(&t, &r.From, &r.To)
+	err := s.db.QueryRow(`SELECT t, origin, dest, src FROM (`+routeReportsSQL+`) ORDER BY t DESC LIMIT 1`, hexAddr, 0, 1<<40).Scan(&t, &r.From, &r.To, &r.Source)
 	if err != nil {
 		return Route{}, false
 	}
@@ -451,19 +446,27 @@ func (s *Store) PositionTimes(hexAddr string, since, until time.Time) ([]time.Ti
 	return out, rows.Err()
 }
 
+// routeReportsSQL selects (t, origin, dest) from the two kinds of message that say where a flight is going: a
+// REP081 report and a filed flight plan (arguments: hex, from, to).
+const routeReportsSQL = `
+	SELECT COALESCE(pos_ts, ts) AS t, COALESCE(json_extract(decoded, '$.fields.rep081.Origin'), '') AS origin,
+		json_extract(decoded, '$.fields.rep081.Dest') AS dest, 'REP081' AS src
+	FROM message WHERE hex=?1 AND kind='miam' AND COALESCE(pos_ts, ts) BETWEEN ?2 AND ?3
+	  AND json_extract(decoded, '$.fields.rep081.Dest') IS NOT NULL AND json_extract(decoded, '$.fields.rep081.Dest') != ''
+	UNION ALL
+	SELECT ts, COALESCE(json_extract(decoded, '$.fields.plan.from'), ''), json_extract(decoded, '$.fields.plan.to'), 'flight plan'
+	FROM message WHERE hex=?1 AND kind='flight_plan' AND ts BETWEEN ?2 AND ?3
+	  AND json_extract(decoded, '$.fields.plan.to') IS NOT NULL AND json_extract(decoded, '$.fields.plan.to') != ''`
+
 // RouteReport is one REP081 origin/destination.
 type RouteReport struct {
 	T        time.Time
 	From, To string
 }
 
-// RouteReports returns the REP081 origin/destination reports in [since, until], oldest first.
+// RouteReports returns the REP081 and flight-plan origin/destination reports in [since, until], oldest first.
 func (s *Store) RouteReports(hexAddr string, since, until time.Time) ([]RouteReport, error) {
-	rows, err := s.db.Query(`SELECT COALESCE(pos_ts, ts),
-			COALESCE(json_extract(decoded, '$.fields.rep081.Origin'), ''), json_extract(decoded, '$.fields.rep081.Dest')
-		FROM message WHERE hex=? AND kind='miam' AND COALESCE(pos_ts, ts) BETWEEN ? AND ?
-		  AND json_extract(decoded, '$.fields.rep081.Dest') IS NOT NULL AND json_extract(decoded, '$.fields.rep081.Dest') != ''
-		ORDER BY 1`, hexAddr, ts(since), ts(until))
+	rows, err := s.db.Query(`SELECT t, origin, dest FROM (`+routeReportsSQL+`) ORDER BY t`, hexAddr, ts(since), ts(until))
 	if err != nil {
 		return nil, err
 	}

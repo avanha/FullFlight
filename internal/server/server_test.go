@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -679,6 +680,98 @@ func TestNotesNeedTheLogin(t *testing.T) {
 	for _, c := range [][2]string{{"GET", "/api/airframes"}, {"GET", "/api/airframes/780AB8/notes"}, {"POST", "/api/airframes/780AB8/notes"}, {"DELETE", "/api/airframes/780AB8/notes/1"}} {
 		if code, _ := do(t, c[0], ts.URL+c[1], `{"note":"x"}`); code != 401 {
 			t.Errorf("%s %s without credentials = %d", c[0], c[1], code)
+		}
+	}
+}
+
+// Filed flight plans are served resolved to positions: coordinates as given, other fixes from the navigation
+// database (the one nearest the point before, since names repeat), the airports at the ends; sent twice they are
+// reported once; and the plan gives the watch its origin and destination.
+func TestFlightPlanEndpointAndRoute(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 22, 0, 0, 0, time.UTC)
+	nav := navdata.New()
+	nav.Add("TUNTO", navdata.Point{Lat: 25.0, Lon: 170.0, Kind: "fix"})
+	nav.Add("TUNTO", navdata.Point{Lat: -33.0, Lon: 20.0, Kind: "fix"}) // a namesake far away
+	plan := `{"fields":{"plan":{"callsign":"UPS58","from":"PHNL","to":"VHHH","fixes":[
+		{"name":"LILIA","lat":21.0,"lon":-158.0,"has_pos":true},{"name":"TUNTO","via":"Q13"},{"name":"NOWHERE"}]}}}`
+	for i, at := range []time.Time{now.Add(-3 * time.Hour), now.Add(-2 * time.Hour)} {
+		st.AddMessage(store.Message{ID: int64(i + 1), Hex: "A762CC", T: at, Label: "H1", Text: "FPN/x", Kind: "flight_plan", Decoded: plan, Callsign: "UPS58"})
+	}
+	st.AddMessage(store.Message{ID: 9, Hex: "A762CC", T: now.Add(-time.Hour), Label: "H1", Text: "other", Kind: "unknown"})
+	ts := httptest.NewServer((&Server{Store: st, Nav: nav, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+
+	_, body := do(t, "GET", ts.URL+"/api/plan/a762cc", "")
+	var plans []struct {
+		ID       int64    `json:"id"`
+		T        string   `json:"t"`
+		Callsign string   `json:"callsign"`
+		From     string   `json:"from"`
+		To       string   `json:"to"`
+		FromName string   `json:"from_name"`
+		Missing  []string `json:"missing"`
+		Points   []struct {
+			Name string  `json:"name"`
+			Lat  float64 `json:"lat"`
+			Lon  float64 `json:"lon"`
+			Via  string  `json:"via"`
+			Kind string  `json:"kind"`
+		} `json:"points"`
+	}
+	if err := json.Unmarshal([]byte(body), &plans); err != nil || len(plans) != 1 {
+		t.Fatalf("%v: %s", err, body)
+	}
+	p := plans[0]
+	if p.ID != 2 || p.T != "2026-10-30T20:00:00Z" || p.Callsign != "UPS58" || p.From != "PHNL" || p.FromName == "" {
+		t.Errorf("identical plans reported once, at the newest: %+v", p)
+	}
+	var got []string
+	for _, pt := range p.Points {
+		got = append(got, pt.Name+"/"+pt.Kind)
+	}
+	if !reflect.DeepEqual(got, []string{"PHNL/airport", "LILIA/given", "TUNTO/fix", "VHHH/airport"}) || !reflect.DeepEqual(p.Missing, []string{"NOWHERE"}) {
+		t.Fatalf("points %v missing %v", got, p.Missing)
+	}
+	if tu := p.Points[2]; tu.Lat != 25 || tu.Via != "Q13" {
+		t.Errorf("TUNTO should be the one near the route: %+v", tu)
+	}
+
+	// the plan names the origin and destination on the watch
+	e, _ := watchlist.Parse("hex:A762CC", now, time.Time{})
+	st.AddWatch(e)
+	_, body = do(t, "GET", ts.URL+"/api/watches", "")
+	var ws []struct {
+		Route *struct {
+			From, To, Source string
+		} `json:"route"`
+	}
+	json.Unmarshal([]byte(body), &ws)
+	if len(ws) != 1 || ws[0].Route == nil || ws[0].Route.From != "PHNL" || ws[0].Route.To != "VHHH" || ws[0].Route.Source != "flight plan" {
+		t.Errorf("route = %+v (%s)", ws, body)
+	}
+}
+
+// A station may hear only part of a message: its copy ends with the last fix cut short (a name, no coordinates).
+// When the complete copy of the same plan is heard too, the plan shown is the complete one, whichever came first.
+func TestTruncatedPlanCopyDoesNotWin(t *testing.T) {
+	for name, order := range map[string][]int{"truncated first": {0, 1}, "complete first": {1, 0}} {
+		st, _ := store.Open(":memory:")
+		now := time.Date(2026, 10, 30, 22, 0, 0, 0, time.UTC)
+		copies := []string{
+			`{"fields":{"plan":{"callsign":"UPS58","from":"PHNL","to":"VHHH","fixes":[{"name":"LILIA","lat":21,"lon":-158,"has_pos":true},{"name":"ABBEY"}]}}}`,
+			`{"fields":{"plan":{"callsign":"UPS58","from":"PHNL","to":"VHHH","fixes":[{"name":"LILIA","lat":21,"lon":-158,"has_pos":true},{"name":"ABBEY","lat":22.27,"lon":114.92,"has_pos":true}]}}}`,
+		}
+		for i, c := range order {
+			st.AddMessage(store.Message{ID: int64(i + 1), Hex: "A762CC", T: now.Add(-time.Duration(3-i) * time.Hour), Label: "H1", Text: "FPN/x", Kind: "flight_plan", Decoded: copies[c]})
+		}
+		ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+		_, body := do(t, "GET", ts.URL+"/api/plan/A762CC", "")
+		ts.Close()
+		st.Close()
+		if strings.Count(body, `"id":`) != 1 || !strings.Contains(body, `"name":"ABBEY","lat":22.27`) || strings.Contains(body, `"missing"`) {
+			t.Errorf("%s: %s", name, body)
 		}
 	}
 }

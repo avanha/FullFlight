@@ -107,9 +107,11 @@ L.control.layers(null, Object.fromEntries(Object.values(SOURCES).map(src =>
 const wptGroup = L.layerGroup().addTo(map);   // waypoints named in CPDLC position reports
 const projGroup = L.layerGroup().addTo(map);  // dead-reckoned position and look-ahead
 const predGroup = L.layerGroup().addTo(map);  // what the selected report predicted: its route and next waypoints
+const planGroup = L.layerGroup().addTo(map);  // the filed flight plan: planned route and its fixes
 L.control.layers(null, {
   '<span style="font-weight:bold">&#9671;</span> Waypoints': wptGroup,
   '<span style="color:#e8590c;font-weight:bold">&#8211; &#8211;</span> Predictions': predGroup,
+  '<span style="color:#5c6b8a;font-weight:bold">&#8211; &#8211;</span> Planned route': planGroup,
   '<span style="color:#666;font-weight:bold">&middot;&middot;&middot;</span> Projection': projGroup,
 }, {collapsed: false, position: 'bottomleft'}).addTo(map);
 // ---- longitude frame --------------------------------------------------------------------
@@ -354,7 +356,8 @@ function drawWaypoints(msgs) {
 // Dead reckoning from the newest trustworthy fix, along its track at its ground speed. It is only
 // an estimate, so it is limited: not from a fix over an hour old, never more than 90 minutes beyond
 // the fix, not for an aircraft on the ground or too slow to be flying, and not past a known destination.
-const PROJ = {maxFixAgeMin: 60, maxSpanMin: 90, minGs: 100, maxGs: 700, tickMin: 10, ghostAfterSec: 45, destSlackDeg: 35};
+const PROJ = {maxFixAgeMin: 60, maxSpanMin: 90, minGs: 100, maxGs: 700, tickMin: 10, ghostAfterSec: 45, destSlackDeg: 35,
+  planSlackNM: 60, planSlackDeg: 70};   // follow the filed route only if the fix is within this of it, heading roughly along it
 let aheadMin = 30, lastData = null, lastTrack = {pts: [], msgs: []};
 try { const v = localStorage.getItem('aheadMin'); if (['0', '15', '30', '60'].includes(v)) aheadMin = Number(v); } catch (e) { /* no storage: keep the default */ }
 const RAD = Math.PI / 180;
@@ -374,7 +377,50 @@ function destOf(w) {
   return null;
 }
 
-function projection(w, pts, msgs, nowMs, ahead = aheadMin) {
+// A filed route as a path to walk along: where a fix lies on it, and the point, bearing and line between
+// distances along it. Legs are straight on the map (as they are drawn), measured on the local flat plane.
+// Null if the fix is not on the route: too far from it, or heading across it.
+function walkRoute(plan, L0, trk) {
+  const P = plan && plan.points;
+  if (!P || P.length < 2) return null;
+  const legs = [];
+  let total = 0;
+  for (let i = 0; i + 1 < P.length; i++) {
+    const a = P[i], b = P[i + 1], mc = Math.cos((a.lat + b.lat) / 2 * RAD);
+    const dx = wrap180(b.lon - a.lon) * mc * 60, dy = (b.lat - a.lat) * 60, d = Math.hypot(dx, dy);
+    if (d < 0.01) continue;
+    legs.push({a, b, dx, dy, d, mc, start: total, brg: (Math.atan2(dx, dy) / RAD + 360) % 360});
+    total += d;
+  }
+  if (!legs.length) return null;
+  let best = null;
+  for (const g of legs) {
+    const px = wrap180(L0.lon - g.a.lon) * g.mc * 60, py = (L0.lat - g.a.lat) * 60;
+    const u = Math.max(0, Math.min(1, (px * g.dx + py * g.dy) / (g.d * g.d)));
+    const cross = Math.hypot(px - u * g.dx, py - u * g.dy);
+    if (!best || cross < best.cross) best = {g, u, cross};
+  }
+  if (best.cross > PROJ.planSlackNM || (trk != null && angDiff(best.g.brg, trk) > PROJ.planSlackDeg)) return null;
+  const legAt = s => legs.find(g => s <= g.start + g.d) || legs[legs.length - 1];
+  const pointAt = s => {
+    s = Math.max(0, Math.min(total, s));
+    const g = legAt(s), u = (s - g.start) / g.d;
+    return [g.a.lat + (g.b.lat - g.a.lat) * u, g.a.lon + wrap180(g.b.lon - g.a.lon) * u];
+  };
+  return {
+    total, at: best.g.start + best.u * best.g.d, cross: best.cross,
+    pointAt, bearingAt: s => legAt(Math.max(0, Math.min(total, s))).brg,
+    // the line from s0 to s1, with a vertex at every fix passed on the way
+    path(s0, s1) {
+      const out = [pointAt(s0)];
+      for (const g of legs) if (g.start > s0 && g.start < s1) out.push([g.a.lat, g.a.lon + 0]);
+      out.push(pointAt(s1));
+      return out;
+    },
+  };
+}
+
+function projection(w, pts, msgs, nowMs, ahead = aheadMin, plan = null) {
   if (!ahead) return null;
   const cands = [
     ...pts.map(p => ({lat: p.lat, lon: p.lon, t: Date.parse(p.t), gs: p.gs, trk: p.track, ground: !!p.on_ground, src: p.source || 'ADS-B'})),
@@ -410,7 +456,15 @@ function projection(w, pts, msgs, nowMs, ahead = aheadMin) {
   if (!(gs >= PROJ.minGs && gs <= PROJ.maxGs)) return null;
   const endMin = Math.min(ageMin + ahead, PROJ.maxSpanMin);   // minutes after the fix at the far end
   let nowNm = gs * Math.max(ageMin, 0) / 60, endNm = gs * endMin / 60, stop = null;
-  const dest = destOf(w);
+  const route = walkRoute(plan, L0, trk);
+  const place = nm => route ? route.pointAt(route.at + nm) : advance(L0.lat, L0.lon, trk, nm);
+  const dest = route ? null : destOf(w);
+  if (route) {
+    const left = route.total - route.at;
+    if (endNm >= left) { endNm = left; nowNm = Math.min(nowNm, left); stop = plan.to; }   // the route ends at the destination
+    basis = `${Math.round(gs)} kt along the filed route ${plan.callsign ? plan.callsign + ' ' : ''}${plan.from}\u2192${plan.to} (${Math.round(route.cross)} nm off it at the fix)`;
+    trk = route.bearingAt(route.at + nowNm);
+  }
   if (dest) {
     const dd = distNM(L0.lat, L0.lon, dest.lat, dest.lon);
     if (angDiff(bearingTo(L0.lat, L0.lon, dest.lat, dest.lon), trk) <= PROJ.destSlackDeg && dd < endNm) {
@@ -421,10 +475,11 @@ function projection(w, pts, msgs, nowMs, ahead = aheadMin) {
   for (let k = 1; ageMin + k * PROJ.tickMin <= endMin; k++) {
     const nm = gs * (ageMin + k * PROJ.tickMin) / 60;
     if (nm > endNm) break;                         // beyond the destination: not drawn
-    const [la, lo] = advance(L0.lat, L0.lon, trk, nm);
+    const [la, lo] = place(nm);
     ticks.push({lat: la, lon: lo, min: k * PROJ.tickMin});
   }
-  return {fix: L0, ageMin, gs, trk, basis, stop, now: advance(L0.lat, L0.lon, trk, nowNm), end: advance(L0.lat, L0.lon, trk, endNm), ticks,
+  return {fix: L0, ageMin, gs, trk, basis, stop, now: place(nowNm), end: place(endNm), ticks, onRoute: !!route,
+          pathToNow: route ? route.path(route.at, route.at + nowNm) : null, pathFromFix: route ? route.path(route.at, route.at + endNm) : null, pathFromNow: route ? route.path(route.at + nowNm, route.at + endNm) : null,
           endMin: endMin - Math.max(ageMin, 0), capped: ageMin + ahead > PROJ.maxSpanMin};
 }
 
@@ -465,20 +520,46 @@ function drawGhost(m, pan) {
   mk.openTooltip();
 }
 
+// ---- the filed flight plan ---------------------------------------------------------------
+// The plan an aircraft sent for the flight being shown: the newest one that arrived within half a day
+// before the flight began and before it ended (plans go out at the gate), or, with no flight chosen, in
+// the last two days. Plans arrive oldest first.
+function choosePlan(plans, chosen, nowMs = Date.now()) {
+  const lo = chosen ? chosen.startMs - 12 * 3600000 : nowMs - 48 * 3600000;
+  const hi = chosen ? chosen.endMs + FLIGHT_TOL : nowMs + 5 * 60000;
+  const ok = (plans || []).filter(p => { const t = Date.parse(p.t); return t >= lo && t <= hi && p.points && p.points.length >= 2; });
+  return ok.length ? ok[ok.length - 1] : null;
+}
+
+const PLAN_COLOR = '#5c6b8a';
+function drawPlan(plan) {
+  planGroup.clearLayers();
+  if (!plan) return;
+  L.polyline(plan.points.map(p => ll(p.lat, p.lon)), {color: PLAN_COLOR, weight: 2, dashArray: '8 6', opacity: .7, interactive: false}).addTo(planGroup);
+  const head = `${plan.callsign ? plan.callsign + ' ' : ''}${plan.from} \u2192 ${plan.to}`;
+  plan.points.forEach((p, i) => {
+    const last = i === plan.points.length - 1;
+    L.circleMarker(ll(p.lat, p.lon), {radius: p.kind === 'airport' ? 5 : 3, color: PLAN_COLOR, weight: 1.5, fillColor: '#fff', fillOpacity: 1}).addTo(planGroup)
+      .bindTooltip(tip(p.name, p.via && !last ? `then ${p.via}` : '', `planned route ${head}`, `filed ${fmt(plan.t)}`,
+        p.kind === 'fix' ? 'position from the navigation database' : '', plan.missing && plan.missing.length && i === 0 ? `not placed: ${plan.missing.join(', ')}` : ''));
+  });
+}
+
 function drawProjection() {
   projGroup.clearLayers();
   if (!lastData) return;
-  const p = projection(lastData.w, lastData.pts, lastData.msgs, Date.now());
+  const p = projection(lastData.w, lastData.pts, lastData.msgs, Date.now(), aheadMin, lastData.plan);
   if (!p) return;
   const f = p.fix, line = {color: '#555', weight: 2, interactive: false};
   const showGhost = p.ageMin * 60 >= PROJ.ghostAfterSec;
   if (showGhost) {
-    L.polyline([ll(f.lat, f.lon), ll(...p.now)], {...line, dashArray: '2 6'}).addTo(projGroup);
+    L.polyline((p.pathToNow || [[f.lat, f.lon], p.now]).map(v => ll(...v)), {...line, dashArray: '2 6'}).addTo(projGroup);
     L.marker(ll(...p.now), {icon: planeIcon(p.trk, {fill: '#777', opacity: .55}), zIndexOffset: 900}).addTo(projGroup).bindTooltip(tip(
-      `Estimated position now (${Math.round(p.ageMin)} min since the last fix)`, `dead reckoning from the ${f.src} fix at ${fmtTime(f.t)}`,
+      `Estimated position now (${Math.round(p.ageMin)} min since the last fix)`, p.onRoute ? `along the filed route from the ${f.src} fix at ${fmtTime(f.t)}` : `dead reckoning from the ${f.src} fix at ${fmtTime(f.t)}`,
       p.basis, p.stop ? `stops at ${p.stop}` : '', 'error grows with every minute and a turn would make it wrong'));
   }
-  L.polyline([showGhost ? ll(...p.now) : ll(f.lat, f.lon), ll(...p.end)], {...line, dashArray: '2 10', opacity: .65}).addTo(projGroup);
+  const ahead = showGhost ? (p.pathFromNow || [p.now, p.end]) : (p.pathFromFix || [[f.lat, f.lon], p.end]);
+  L.polyline(ahead.map(v => ll(...v)), {...line, dashArray: '2 10', opacity: .65}).addTo(projGroup);
   for (const t of p.ticks) {
     L.circleMarker(ll(t.lat, t.lon), {radius: 3, color: '#555', weight: 1, fillColor: '#fff', fillOpacity: 1}).addTo(projGroup)
       .bindTooltip(tip(`+${t.min} min (estimate)`, p.basis));
@@ -594,9 +675,18 @@ function latestFix(pts, msgs) {
 }
 
 async function showTrack(w, focus) {
-  if (!w.hex) { layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); lastData = null; lastTrack = {pts: [], msgs: []}; drawProjection(); markers.clear(); renderMessages([]); return; }
+  if (!w.hex) {
+    // A target not yet matched to an aircraft has nothing to show, and nothing of the previous target may stay.
+    ++showSeq;   // a fetch for the previous target still in flight must not draw over this
+    layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); planGroup.clearLayers(); highlight.clearLayers();
+    lastData = null; lastTrack = {pts: [], msgs: []}; drawProjection(); markers.clear(); renderMessages([]);
+    flightSegs = []; syncFlightSelector();
+    $('#notespanel').hidden = true;
+    return;
+  }
   const seq = ++showSeq;
-  let [pts, msgs, segs] = await Promise.all([api(`/api/track/${w.hex}?hours=96`), api(`/api/messages/${w.hex}?hours=96`), api(`/api/flights/${w.hex}?hours=96`)]);
+  let [pts, msgs, segs, plans] = await Promise.all([api(`/api/track/${w.hex}?hours=96`), api(`/api/messages/${w.hex}?hours=96`), api(`/api/flights/${w.hex}?hours=96`),
+    api(`/api/plan/${w.hex}?hours=96`).catch(() => [])]);
   if (seq !== showSeq) return;
   flightSegs = segs.map(sg => ({...sg, startMs: Date.parse(sg.start), endMs: Date.parse(sg.end)}));
   syncFlightSelector();
@@ -668,7 +758,9 @@ async function showTrack(w, focus) {
       .on('click', () => pickMessage(m.id));
   }
 
-  lastData = current ? {w, pts, msgs} : null;
+  const plan = choosePlan(plans, chosen);
+  drawPlan(plan);
+  lastData = current ? {w, pts, msgs, plan} : null;
   lastTrack = {pts, msgs};
   drawProjection();
   renderMessages(msgs);

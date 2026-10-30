@@ -48,6 +48,7 @@ const L = {
   divIcon: o => o, featureGroup: () => ({ getBounds: () => ({}) }),
 };
 // --- the server ---
+const planData = [];     // what /api/plan returns
 const flightData = [];   // what /api/flights returns; empty unless a test sets it
 const storage = {};
 const watch = {id: 1, kind: 'tail', ident: 'B-LRM', start: '2026-10-30T10:00:00Z', end: '2026-11-01T00:00:00Z', status: 'tracking',
@@ -66,7 +67,7 @@ const fetchLog = [];
 global.fetch = async (url, opts) => {
   fetchLog.push(url);
   if (opts && opts.method === 'POST') { lastPostBody = JSON.parse(opts.body); return { status: postReply.status, ok: postReply.status < 400, json: async () => postReply.body }; }
-  const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : url.startsWith('/api/flights') ? flightData : null;
+  const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : url.startsWith('/api/flights') ? flightData : url.startsWith('/api/plan') ? planData : null;
   return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(body)) };   // a fresh copy each time, like a real response
 };
 let intervals = [];
@@ -81,7 +82,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -241,7 +242,7 @@ highlightGroup = null;
   const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
   // the legend lists all five sources
   assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS', 'AeroDataBox']);
-  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Waypoints|Predictions|Projection', 'waypoints, predictions and projection have legend entries');
+  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Waypoints|Predictions|Planned route|Projection', 'waypoints, predictions and projection have legend entries');
   // each source gets its own colour and style
   for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {
     const r = await lineOf([], [at2(0, 41, -105, kind), at2(10, 41.1, -104, kind), at2(20, 41.2, -103, kind)]);
@@ -549,6 +550,71 @@ highlightGroup = null;
   assert.ok(t.projection(W, [ap(10, 0, 0)], [], NOW), 'uses the selected look-ahead by default');
   // the newest TRUSTWORTHY fix is the basis: a later suspect or time-unverified datalink position is ignored
   const dl = (minAgo, lat, lon, extra = {}) => ({id: 200 + minAgo, t: iso(minAgo), pos_t: iso(minAgo), kind: 'adsc', summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, gs: 480, trk: 90, ...extra});
+  // ===== 8p. the filed flight plan: drawn, and projected along ========================================
+  {
+    const P = (name, lat, lon, extra = {}) => ({name, lat, lon, kind: 'fix', ...extra});
+    // east along the equator for 600 nm, then north for 600 nm
+    const plan = {id: 5, t: iso(120), callsign: 'UPS58', from: 'AAAA', to: 'BBBB', points: [P('AAAA', 0, 0, {kind: 'airport'}), P('MID', 0, 10), P('BBBB', 10, 10, {kind: 'airport'})]};
+    const run = (fix, plan2 = plan, ahead = 30) => t.projection(W, [fix], [], NOW, ahead, plan2);
+    // 30 nm short of the turn, heading east at 480 kt: 30 nm east, then north for the rest of the 240 nm
+    let pr = run(ap(0, 0, 9.5));
+    assert.ok(pr && pr.onRoute, 'follows the route');
+    assert.ok(Math.abs(pr.end[1] - 10) < 0.01 && Math.abs(pr.end[0] - 3.5) < 0.05, 'turned north at the waypoint: ' + JSON.stringify(pr.end));
+    assert.ok(pr.pathFromFix.length === 3 && pr.pathFromFix[1][0] === 0 && pr.pathFromFix[1][1] === 10, 'the line has a vertex at the waypoint: ' + JSON.stringify(pr.pathFromFix));
+    assert.ok(Math.abs(pr.ticks[0].lat - 0.83) < 0.02 && Math.abs(pr.ticks[0].lon - 10) < 0.01, 'ticks follow the turn ' + JSON.stringify(pr.ticks[0]));
+    assert.ok(pr.basis.includes('filed route UPS58 AAAA\u2192BBBB'), pr.basis);
+    // 10 minutes old: the estimated position now is already round the corner, heading north
+    pr = run(ap(10, 0, 9.5));
+    assert.ok(pr.now[0] > 0.8 && Math.abs(pr.now[1] - 10) < 0.01 && Math.abs(pr.trk) < 1, 'now: ' + JSON.stringify(pr.now) + ' trk ' + pr.trk);
+    // the route ends at the destination, which is where the projection stops
+    pr = run(ap(0, 8.5, 10, {gs: 480, track: 0}), plan, 60);
+    assert.ok(pr.stop === 'BBBB' && Math.abs(pr.end[0] - 10) < 0.01, 'stops at the end of the route ' + JSON.stringify(pr.end) + pr.stop);
+    // a fix well off the route, or heading across it, is projected as before (straight along its track)
+    assert.ok(!run(ap(0, 5, 3)).onRoute, 'a fix 300 nm off the route');
+    assert.ok(!run(ap(0, 0, 5, {track: 0})).onRoute, 'heading across the route');
+    assert.ok(!t.projection(W, [ap(0, 0, 5)], [], NOW, 30, null).onRoute, 'no plan');
+    assert.ok(!t.projection(W, [ap(0, 0, 5)], [], NOW, 30, {...plan, points: [plan.points[0]]}).onRoute, 'a plan with one point');
+    // which plan: the newest that arrived in the right window for the flight shown
+    const at = h => new Date(NOW - h * 3600000).toISOString();
+    const plans = [{...plan, id: 1, t: at(60)}, {...plan, id: 2, t: at(5)}, {...plan, id: 3, t: at(1)}];
+    assert.strictEqual(t.choosePlan(plans, null, NOW).id, 3, 'no flight chosen: the newest');
+    assert.strictEqual(t.choosePlan(plans, {startMs: NOW - 4 * 3600000, endMs: NOW - 2 * 3600000}, NOW).id, 2, 'a flight that ended before the newest plan arrived');
+    assert.strictEqual(t.choosePlan(plans, {startMs: NOW - 70 * 3600000, endMs: NOW - 50 * 3600000}, NOW).id, 1);
+    assert.strictEqual(t.choosePlan(plans.slice(0, 1), null, NOW), null, 'a plan from two and a half days ago is not this flight');
+    assert.strictEqual(t.choosePlan([], null, NOW), null);
+  }
+  {
+    // drawn as a dashed line with a marker at each point, and cleared when there is no plan
+    const plan = {id: 5, t: '2026-10-30T10:00:00Z', callsign: 'UPS58', from: 'PHNL', to: 'VHHH', missing: ['XYZ'], points: [
+      {name: 'PHNL', lat: 21.3, lon: -157.9, kind: 'airport'}, {name: 'N25000E180000', lat: 25, lon: 180, kind: 'given'}, {name: 'TUNTO', lat: 25, lon: 170, via: 'Q13', kind: 'fix'}, {name: 'VHHH', lat: 22.3, lon: 113.9, kind: 'airport'}]};
+    const before = calls.lines.length, circlesBefore = calls.circles.length;
+    t.drawPlan(plan);
+    const line = calls.lines[calls.lines.length - 1];
+    assert.strictEqual(calls.lines.length, before + 1);
+    assert.strictEqual(line.ll.length, 4); assert.strictEqual(line.o.dashArray, '8 6');
+    assert.ok(line.ll.every((p, i, a) => i === 0 || Math.abs(p[1] - a[i - 1][1]) < 200), 'across the date line without a line round the world: ' + JSON.stringify(line.ll.map(p => p[1])));
+    const dots = calls.circles.slice(circlesBefore);
+    assert.strictEqual(dots.length, 4);
+    const tipLines = el => el.children.map(c => c.textContent);
+    assert.deepEqual(tipLines(dots[2].tooltip)[0], 'TUNTO'); assert.ok(tipLines(dots[2].tooltip).includes('then Q13'));
+    assert.ok(tipLines(dots[2].tooltip).includes('position from the navigation database'));
+    assert.ok(!tipLines(dots[1].tooltip).includes('position from the navigation database'), 'given coordinates need no caveat');
+    assert.ok(tipLines(dots[0].tooltip).some(l => l.includes('not placed: XYZ')));
+    t.drawPlan(null);
+    assert.strictEqual(t.planGroup.items.length, 0);
+  }
+  {
+    // through the page: showTrack fetches the plans and draws the one for the flight
+    planData.push({id: 7, t: '2026-10-30T15:50:00Z', callsign: 'CPA843', from: 'KLAX', to: 'VHHH', points: [
+      {name: 'KLAX', lat: 33.9, lon: -118.4, kind: 'airport'}, {name: 'FIX1', lat: 40, lon: -105, kind: 'fix'}, {name: 'VHHH', lat: 22.3, lon: 113.9, kind: 'airport'}]});
+    await t.showTrack(t.watches()[0], false);
+    assert.ok(fetchLog.some(u => u.startsWith('/api/plan/780AB8')), 'asked for the plans');
+    assert.ok(t.planGroup.items.length >= 4, 'the plan is on the map: ' + t.planGroup.items.length);
+    planData.length = 0;
+    await t.showTrack(t.watches()[0], false);
+    assert.strictEqual(t.planGroup.items.length, 0, 'gone when the aircraft has no plan');
+  }
+
   // ===== 8o. a message with no position: a ghost along the path between the fixes either side of it =====
   {
     const keep = t.flightSegs.slice();
@@ -937,5 +1003,28 @@ highlightGroup = null;
   // 9. a watch with no aircraft yet clears the map without error
   await t.showTrack({id: 9, hex: ''}, true);
   assert.match(byId['#msgs'].innerHTML, /No messages yet/);
+
+  // 9b. selecting a waiting target after an aircraft leaves nothing of the aircraft: not its track, flights, plan or
+  // messages, nor the result of a fetch that was still in flight when the click came
+  flightData.push({id: 'f1', flight: 'CX1', start: '2026-10-30T15:00:00Z', end: '2026-10-30T16:30:00Z', messages: 3, positions: 2, identified: true, latest: true});
+  planData.push({id: 7, t: '2026-10-30T15:50:00Z', from: 'KLAX', to: 'VHHH', points: [{name: 'KLAX', lat: 33.9, lon: -118.4, kind: 'airport'}, {name: 'VHHH', lat: 22.3, lon: 113.9, kind: 'airport'}]});
+  await t.showTrack(t.watches()[0], false);
+  const trackLayer = groups[0];
+  assert.ok(trackLayer.items.length > 0 && t.planGroup.items.length > 0 && !byId['#flightsel'].disabled && t.flightSegs.length === 1, 'the aircraft is on the map');
+  document.querySelector('#notespanel').hidden = false;
+  highlightGroup.items.push({});
+  const inFlight = t.showTrack(t.watches()[0], false);   // still fetching when the waiting target is chosen
+  await t.showTrack({id: 9, hex: ''}, true);
+  await inFlight;
+  await tick();
+  assert.strictEqual(trackLayer.items.length, 0, 'no track or plane');
+  assert.strictEqual(t.planGroup.items.length, 0, 'no planned route');
+  assert.strictEqual(t.predGroup.items.length, 0); assert.strictEqual(t.wptGroup.items.length, 0); assert.strictEqual(t.projGroup.items.length, 0);
+  assert.strictEqual(highlightGroup.items.length, 0, 'no ring or ghost');
+  assert.strictEqual(t.markers.size, 0);
+  assert.strictEqual(t.flightSegs.length, 0, 'no flights'); assert.ok(byId['#flightsel'].disabled, 'flight selector off');
+  assert.match(byId['#msgs'].innerHTML, /No messages yet/);
+  assert.strictEqual(document.querySelector('#notespanel').hidden, true, 'the notes panel of the previous aircraft is closed');
+  flightData.length = 0; planData.length = 0;
   console.log('UI behaviour checks passed');
 })().catch(e => { console.error('FAILED:', e.message); if (process.env.UITEST_STACK) console.error(e.stack.split('\n').slice(1, 4).join('\n')); process.exit(1); });

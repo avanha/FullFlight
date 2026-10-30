@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/avanha/fullflight/internal/airframes"
+	"github.com/avanha/fullflight/internal/airlines"
 	"github.com/avanha/fullflight/internal/store"
+	"github.com/avanha/fullflight/internal/watchlist"
 	"github.com/avanha/fullflight/internal/waypoints"
 )
 
@@ -16,9 +19,16 @@ type Source interface {
 	Messages(ctx context.Context, hex string, since, until time.Time) ([]airframes.Message, error)
 }
 
+// Searcher finds messages by their text. Flight plans are sent over VHF ACARS with no hex address, so the
+// by-address fetch never returns them; they are found by the flight number they carry.
+type Searcher interface {
+	SearchText(ctx context.Context, s string) ([]airframes.Message, error)
+}
+
 type Fetcher struct {
 	Store  *store.Store
 	Source Source
+	Search Searcher // optional: flight plans, by callsign
 	Log    *slog.Logger
 	Now    func() time.Time
 
@@ -29,7 +39,11 @@ type Fetcher struct {
 	Overlap  time.Duration
 	MaxPages int // per aircraft per cycle; default 100
 
+	// PlanEvery is the least time between flight-plan searches for one aircraft and callsign; default 15m.
+	PlanEvery time.Duration
+
 	last        map[string]time.Time
+	planAt      map[string]time.Time
 	pausedUntil time.Time
 }
 
@@ -52,8 +66,12 @@ func (f *Fetcher) defaults() {
 	if f.MaxPages == 0 {
 		f.MaxPages = 100
 	}
+	if f.PlanEvery == 0 {
+		f.PlanEvery = 15 * time.Minute
+	}
 	if f.last == nil {
 		f.last = map[string]time.Time{}
+		f.planAt = map[string]time.Time{}
 	}
 }
 
@@ -93,7 +111,11 @@ func (f *Fetcher) Once(ctx context.Context) {
 			continue
 		}
 		f.last[e.Hex] = now
-		if err := f.fetchHex(ctx, e.Hex, now); err != nil {
+		err := f.fetchHex(ctx, e.Hex, now)
+		if err == nil {
+			err = f.fetchPlans(ctx, e.Hex, entries, now)
+		}
+		if err != nil {
 			var rl *airframes.RateLimitError
 			if errors.As(err, &rl) {
 				f.pausedUntil = now.Add(rl.RetryAfter)
@@ -158,4 +180,81 @@ func (f *Fetcher) fetchHex(ctx context.Context, hex string, now time.Time) error
 		}
 	}
 	return f.Store.SetFetchedTo(hex, now)
+}
+
+// fetchPlans looks for what the by-address fetch cannot return: messages sent with no hex address, which
+// airframes.io ties to the aircraft by its registration or flight number. It searches the text for the
+// registration (performance reports and logons name the flight), then for the flight plan of each flight the
+// aircraft is known to be on: the callsigns on its watches and in its recent messages. Only this aircraft's
+// results are kept (the search is across all aircraft), stored like any message.
+func (f *Fetcher) fetchPlans(ctx context.Context, hex string, entries []watchlist.Entry, now time.Time) error {
+	if f.Search == nil {
+		return nil
+	}
+	added := 0
+	search := func(key, q string) error {
+		if now.Sub(f.planAt[key]) < f.PlanEvery {
+			return nil
+		}
+		f.planAt[key] = now
+		found, err := f.Search.SearchText(ctx, q)
+		if err != nil {
+			return err
+		}
+		for _, m := range found {
+			if !strings.EqualFold(string(m.Airframe.ICAO), hex) {
+				continue
+			}
+			if ok, err := Ingest(f.Store, hex, m); err != nil {
+				f.Log.Error("ingest", "id", m.ID, "err", err)
+			} else if ok {
+				added++
+			}
+		}
+		return nil
+	}
+	tail, _ := f.Store.TailForHex(hex)
+	recent, _ := f.Store.Messages(hex, now.Add(-24*time.Hour), now.Add(time.Minute), 200)
+	for _, m := range recent {
+		if tail == "" {
+			tail = m.Tail // as the aircraft named itself, if the pairing is not in the airframe table yet
+		}
+	}
+	if tail != "" {
+		if err := search(hex+"/"+tail, tail); err != nil {
+			return err
+		}
+	}
+	calls := map[string]bool{}
+	for _, e := range entries {
+		if e.Hex != hex {
+			continue
+		}
+		if e.Callsign != "" {
+			calls[e.Callsign] = true
+		}
+		if e.Kind == watchlist.KindFlight {
+			if icao, _ := airlines.Forms(e.Ident); icao != "" {
+				calls[icao] = true
+			}
+		}
+	}
+	recent, _ = f.Store.Messages(hex, now.Add(-24*time.Hour), now.Add(time.Minute), 200) // now with what the tail search found
+	for _, m := range recent {
+		if m.Callsign != "" {
+			calls[m.Callsign] = true
+		}
+		if icao, _ := airlines.Forms(m.Flight); icao != "" {
+			calls[icao] = true
+		}
+	}
+	for cs := range calls {
+		if err := search(hex+"/"+cs, "FPN/FN"+cs); err != nil {
+			return err
+		}
+	}
+	if added > 0 {
+		f.Log.Info("messages stored from text search", "hex", hex, "new", added)
+	}
+	return nil
 }

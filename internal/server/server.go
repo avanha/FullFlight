@@ -48,6 +48,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/airframes/{hex}/notes/{id}", s.deleteNote)
 	mux.HandleFunc("GET /api/messages/{hex}", s.messages)
 	mux.HandleFunc("GET /api/flights/{hex}", s.flights)
+	mux.HandleFunc("GET /api/plan/{hex}", s.plans)
 	return s.auth(mux)
 }
 
@@ -156,7 +157,9 @@ func firstNonEmpty(ss ...string) string {
 // we have lost contact, or the aircraft has landed and moved on to another sector. After
 // InfoHideAfter we stop showing it at all.
 const (
-	InfoFreshFor  = 90 * time.Minute
+	InfoFreshFor = 90 * time.Minute
+	// PlanFreshFor is how long a filed plan still names the flight's airports: a long-haul flight lasts most of a day.
+	PlanFreshFor  = 20 * time.Hour
 	InfoHideAfter = 24 * time.Hour
 )
 
@@ -182,7 +185,7 @@ func (s *Server) route(hex string) *routeJSON {
 	if age > InfoHideAfter {
 		return nil
 	}
-	out := &routeJSON{From: r.From, To: r.To, T: r.T, Stale: age > InfoFreshFor, Source: "REP081"}
+	out := &routeJSON{From: r.From, To: r.To, T: r.T, Stale: r.Source == "REP081" && age > InfoFreshFor || r.Source == "flight plan" && age > PlanFreshFor, Source: r.Source}
 	if a, ok := airports.Lookup(r.From); ok {
 		out.FromName = a.Name
 	}

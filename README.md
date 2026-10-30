@@ -229,6 +229,30 @@ reports, or one in the navigation database, the list adds the name (`ADS-C repor
 then KAPPU`) and the tooltip says which. CPDLC position reports list the names they carried. Run
 `fullflight -redecode` to give already-stored messages the names.
 
+## Flight plans
+
+Many FMS units send the filed flight plan (`FPN/FNUPS58/RI:DA:PHNL:AA:VHHH:F:LILIA..N25000W170000..TUNTO..IGURU.Q13..`)
+and progress reports (`PRG/TS195622,301026/DTVHHH,07R,...,064946/FNUPS58`). They are decoded as `flight plan` and
+`progress` messages, and they name the flight, so messages that were unidentified now belong to it. A progress
+report whose own timestamp is more than 10 minutes from its arrival is not used to name the flight (a station
+may file a report days late).
+
+These are usually sent over VHF ACARS with no hex address, which the by-address fetch never returns. So
+each watched aircraft is also searched for by text, every 15 minutes: its registration (logons and
+performance reports name the flight), then `FPN/FN<callsign>` for each callsign on its watches and in its
+recent messages. Only that aircraft's results are kept.
+
+`GET /api/plan/{hex}` serves the plans, resolved to positions: coordinates as sent, other fixes from the navigation
+database (of several places with a name, the one nearest the point before), the airports at the ends. Fixes the
+database does not have (it is from 2013) are listed as not placed. Identical copies are reported once, preferring the
+most complete (a station may hear part of a message). The plan also gives the watch its origin and destination
+(`flight plan` as the source) and the flight its from/to.
+
+On the map the plan of the flight shown is drawn as a dashed line with a dot at each fix (hover for the name, the airway,
+when it was filed). It can be switched off in the legend. The projection follows it: an aircraft within 60 nm of the
+route and heading roughly along it (70 degrees) is projected along the legs, turning where they turn, and stops at the
+destination; otherwise the straight-line projection is used as before. The plan is as filed, not as flown.
+
 ## Ghost position for a message with no position
 
 Select a message that carries no position and, if trustworthy fixes (ADS-B or datalink) lie either side of

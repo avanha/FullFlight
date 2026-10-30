@@ -13,6 +13,7 @@ import (
 
 	"github.com/avanha/fullflight/internal/airframes"
 	"github.com/avanha/fullflight/internal/decoder"
+	"github.com/avanha/fullflight/internal/flightplan"
 	"github.com/avanha/fullflight/internal/geo"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/waypoints"
@@ -97,6 +98,11 @@ func decodeInto(st *store.Store, m *store.Message, dir decoder.Direction) {
 		}
 		m.GS, m.Trk = res.GS, res.Track
 		m.Fixes = fixList(res, m)
+		if g, ok := res.Fields["progress"].(*flightplan.Progress); ok && !g.At.IsZero() && g.At.Sub(m.T).Abs() > TimeTolerance {
+			// Filed hours after it was written: the flight number it names is not this moment's.
+			m.Flight, m.Callsign = "", ""
+			m.TimeNote = fmt.Sprintf("the report is stamped %s but arrived %s: its flight number is not applied", g.At.Format("2006-01-02 15:04:05Z"), m.T.UTC().Format("2006-01-02 15:04:05Z"))
+		}
 	}
 	m.Mismatch = mismatch(st, m.Hex, *m)
 }

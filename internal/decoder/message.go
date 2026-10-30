@@ -10,14 +10,16 @@ import (
 type Kind string
 
 const (
-	KindADSC    Kind = "adsc"
-	KindCPDLC   Kind = "cpdlc"
-	KindAFN     Kind = "afn"
-	KindMIAM    Kind = "miam"
-	KindMedia   Kind = "media_advisory"
-	KindDATIS   Kind = "datis_request"
-	KindFMS     Kind = "fms_position"
-	KindUnknown Kind = "unknown"
+	KindADSC     Kind = "adsc"
+	KindCPDLC    Kind = "cpdlc"
+	KindAFN      Kind = "afn"
+	KindMIAM     Kind = "miam"
+	KindMedia    Kind = "media_advisory"
+	KindDATIS    Kind = "datis_request"
+	KindFMS      Kind = "fms_position"
+	KindPlan     Kind = "flight_plan"
+	KindProgress Kind = "progress"
+	KindUnknown  Kind = "unknown"
 )
 
 // Message is the raw input. Label and Dir may be empty/Unknown, in which case
@@ -139,6 +141,9 @@ func classify(label, body string) (Kind, string, Direction) {
 // it applies, and runs our own parsers for the rest. Identity is always derived
 // from the raw text, never from airframes.io metadata.
 func Decode(m Message) (Result, error) {
+	if r, ok := decodePlan(m); ok {
+		return r, nil
+	}
 	prefix, body := SplitPrefix(m.Text)
 	body = strings.TrimRight(body, "\r\n")
 	if noSlashARINC.MatchString(body) {
