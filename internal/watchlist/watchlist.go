@@ -33,13 +33,16 @@ const (
 )
 
 type Entry struct {
-	Kind   Kind
-	Ident  string // normalized: "UA869", "B-LRM", "780AB8"
-	Date   string // flight entries only, "2006-01-02"
-	Start  time.Time
-	End    time.Time
-	Status Status
-	Hex    string // latched once a flight entry is matched to an aircraft
+	ID       int64
+	Kind     Kind
+	Ident    string // normalized: "UA869", "B-LRM", "780AB8"
+	Date     string // flight entries only, "2006-01-02"
+	Start    time.Time
+	End      time.Time
+	Status   Status
+	Hex      string // latched once a flight entry is matched to an aircraft
+	Tail     string // registration, once learned
+	Callsign string // ICAO callsign, once matched
 }
 
 var (
