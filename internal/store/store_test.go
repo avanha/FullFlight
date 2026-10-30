@@ -202,3 +202,59 @@ func TestWatchDestination(t *testing.T) {
 		t.Error("LastPosition of unknown aircraft")
 	}
 }
+
+// Adding "DAL1317" and then "DAL1317 SLC" is one watch, not two. Dateless
+// flights start "now", so the start time cannot be part of the identity.
+func TestAddWatchMergesOpenDuplicate(t *testing.T) {
+	s := open(t)
+	first, _ := watchlist.Parse("DAL1317", now, time.Time{})
+	a, err := s.AddWatch(first)
+	if err != nil || a.Dest != "" {
+		t.Fatalf("first: %+v %v", a, err)
+	}
+	later := now.Add(7 * time.Minute)
+	second, _ := watchlist.Parse("DAL1317 SLC", later, time.Time{})
+	b, err := s.AddWatch(second)
+	if err != nil || b.ID != a.ID || b.Dest != "SLC" {
+		t.Fatalf("second: %+v %v", b, err)
+	}
+	if !b.End.Equal(later.Add(36 * time.Hour)) { // the later end wins
+		t.Errorf("end = %v, want %v", b.End, later.Add(36*time.Hour))
+	}
+	if all, _ := s.ListWatches(false); len(all) != 1 {
+		t.Fatalf("%d entries, want 1: %+v", len(all), all)
+	}
+	// Adding it again without a destination keeps the one it has, and never shortens the window.
+	third, _ := watchlist.Parse("DAL1317", now.Add(time.Minute), now.Add(2*time.Hour))
+	c, _ := s.AddWatch(third)
+	if c.ID != a.ID || c.Dest != "SLC" || !c.End.Equal(later.Add(36*time.Hour)) {
+		t.Errorf("third: %+v", c)
+	}
+
+	// A tail added twice is also one watch; an explicit later end extends it.
+	t1, _ := watchlist.Parse("B-LRM", now, time.Time{})
+	x, _ := s.AddWatch(t1)
+	t2, _ := watchlist.Parse("B-LRM", now, now.Add(100*time.Hour))
+	y, _ := s.AddWatch(t2)
+	if y.ID != x.ID || !y.End.Equal(now.Add(100*time.Hour)) {
+		t.Errorf("tail: %+v / %+v", x, y)
+	}
+
+	// Different flights, or the same flight on another date, stay separate.
+	other, _ := watchlist.Parse("DAL1318", now, time.Time{})
+	o, _ := s.AddWatch(other)
+	dated1, _ := watchlist.Parse("DAL1317 2026-11-02", now, time.Time{})
+	d1, _ := s.AddWatch(dated1)
+	if o.ID == a.ID || d1.ID == a.ID {
+		t.Errorf("distinct watches merged: %d %d vs %d", o.ID, d1.ID, a.ID)
+	}
+
+	// Once finished, watching the same flight again makes a fresh entry.
+	a.Status = watchlist.StatusDone
+	s.UpdateWatch(a)
+	again, _ := watchlist.Parse("DAL1317", now.Add(time.Hour), time.Time{})
+	n, _ := s.AddWatch(again)
+	if n.ID == a.ID || n.Status != watchlist.StatusWaiting {
+		t.Errorf("finished entry was reused: %+v", n)
+	}
+}

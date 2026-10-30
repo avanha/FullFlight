@@ -155,23 +155,33 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func ts(t time.Time) int64 { return t.Unix() }
 
-// AddWatch inserts an entry and returns it with its ID. Adding the same
-// entry twice returns the existing one.
+// AddWatch adds an entry and returns it with its ID. If an open (waiting or
+// tracking) entry for the same kind, identifier and date already exists, that
+// one is updated instead: it takes the destination if the new entry has one and
+// the later of the two end times. Finished entries do not count, so watching
+// the same flight again starts a new one.
 func (s *Store) AddWatch(e watchlist.Entry) (watchlist.Entry, error) {
-	_, err := s.db.Exec(`INSERT OR IGNORE INTO watch (kind, ident, date, start_ts, end_ts, status, hex, tail, callsign, dest)
+	var id int64
+	err := s.db.QueryRow(`SELECT id FROM watch WHERE kind=? AND ident=? AND date=? AND status IN ('waiting','tracking')
+		ORDER BY id DESC LIMIT 1`, e.Kind, e.Ident, e.Date).Scan(&id)
+	if err == nil {
+		if _, err := s.db.Exec(`UPDATE watch SET dest = CASE WHEN ? != '' THEN ? ELSE dest END, end_ts = MAX(end_ts, ?) WHERE id=?`,
+			e.Dest, e.Dest, ts(e.End), id); err != nil {
+			return e, err
+		}
+		return scanWatch(s.db.QueryRow(watchSelect+` WHERE id=?`, id))
+	}
+	if err != sql.ErrNoRows {
+		return e, err
+	}
+	res, err := s.db.Exec(`INSERT INTO watch (kind, ident, date, start_ts, end_ts, status, hex, tail, callsign, dest)
 		VALUES (?,?,?,?,?,?,?,?,?,?)`,
 		e.Kind, e.Ident, e.Date, ts(e.Start), ts(e.End), e.Status, e.Hex, e.Tail, e.Callsign, e.Dest)
 	if err != nil {
 		return e, err
 	}
-	row := s.db.QueryRow(watchSelect+` WHERE kind=? AND ident=? AND date=? AND start_ts=?`, e.Kind, e.Ident, e.Date, ts(e.Start))
-	got, err := scanWatch(row)
-	if err == nil && e.Dest != "" && got.Dest != e.Dest { // re-adding with a destination sets it
-		if _, err = s.db.Exec(`UPDATE watch SET dest=? WHERE id=?`, e.Dest, got.ID); err == nil {
-			got.Dest = e.Dest
-		}
-	}
-	return got, err
+	id, _ = res.LastInsertId()
+	return scanWatch(s.db.QueryRow(watchSelect+` WHERE id=?`, id))
 }
 
 const watchSelect = `SELECT id, kind, ident, date, start_ts, end_ts, status, hex, tail, callsign, airborne, landed_ts, dest FROM watch`
