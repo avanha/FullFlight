@@ -572,3 +572,33 @@ func TestRedecodeFillsTimeNote(t *testing.T) {
 		t.Errorf("%+v", ms[0])
 	}
 }
+
+// A REP081 report names the flight's origin and destination; the newest one is the current destination.
+func TestRouteFromREP081(t *testing.T) {
+	st := newStore(t)
+	f := fixture(t, "rep081_handoff") // VHHH -> YSSY, report time Oct 29 17:35:51Z
+	if _, err := Ingest(st, "780AA4", msg(1, f)); err != nil {
+		t.Fatal(err)
+	}
+	r, ok := st.LastRoute("780AA4")
+	if !ok || r.From != "VHHH" || r.To != "YSSY" || !r.T.Equal(time.Date(2026, 10, 29, 17, 35, 51, 0, time.UTC)) {
+		t.Fatalf("route = %+v %v", r, ok)
+	}
+	// Two hours later the same airframe reports the return sector. The newest report wins.
+	back := msg(2, f)
+	back.Timestamp = f.Received.Add(2 * time.Hour)
+	back.Text = airframes.FlexString(strings.NewReplacer("VHHH YSSY", "YSSY VHHH", "2482551", "2489751").Replace(f.Text))
+	if _, err := Ingest(st, "780AA4", back); err != nil {
+		t.Fatal(err)
+	}
+	if r, _ = st.LastRoute("780AA4"); r.From != "YSSY" || r.To != "VHHH" || !r.T.Equal(time.Date(2026, 10, 29, 19, 35, 51, 0, time.UTC)) {
+		t.Errorf("newer route = %+v", r)
+	}
+	// Messages that are not REP081 (e.g. Delta's) never give a route.
+	st2 := newStore(t)
+	Ingest(st2, "A48E3A", msg(1, fixture(t, "dal_fms_posn")))
+	Ingest(st2, "A48E3A", msg(2, fixture(t, "cpdlc_wilco")))
+	if r, ok := st2.LastRoute("A48E3A"); ok {
+		t.Errorf("route from non-REP081: %+v", r)
+	}
+}

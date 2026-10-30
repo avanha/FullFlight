@@ -74,6 +74,17 @@ the link is the aircraft (`fromHex`/`toHex`), else tried both ways.
 After improving the decoder, run `bin/fullflight -config config.yaml -redecode` to
 re-decode every stored message from its raw text (idempotent).
 
+## Destination from the aircraft
+
+Cathay A350 REP081 reports name the flight's origin and destination (`VHHH YSSY`).
+The newest one is shown on the watch (`VHHH → YSSY (REP081 12m ago)`) and in the plane's
+hover, for tail and hex watches as well as flights. REP081 goes out about every 20
+minutes in flight, so a report older than 90 minutes is shown greyed with "may be out
+of date" (and left out of the hover), because the aircraft may have landed and moved on
+to another sector; after 24 hours it is not shown. If you gave a destination
+yourself and the aircraft reports a different one, the line says so. Other airlines'
+aircraft send no such report, so this appears only where the data exists.
+
 ## Web page
 
 Choosing a watch centres the map (zoom 7) on that aircraft's newest trustworthy

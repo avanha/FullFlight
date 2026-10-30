@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -217,5 +218,68 @@ func TestTrackCarriesSpeedHeadingAndVerticalRate(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("track JSON missing %s: %s", want, body)
 		}
+	}
+}
+
+func TestWatchShowsReportedRoute(t *testing.T) {
+	now := time.Date(2026, 10, 30, 18, 0, 0, 0, time.UTC)
+	type rep struct {
+		age      time.Duration
+		from, to string
+	}
+	// watches returns /api/watches for an aircraft that has sent the given REP081 reports.
+	watches := func(reports ...rep) string {
+		st, _ := store.Open(":memory:")
+		defer st.Close()
+		e, _ := watchlist.Parse("B-LRM", now, time.Time{})
+		e.Hex = "780AB8"
+		st.AddWatch(e)
+		for i, r := range reports {
+			at := now.Add(-r.age)
+			st.AddMessage(store.Message{ID: int64(i + 1), Hex: "780AB8", T: at, PosT: &at, Label: "MA", Text: fmt.Sprint("t", i), Kind: "miam",
+				Decoded: `{"fields":{"rep081":{"Origin":"` + r.from + `","Dest":"` + r.to + `"}}}`})
+		}
+		ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+		defer ts.Close()
+		_, b := do(t, "GET", ts.URL+"/api/watches", "")
+		return b
+	}
+
+	if b := watches(); strings.Contains(b, `"route"`) {
+		t.Errorf("route shown before any REP081: %s", b)
+	}
+	// Fresh: shown with airport names, not stale.
+	b := watches(rep{12 * time.Minute, "VHHH", "YSSY"})
+	for _, want := range []string{`"from":"VHHH"`, `"to":"YSSY"`, `"to_name":"Sydney`, `"from_name":"Hong Kong`, `"source":"REP081"`} {
+		if !strings.Contains(b, want) {
+			t.Errorf("missing %s in %s", want, b)
+		}
+	}
+	if strings.Contains(b, `"stale"`) {
+		t.Errorf("a 12 minute old report is stale: %s", b)
+	}
+	// The freshness boundary.
+	if b = watches(rep{RouteFreshFor - time.Minute, "VHHH", "EDDM"}); !strings.Contains(b, `"to":"EDDM"`) || strings.Contains(b, `"stale"`) {
+		t.Errorf("just inside the window: %s", b)
+	}
+	if b = watches(rep{RouteFreshFor + time.Minute, "VHHH", "EDDM"}); !strings.Contains(b, `"to":"EDDM"`) || !strings.Contains(b, `"stale":true`) {
+		t.Errorf("just outside the window: %s", b)
+	}
+	// The newest report is the current destination (the aircraft has turned round).
+	b = watches(rep{3 * time.Hour, "YSSY", "VHHH"}, rep{40 * time.Minute, "VHHH", "YSSY"})
+	if !strings.Contains(b, `"from":"VHHH"`) || !strings.Contains(b, `"to":"YSSY"`) || strings.Contains(b, `"stale"`) {
+		t.Errorf("newest should win: %s", b)
+	}
+	// Only an old one: shown, but flagged as possibly out of date.
+	if b = watches(rep{3 * time.Hour, "VHHH", "YSSY"}); !strings.Contains(b, `"to":"YSSY"`) || !strings.Contains(b, `"stale":true`) {
+		t.Errorf("3 hour old report: %s", b)
+	}
+	// Too old to be worth showing at all.
+	if b = watches(rep{RouteHideAfter + time.Hour, "VHHH", "YSSY"}); strings.Contains(b, `"route"`) {
+		t.Errorf("a day-old report still shown: %s", b)
+	}
+	// An unknown airport code is still shown, just without a name.
+	if b = watches(rep{time.Minute, "VHHH", "ZZZZ"}); !strings.Contains(b, `"to":"ZZZZ"`) || strings.Contains(b, `"to_name"`) {
+		t.Errorf("unknown airport: %s", b)
 	}
 }

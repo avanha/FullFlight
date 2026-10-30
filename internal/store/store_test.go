@@ -258,3 +258,28 @@ func TestAddWatchMergesOpenDuplicate(t *testing.T) {
 		t.Errorf("finished entry was reused: %+v", n)
 	}
 }
+
+func TestLastRoute(t *testing.T) {
+	s := open(t)
+	rep := func(id int64, hex string, at time.Time, kind, from, to string) {
+		dec := `{"fields":{"rep081":{"Origin":"` + from + `","Dest":"` + to + `"}}}`
+		s.AddMessage(Message{ID: id, Hex: hex, T: at, Label: "MA", Text: "t" + string(rune('a'+id)), Kind: kind, Decoded: dec, PosT: &at})
+	}
+	if _, ok := s.LastRoute("780AB8"); ok {
+		t.Fatal("route from nothing")
+	}
+	rep(1, "780AB8", now.Add(-3*time.Hour), "miam", "VHHH", "YSSY")
+	rep(2, "780AB8", now.Add(-time.Hour), "miam", "YSSY", "VHHH")                                                       // newer: the aircraft has turned round
+	rep(3, "780AB8", now.Add(-10*time.Minute), "cpdlc", "ZZZZ", "ZZZZ")                                                 // not a REP081, ignored
+	rep(4, "780AA4", now, "miam", "VHHH", "EDDM")                                                                       // another aircraft
+	s.AddMessage(Message{ID: 5, Hex: "780AB8", T: now, Label: "MA", Text: "x", Kind: "miam", Decoded: `{"fields":{}}`}) // MIAM without a route
+	s.AddMessage(Message{ID: 6, Hex: "780AB8", T: now, Label: "MA", Text: "y", Kind: "miam", Decoded: `{"fields":{"rep081":{"Origin":"VHHH","Dest":""}}}`})
+
+	r, ok := s.LastRoute("780AB8")
+	if !ok || r.From != "YSSY" || r.To != "VHHH" || !r.T.Equal(now.Add(-time.Hour)) {
+		t.Errorf("route = %+v %v", r, ok)
+	}
+	if r, ok = s.LastRoute("780AA4"); !ok || r.To != "EDDM" {
+		t.Errorf("other aircraft = %+v %v", r, ok)
+	}
+}

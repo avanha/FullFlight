@@ -256,6 +256,39 @@ highlightGroup = null;
   assert.strictEqual(t.SOURCES.adsc.group.onMap, true);
   assert.strictEqual(calls.addLayer, added + 1);
 
+  // 8e. the destination the aircraft reported (REP081): shown in the watch cell and the plane's hover
+  const routeLine = () => byId['#list'].children[0].children.find(c => c.className && c.className.startsWith('route'));
+  assert.strictEqual(routeLine(), undefined, 'no route line when none reported');
+  watch.route = {from: 'VHHH', to: 'YSSY', from_name: 'Hong Kong International Airport', to_name: 'Sydney Kingsford Smith International Airport',
+    t: new Date(Date.now() - 12 * 60000).toISOString(), source: 'REP081'};
+  await t.refresh();
+  let rl = routeLine();
+  assert.strictEqual(rl.textContent, 'VHHH \u2192 YSSY (REP081 12m ago)');
+  assert.ok(!rl.className.includes('stale'));
+  assert.match(rl.title, /From Hong Kong International Airport\nTo Sydney Kingsford Smith International Airport/);
+  await t.showTrack(t.watches()[0], false);
+  let planeTip = lines(calls.markers.filter(m => m.o && m.o.icon).at(-1).tooltip);
+  assert.strictEqual(planeTip[1], 'VHHH \u2192 YSSY', 'destination in the hover, under the callsign');
+  // an old report: still shown, greyed and labelled, and left out of the hover
+  watch.route = {...watch.route, t: new Date(Date.now() - 3 * 3600000).toISOString(), stale: true};
+  await t.refresh();
+  rl = routeLine();
+  assert.match(rl.textContent, /^VHHH \u2192 YSSY \(REP081 3h ago, may be out of date\)$/);
+  assert.ok(rl.className.includes('stale'));
+  await t.showTrack(t.watches()[0], false);
+  planeTip = lines(calls.markers.filter(m => m.o && m.o.icon).at(-1).tooltip);
+  assert.ok(!planeTip.some(l => l.includes('YSSY')), 'a stale destination is not in the hover');
+  // a destination you set that differs from what the aircraft reports is called out
+  watch.route = {...watch.route, t: new Date(Date.now() - 5 * 60000).toISOString(), stale: false, to: 'VHHH', from: 'YSSY'};
+  watch.dest = 'KSFO';
+  await t.refresh();
+  assert.match(routeLine().textContent, /YSSY \u2192 VHHH \(REP081 5m ago \u2014 you set KSFO\)/);
+  watch.dest = 'VHHH';
+  await t.refresh();
+  assert.ok(!routeLine().textContent.includes('you set'), 'no note when they agree');
+  delete watch.route; delete watch.dest;
+  await t.refresh();
+
   // 9. a watch with no aircraft yet clears the map without error
   await t.showTrack({id: 9, hex: ''}, true);
   assert.match(byId['#msgs'].innerHTML, /No messages yet/);

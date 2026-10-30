@@ -19,6 +19,8 @@
   li.sel { background: #eef4ff; }
   li small { color: #666; display: block; }
   li small.lastpos { color: #333; }
+  li small.route { color: #333; }
+  li small.route.stale { color: #999; font-style: italic; }
   .waiting { color: #a60; } .tracking { color: #070; } .done, .expired { color: #888; }
   button.del { float: right; }
   h4 { margin: 14px 0 4px; }
@@ -110,6 +112,14 @@ async function refresh() {
       lp.textContent = [w.last_pos && `last ${w.last_pos.kind} ${fmtTime(w.last_pos.t)} (${ago(w.last_pos.t)})`, w.type].filter(Boolean).join(' · ');
       li.append(lp);
     }
+    if (w.route) {
+      const r = document.createElement('small');
+      r.className = 'route' + (w.route.stale ? ' stale' : '');
+      const differs = w.dest && w.route.to && w.dest !== w.route.to ? ` — you set ${w.dest}` : '';
+      r.textContent = `${w.route.from ? w.route.from + ' → ' : '→ '}${w.route.to} (${w.route.source} ${ago(w.route.t)}${w.route.stale ? ', may be out of date' : ''}${differs})`;
+      r.title = [w.route.from_name && `From ${w.route.from_name}`, w.route.to_name && `To ${w.route.to_name}`].filter(Boolean).join('\n');
+      li.append(r);
+    }
     li.querySelector('.del').onclick = async e => { e.stopPropagation(); await api('/api/watches/' + w.id, {method: 'DELETE'}); refresh(); };
     li.onclick = () => {
       if (selected !== w.id) { selectedMsg = null; expanded.clear(); highlight.clearLayers(); }
@@ -150,7 +160,8 @@ function aircraftTip(w, pts) {
   const alt = p.on_ground ? 'on the ground' : p.alt_ft != null ? `${num(p.alt_ft)} ft` : 'altitude unknown';
   const t = p.on_ground ? '' : trend(pts);
   const motion = [p.gs != null ? `${num(p.gs)} kt` : '', p.track != null ? `track ${Math.round(p.track)}°` : ''].filter(Boolean).join(' · ');
-  return tip([p.callsign || w.callsign || w.hex, w.type].filter(Boolean).join(' · '), [alt, t].filter(Boolean).join('  '), motion, `${fmt(p.t)} (${p.source})`);
+  const dest = w.route && !w.route.stale ? `${w.route.from ? w.route.from + ' → ' : '→ '}${w.route.to}` : '';
+  return tip([p.callsign || w.callsign || w.hex, w.type].filter(Boolean).join(' · '), dest, [alt, t].filter(Boolean).join('  '), motion, `${fmt(p.t)} (${p.source})`);
 }
 
 // An aeroplane silhouette (Material "airplanemode_active", nose up), turned to the track.

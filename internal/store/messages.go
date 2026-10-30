@@ -250,3 +250,29 @@ func boolInt(b bool) int {
 	}
 	return 0
 }
+
+// Route is an origin/destination pair an aircraft reported about itself.
+type Route struct {
+	From, To string // ICAO codes
+	T        time.Time
+}
+
+// LastRoute returns the newest origin/destination reported by the aircraft in a
+// REP081 message, with the time of that report. (Only the Cathay A350 report
+// carries one.)
+func (s *Store) LastRoute(hexAddr string) (Route, bool) {
+	var r Route
+	var t int64
+	err := s.db.QueryRow(`SELECT COALESCE(pos_ts, ts),
+			COALESCE(json_extract(decoded, '$.fields.rep081.Origin'), ''),
+			json_extract(decoded, '$.fields.rep081.Dest')
+		FROM message
+		WHERE hex=? AND kind='miam' AND json_extract(decoded, '$.fields.rep081.Dest') IS NOT NULL
+		  AND json_extract(decoded, '$.fields.rep081.Dest') != ''
+		ORDER BY COALESCE(pos_ts, ts) DESC LIMIT 1`, hexAddr).Scan(&t, &r.From, &r.To)
+	if err != nil {
+		return Route{}, false
+	}
+	r.T = time.Unix(t, 0).UTC()
+	return r, true
+}
