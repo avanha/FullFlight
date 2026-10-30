@@ -1,0 +1,292 @@
+package decoder
+
+import (
+	"encoding/json"
+	"math"
+	"os"
+	"strings"
+	"testing"
+	"time"
+)
+
+type fixture struct {
+	Name     string    `json:"name"`
+	Label    string    `json:"label"`
+	Text     string    `json:"text"`
+	Received time.Time `json:"received"`
+}
+
+func load(t *testing.T, name string) (fixture, Result) {
+	t.Helper()
+	b, err := os.ReadFile("../../testdata/fixtures.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var all []fixture
+	if err := json.Unmarshal(b, &all); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range all {
+		if f.Name == name {
+			r, err := Decode(Message{Label: f.Label, Text: f.Text})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return f, r
+		}
+	}
+	t.Fatalf("no fixture %q", name)
+	return fixture{}, Result{}
+}
+
+// tag returns the contents of the first ADS-C tag with the given name.
+func tag(t *testing.T, r Result, name string) map[string]any {
+	t.Helper()
+	tags := r.Tree["arinc622"].(map[string]any)["adsc"].(map[string]any)["tags"].([]any)
+	for _, x := range tags {
+		if v, ok := x.(map[string]any)[name]; ok {
+			return v.(map[string]any)
+		}
+	}
+	t.Fatalf("no %s tag in %v", name, tags)
+	return nil
+}
+
+func near(t *testing.T, what string, got any, want, tol float64) {
+	t.Helper()
+	g, ok := got.(float64)
+	if !ok || math.Abs(g-want) > tol {
+		t.Errorf("%s = %v, want %v", what, got, want)
+	}
+}
+
+func TestSplitPrefix(t *testing.T) {
+	cases := []struct{ in, prefix, body string }{
+		{"J25ACX0833/FUKJJYA.ADS..B-LRM07", "J25ACX0833", "/FUKJJYA.ADS..B-LRM07"},
+		{"/OAKODYA.ADS..B-LRM03", "", "/OAKODYA.ADS..B-LRM03"},
+		{"U99ACX0111T-2!<<abc", "U99ACX0111", "T-2!<<abc"},
+		{"T02!<<abc", "", "T02!<<abc"},
+		{"S96ACX01130LV162944S/", "S96ACX0113", "0LV162944S/"},
+		{"0ES124056VS", "", "0ES124056VS"},
+		{"XXXX/ABC", "XXXX", "/ABC"}, // fallback: strip before first "/"
+	}
+	for _, c := range cases {
+		p, b := SplitPrefix(c.in)
+		if p != c.prefix || b != c.body {
+			t.Errorf("SplitPrefix(%q) = %q, %q; want %q, %q", c.in, p, b, c.prefix, c.body)
+		}
+	}
+}
+
+// Fixture 1.
+func TestADSCPeriodic(t *testing.T) {
+	for _, name := range []string{"adsc_periodic", "adsc_periodic_prefixed"} {
+		_, r := load(t, name)
+		if r.Kind != KindADSC || r.Label != "B6" || r.Dir != Downlink {
+			t.Fatalf("%s: %v %s %v", name, r.Kind, r.Label, r.Dir)
+		}
+		if r.Identity.Tail != "B-LRM" {
+			t.Errorf("%s: tail = %q", name, r.Identity.Tail)
+		}
+		b := tag(t, r, "basic_report")
+		near(t, "lat", b["lat"], 27.5974846, 1e-5)
+		near(t, "lon", b["lon"], 152.6006126, 1e-5)
+		near(t, "alt", b["alt"], 38000, 0)
+		near(t, "ts_sec", b["ts_sec"], 429, 0)
+		near(t, "gs", tag(t, r, "earth_ref_data")["gnd_spd_kts"], 472.5, 0.01)
+		near(t, "trk", tag(t, r, "earth_ref_data")["true_trk_deg"], 256.2, 0.01)
+		near(t, "mach", tag(t, r, "air_ref_data")["spd_mach"], 0.8495, 1e-4)
+		wp := tag(t, r, "predicted_route")["next_wpt"].(map[string]any)
+		near(t, "next lat", wp["lat"], 27.0, 1e-3)
+		near(t, "next lon", wp["lon"], 150.0, 1e-3)
+		near(t, "next eta", wp["eta_sec"], 1088, 0)
+	}
+	if _, r := load(t, "adsc_periodic_prefixed"); r.Identity.Flight != "CX833" || r.Identity.FlightID != "CX0833" {
+		t.Errorf("flight = %+v", r.Identity)
+	}
+}
+
+// Fixture 2.
+func TestADSCWaypointChange(t *testing.T) {
+	_, r := load(t, "adsc_waypoint_change")
+	b := tag(t, r, "wpt_change_event")
+	near(t, "lat", b["lat"], 26.9968414, 1e-5)
+	near(t, "lon", b["lon"], 149.9819183, 1e-5)
+	near(t, "ts", b["ts_sec"], 1532, 0) // :25:32
+	pr := tag(t, r, "predicted_route")
+	near(t, "next lat", pr["next_wpt"].(map[string]any)["lat"], 25.0, 1e-3)
+	near(t, "next eta", pr["next_wpt"].(map[string]any)["eta_sec"], 4130, 0)
+	near(t, "then lat", pr["next_next_wpt"].(map[string]any)["lat"], 23.0043, 1e-3)
+}
+
+// Fixture 3, including the station-clock gotcha: embedded 19:09:30Z, logged 19:22Z.
+func TestADSCTakeoffSEA(t *testing.T) {
+	f, r := load(t, "adsc_takeoff_sea")
+	near(t, "contract", tag(t, r, "ack")["contract_num"], 0, 0)
+	b := tag(t, r, "basic_report")
+	near(t, "lat", b["lat"], 47.4185371, 1e-5)
+	near(t, "lon", b["lon"], -122.3075294, 1e-5)
+	near(t, "alt", b["alt"], 1868, 0)
+	near(t, "ts", b["ts_sec"], 570, 0)
+	near(t, "gs", tag(t, r, "earth_ref_data")["gnd_spd_kts"], 162, 0.5)
+	near(t, "vs", tag(t, r, "earth_ref_data")["vspd_ftmin"], 2704, 0)
+	got := ResolveSecondsPastHour(b["ts_sec"].(float64), f.Received)
+	if want := time.Date(2026, 10, 27, 19, 9, 30, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("resolved %v, want %v", got, want)
+	}
+}
+
+// Fixture 4.
+func TestADSCMeteo(t *testing.T) {
+	_, r := load(t, "adsc_meteo")
+	b := tag(t, r, "basic_report")
+	near(t, "lat", b["lat"], -15.9914589, 1e-5)
+	near(t, "lon", b["lon"], 142.0108223, 1e-5)
+	near(t, "alt", b["alt"], 39004, 0)
+	near(t, "ts", b["ts_sec"], 1691, 0) // :28:11
+	m := tag(t, r, "meteo_data")
+	near(t, "wind kt", m["wind_spd_kts"], 34.5, 0.01)
+	near(t, "wind dir", m["wind_dir_true_deg"], 235.5, 0.1)
+	near(t, "temp", m["temp_c"], -52.5, 0.01)
+}
+
+// Fixture 5.
+func TestCPDLCPosition(t *testing.T) {
+	_, r := load(t, "cpdlc_position")
+	if r.Kind != KindCPDLC || r.Identity.Tail != "B-LRM" || r.Fields["gs_addr"] != "RPHIAYA" {
+		t.Fatalf("%v %+v %v", r.Kind, r.Identity, r.Fields)
+	}
+	j, _ := json.Marshal(r.Tree)
+	for _, want := range []string{`POSITION REPORT`, `"deg":19`, `SABNO`, `DALRA`, `UNTUL`} {
+		if !strings.Contains(string(j), want) {
+			t.Errorf("tree missing %s: %s", want, j)
+		}
+	}
+}
+
+// Fixture 6.
+func TestCPDLCWilco(t *testing.T) {
+	_, r := load(t, "cpdlc_wilco")
+	j, _ := json.Marshal(r.Tree)
+	for _, want := range []string{`"choice_label":"WILCO"`, `"msg_ref":6`, `"hour":4,"min":2,"sec":29`} {
+		if !strings.Contains(string(j), want) {
+			t.Errorf("tree missing %s: %s", want, j)
+		}
+	}
+}
+
+// Fixture 7, substituted by real samples: the original (a backfilled Oct 27 message) was not retrievable.
+func TestMIAM(t *testing.T) {
+	_, r := load(t, "rep081_handoff")
+	if r.Kind != KindMIAM || r.Identity.Tail != "B-LRD" || r.Identity.Flight != "CX111" {
+		t.Fatalf("%v %+v", r.Kind, r.Identity)
+	}
+	rep := r.Fields["rep081"].(REP081Report)
+	near(t, "lat", rep.Lat, -16.919, 1e-3)
+	near(t, "lon", rep.Lon, 142.488, 1e-3)
+	if rep.Origin != "VHHH" || rep.Dest != "YSSY" || rep.AltFt != 39000 || rep.TempC != -52.7 || rep.WindDirDeg != 237 || rep.WindKt != 39 {
+		t.Errorf("rep081 = %+v", rep)
+	}
+	f, _ := load(t, "rep081_handoff")
+	got := ResolveMonthSeconds(rep.SecsInMonth, f.Received)
+	if want := time.Date(2026, 10, 29, 17, 35, 51, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("time = %v, want %v", got, want)
+	}
+
+	// A MIAM without REP081 still yields the tail.
+	_, r = load(t, "real_miam_t12")
+	if r.Identity.Tail != "B-LRD" || r.Tree == nil {
+		t.Errorf("t12: %+v", r.Identity)
+	}
+}
+
+// Fixture 8.
+func TestAFN(t *testing.T) {
+	_, r := load(t, "afn_contact")
+	if r.Kind != KindAFN || r.Label != "A0" || r.Dir != Uplink {
+		t.Fatalf("%v %s %v", r.Kind, r.Label, r.Dir)
+	}
+	if r.Identity.Callsign != "CPA833" || r.Identity.Tail != "B-LRD" {
+		t.Errorf("identity = %+v", r.Identity)
+	}
+	if r.Fields["contact_station"] != "OAKODYA" || r.Fields["gs_addr"] != "YVRE2YA" || r.Fields["afn"] != "contact_advisory" {
+		t.Errorf("fields = %v", r.Fields)
+	}
+}
+
+// Fixture 9.
+func TestMedia(t *testing.T) {
+	_, r := load(t, "media_established")
+	if r.Kind != KindMedia || r.Fields["state"] != "established" || r.Fields["link"] != "satcom" || r.Fields["time_hhmmss"] != "124056" {
+		t.Errorf("established: %v %v", r.Kind, r.Fields)
+	}
+	_, r = load(t, "media_lost")
+	if r.Fields["state"] != "lost" || r.Fields["link"] != "VHF ACARS" || r.Fields["time_hhmmss"] != "193609" {
+		t.Errorf("lost: %v", r.Fields)
+	}
+	_, r = load(t, "real_media_lost_prefixed") // 10-char prefix and trailing "/"
+	if r.Fields["state"] != "lost" || r.Identity.Flight != "CX113" {
+		t.Errorf("prefixed: %v %+v", r.Fields, r.Identity)
+	}
+}
+
+// Fixture 10.
+func TestDATIS(t *testing.T) {
+	_, r := load(t, "datis_arrival")
+	if r.Kind != KindDATIS || r.Label != "B9" || r.Fields["airport"] != "VHHH" || r.Fields["atis_type"] != "arrival" {
+		t.Errorf("%v %v", r.Kind, r.Fields)
+	}
+	_, r = load(t, "real_datis_prefixed")
+	if r.Fields["airport"] != "YBBN" || r.Identity.Flight != "CX113" {
+		t.Errorf("prefixed: %v %+v", r.Fields, r.Identity)
+	}
+}
+
+func TestRealCPDLC(t *testing.T) {
+	for _, n := range []string{"real_cpdlc_prefixed", "real_cpdlc_cc1"} {
+		_, r := load(t, n)
+		if r.Tree == nil || r.Identity.Tail != "B-LRD" || r.Identity.Flight != "CX113" {
+			t.Errorf("%s: %+v tree=%v", n, r.Identity, r.Tree != nil)
+		}
+	}
+}
+
+func TestResolveSecondsPastHour(t *testing.T) {
+	at := func(h, m, s int) time.Time { return time.Date(2026, 10, 28, h, m, s, 0, time.UTC) }
+	cases := []struct {
+		secs float64
+		recv time.Time
+		want time.Time
+	}{
+		{429, at(4, 7, 17), at(4, 7, 9)},
+		{3590, at(5, 0, 5), at(4, 59, 50)}, // report just before the hour turned
+		{429, at(4, 5, 0), at(4, 7, 9)},    // station clock ~2 min behind: stay in this hour
+		{429, at(4, 1, 0), at(3, 7, 9)},    // far too early: previous hour
+	}
+	for _, c := range cases {
+		if got := ResolveSecondsPastHour(c.secs, c.recv); !got.Equal(c.want) {
+			t.Errorf("secs %v recv %v: got %v want %v", c.secs, c.recv, got, c.want)
+		}
+	}
+}
+
+func TestResolveMonthSecondsRollover(t *testing.T) {
+	// 2482551 s is Oct 29 17:35:51. A message received early Nov 1 reporting it is from last month.
+	recv := time.Date(2026, 11, 1, 0, 5, 0, 0, time.UTC)
+	got := ResolveMonthSeconds(2482551, recv)
+	if want := time.Date(2026, 10, 29, 17, 35, 51, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("got %v want %v", got, want)
+	}
+}
+
+func TestPlausible(t *testing.T) {
+	a := TimedPoint{47.4185, -122.3075, time.Date(2026, 10, 27, 19, 9, 30, 0, time.UTC)}
+	b := TimedPoint{47.4185, -122.3075, a.T.Add(2 * 24 * time.Hour)}
+	if !Plausible(a, b) {
+		t.Error("same place two days apart should be plausible")
+	}
+	far := TimedPoint{35, 139, a.T.Add(10 * time.Minute)} // Seattle→Tokyo in 10 minutes
+	if Plausible(a, far) {
+		t.Error("Seattle→Tokyo in 10 min should be flagged")
+	}
+}

@@ -1,0 +1,130 @@
+[
+ {
+  "name": "adsc_periodic",
+  "label": "B6",
+  "received": "2026-10-28T04:07:17Z",
+  "text": "/FUKJJYA.ADS..B-LRM07139FFB6420C94706B41F1604805B1928D888A01600ED5C613878A4A01712DD1B45BA49C3C8AC0E5B18EC40000F5B29A8C0000D13333355554946C44011C71B1C71C9C3C076C4"
+ },
+ {
+  "name": "adsc_periodic_prefixed",
+  "label": "B6",
+  "received": "2026-10-28T04:07:17Z",
+  "text": "J25ACX0833/FUKJJYA.ADS..B-LRM07139FFB6420C94706B41F1604805B1928D888A01600ED5C613878A4A01712DD1B45BA49C3C8AC0E5B18EC40000F5B29A8C0000D13333355554946C44011C71B1C71C9C3C076C4"
+ },
+ {
+  "name": "adsc_waypoint_change",
+  "label": "B6",
+  "received": "2026-10-28T04:26:00Z",
+  "text": "/FUKJJYA.ADS..B-LRM141332A3553B094717F01F0D11C71B1C71C946D022105BD2DE544946C02882"
+ },
+ {
+  "name": "adsc_takeoff_sea",
+  "label": "B6",
+  "received": "2026-10-27T19:22:00Z",
+  "text": "/OAKODYA.ADS..B-LRM03000721B84D4834C074C8E81F0E40105102A40F41B08802A40D21B4354833C0A4401B21A66D482F00D8805E4B"
+ },
+ {
+  "name": "adsc_meteo",
+  "label": "B6",
+  "received": "2026-10-29T17:29:00Z",
+  "text": "/BNECAYA.ADS..B-LRD07F4A0DB27E24985DA6C1F0E36A0F180001022A9FE5C0DF35D532D1D49854371F161AB35924985409F6B"
+ },
+ {
+  "name": "cpdlc_position",
+  "label": "BA",
+  "received": "2026-10-28T16:07:00Z",
+  "text": "/RPHIAYA.AT1..B-LRM20C0654C3D9F3B9319D7382D01B2A8253830A74F80E2448332941B424645196C5B015BD622559D52ACC7F59390DF83"
+ },
+ {
+  "name": "cpdlc_wilco",
+  "label": "BA",
+  "received": "2026-10-30T04:02:30Z",
+  "text": "/UPGCAYA.AT1..B-LRD628C409D00341F"
+ },
+ {
+  "name": "afn_contact",
+  "label": "A0",
+  "received": "2026-10-29T19:19:05Z",
+  "text": "/YVRE2YA.AFN/FMHCPA833,..B-LRD,,191904/FCAOAKODYA,02B37"
+ },
+ {
+  "name": "media_established",
+  "label": "SA",
+  "received": "2026-10-30T12:40:57Z",
+  "text": "0ES124056VS"
+ },
+ {
+  "name": "media_lost",
+  "label": "SA",
+  "received": "2026-10-29T19:36:10Z",
+  "text": "0LV193609S"
+ },
+ {
+  "name": "datis_arrival",
+  "label": "B9",
+  "received": "2026-10-30T15:33:17Z",
+  "text": "/VHHH.TI2/000VHHHA85D0"
+ },
+ {
+  "name": "rep081_handoff",
+  "label": "MA",
+  "received": "2026-10-29T17:36:00Z",
+  "text": "U99ACX0111T-2!<<+b/hTIB9N\"9d!!,VF6q0D9rX&W*|A350,000279,1,1,TB000000/REP081,01,01;A06/NX,VHHH YSSY/0,7,-060908,+512958,2482551,3900,-527,237,039,X,3,5,0,0,51,48,73,72,45/:"
+ },
+ {
+  "name": "real_media_lost_prefixed",
+  "label": "SA",
+  "text": "S96ACX01130LV162944S/",
+  "received": "2026-10-30T16:26:41.026Z",
+  "airframes_id": 7967355421,
+  "station": "TBG-CBAND-APAC"
+ },
+ {
+  "name": "real_media_established_prefixed",
+  "label": "SA",
+  "text": "S51ACX01130ES124056VS/",
+  "received": "2026-10-30T12:37:40.685Z",
+  "airframes_id": 7965606564,
+  "station": "TBG-CBAND-APAC"
+ },
+ {
+  "name": "real_datis_prefixed",
+  "label": "B9",
+  "text": "J55ACX0113/YBBN.TI2/000YBBNAE5E5",
+  "received": "2026-10-30T16:12:31.488Z",
+  "airframes_id": 7967238070,
+  "station": "TBG-CBAND-APAC"
+ },
+ {
+  "name": "real_cpdlc_prefixed",
+  "label": "BA",
+  "text": "J66ACX0113/RPHIAYA.AT1..B-LRD658D08C9005308",
+  "received": "2026-10-30T16:31:54.732Z",
+  "airframes_id": 7967398134,
+  "station": "TBG-CBAND-APAC"
+ },
+ {
+  "name": "real_miam_rep081",
+  "label": "MA",
+  "text": "U05ACX0111T-2!<<+b/hTIB9N\"9d!!,VF6q0D9rX&W*|A350,000284,1,1,TB000000/REP081,01,01;A06/NX,VHHH YSSY/0,7,-078593,+521601,2484951,3901,-536,264,060,X,3,5,0,0,74,56,47,57,87/:",
+  "received": "2026-10-29T18:12:43.008Z",
+  "airframes_id": 7959375127,
+  "station": "TBG-CBAND-APAC"
+ },
+ {
+  "name": "real_cpdlc_cc1",
+  "label": "BA",
+  "text": "J37ACX0113/RPHIAYA.CC1..B-LRD6080E669491056DF",
+  "received": "2026-10-30T14:22:25.849Z",
+  "airframes_id": 7966419010,
+  "station": "TBG-CBAND-APAC"
+ },
+ {
+  "name": "real_miam_t12",
+  "label": "MA",
+  "text": "T12!<</F/hTIB9N\"8W!'s.16q0urAY];+|D3N.`gFs%)5H$,#J.E4:8r7(k@F&m<25sXTs1]uWO@;792o%R#/c^`\\ogThp@8nBLokcuQhRoZ[p,Xg/!q[PhCDtL_r3`IOd;WBV-\"FU+e!T\"4\";_N)[?%lLoZNVnTF_SR8I#\"J]R8#j/R?l`qWp_P<NO5I5\\1rVe[FHNi4I;^O+N[0.tK(?XnUM?II^fL7@nOjDWtre=\".b/&TK>0K/j#D_8QV9J\"B&cP'IU8\"mUbW9DBX&U:a]E;Gt0+dT\"KL+i@$\"Ha&gdp9F&1oKqD=4G5aMoKo-/H[fjAR^Ws=NO0DroQ&[O\\+ID:lh\"m:K,0*X]8g05]D0%ZkEPrsd[0=L3((&+H4_/5OB2uN=sb&_hZpta5_B6dfY2o'C`uOe3^DoT\\434#**l@GcR_81*2@rUamU.p\"QQ,&jr^Y76G+Y\\aS-1a12-*kC/9sO82]bU>R4:#3uLM4*u<NDauF4:\"*ah?!:8%i]#[<X965oLmpG]^lBm^]pVaHq,T\"gW,Pd9+kUfgj6]dcbpQ#>3UN0K]gE_-4!]LFHVl31i8uM[h",
+  "received": "2026-10-29T20:31:35.059Z",
+  "airframes_id": 7960124797,
+  "station": "IS-LBSF-VDL2"
+ }
+]

@@ -1,0 +1,196 @@
+package decoder
+
+import (
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+// Kind classifies what a message body is.
+type Kind string
+
+const (
+	KindADSC    Kind = "adsc"
+	KindCPDLC   Kind = "cpdlc"
+	KindAFN     Kind = "afn"
+	KindMIAM    Kind = "miam"
+	KindMedia   Kind = "media_advisory"
+	KindDATIS   Kind = "datis_request"
+	KindUnknown Kind = "unknown"
+)
+
+// Message is the raw input. Label and Dir may be empty/Unknown, in which case
+// they are inferred from the text.
+type Message struct {
+	Label string
+	Dir   Direction
+	Text  string
+}
+
+type Identity struct {
+	Tail     string // from the ARINC 622 address or an AFN FMH segment
+	Callsign string // from an AFN FMH segment
+	FlightID string // 6-char prefix field as sent, e.g. "CX0833"
+	Flight   string // normalised, e.g. "CX833"
+	MsgNum   string // 4-char prefix field, e.g. "J27A"
+}
+
+type Result struct {
+	Kind     Kind
+	Label    string
+	Dir      Direction
+	Prefix   string // the stripped 10-char (or shorter) prefix, if any
+	Body     string // the text handed to the decoders
+	Identity Identity
+	Tree     map[string]any // libacars output, nil if libacars decoded nothing
+	Fields   map[string]any // our own hand-parsed fields
+}
+
+var (
+	// bodyAnchor matches text that is already a bare application body.
+	bodyAnchor = regexp.MustCompile(`^(/|T[-0-9]|0[EL][A-Z0-9])`)
+	flightID   = regexp.MustCompile(`^([A-Z0-9]{2})(\d{1,4})[A-Z]?$`)
+	ownerAddr  = regexp.MustCompile(`^/[A-Z0-9]{7}\.([A-Z0-9]{3})\.`)
+)
+
+// SplitPrefix separates the 4-char message number + 6-char flight ID that
+// airframes.io text often carries. Text that is already a bare body is
+// returned unchanged. As a fallback, everything before a "/" in the first 10
+// characters is treated as prefix.
+func SplitPrefix(text string) (prefix, body string) {
+	if bodyAnchor.MatchString(text) {
+		return "", text
+	}
+	if len(text) > 10 && flightID.MatchString(text[4:10]) && bodyAnchor.MatchString(text[10:]) {
+		return text[:10], text[10:]
+	}
+	if i := strings.IndexByte(text, '/'); i > 0 && i <= 10 {
+		return text[:i], text[i:]
+	}
+	return "", text
+}
+
+// parsePrefix extracts message number and flight from a 10-char prefix.
+func parsePrefix(prefix string) (id Identity) {
+	if len(prefix) != 10 {
+		return
+	}
+	id.MsgNum = prefix[:4]
+	id.FlightID = prefix[4:]
+	if m := flightID.FindStringSubmatch(id.FlightID); m != nil {
+		n, _ := strconv.Atoi(m[2])
+		id.Flight = m[1] + strconv.Itoa(n)
+	}
+	return
+}
+
+// classify decides the kind of body and a default label/direction when the
+// caller did not supply them.
+func classify(label, body string) (Kind, string, Direction) {
+	var k Kind
+	defLabel, defDir := "", Downlink
+	if m := ownerAddr.FindStringSubmatch(body); m != nil {
+		switch m[1] {
+		case "ADS":
+			k, defLabel = KindADSC, "B6"
+		case "AT1", "CR1", "CC1", "DR1":
+			k, defLabel = KindCPDLC, "BA"
+		}
+	}
+	switch {
+	case k != "":
+	case strings.Contains(body, ".AFN/"):
+		k, defLabel = KindAFN, "B0"
+	case strings.Contains(body, ".TI2/"):
+		k, defLabel = KindDATIS, "B9"
+	case label == "SA" || strings.HasPrefix(body, "0E") || strings.HasPrefix(body, "0L"):
+		k, defLabel = KindMedia, "SA"
+	case label == "MA" || (len(body) > 1 && body[0] == 'T' && (body[1] == '-' || body[1] >= '0' && body[1] <= '9')):
+		k, defLabel = KindMIAM, "MA"
+	default:
+		k = KindUnknown
+	}
+	if label == "" {
+		label = defLabel
+	}
+	dir := defDir
+	if len(label) > 0 && label[0] == 'A' {
+		dir = Uplink
+	}
+	return k, label, dir
+}
+
+// Decode strips the prefix, works out label and direction, runs libacars where
+// it applies, and runs our own parsers for the rest. Identity is always derived
+// from the raw text, never from airframes.io metadata.
+func Decode(m Message) (Result, error) {
+	prefix, body := SplitPrefix(m.Text)
+	body = strings.TrimRight(body, "\r\n")
+	r := Result{Prefix: prefix, Body: body, Identity: parsePrefix(prefix), Fields: map[string]any{}}
+
+	var dir Direction
+	r.Kind, r.Label, dir = classify(m.Label, body)
+	if m.Label != "" && m.Dir == Unknown && m.Label[0] != 'A' && m.Label[0] != 'B' {
+		dir = Downlink // MA, SA, ... are observed as downlinks
+	}
+	r.Dir = m.Dir
+	if r.Dir == Unknown {
+		r.Dir = dir
+	}
+
+	var err error
+	switch r.Kind {
+	case KindADSC, KindCPDLC, KindMIAM:
+		r.Tree, err = DecodeApps(r.Label, body, r.Dir)
+		if err != nil {
+			return r, err
+		}
+		if arinc, ok := r.Tree["arinc622"].(map[string]any); ok {
+			if a, _ := arinc["air_addr"].(string); a != "" {
+				r.Identity.Tail = strings.TrimLeft(a, ".")
+			}
+			if g, _ := arinc["gs_addr"].(string); g != "" {
+				r.Fields["gs_addr"] = g
+			}
+		}
+		if r.Kind == KindMIAM {
+			if r.Identity.Tail == "" {
+				if a, ok := findString(r.Tree, "aircraft_id"); ok {
+					r.Identity.Tail = strings.TrimLeft(a, ".")
+				}
+			}
+			if rep, ok := ParseREP081(body); ok {
+				r.Fields["rep081"] = rep
+			}
+		}
+	case KindAFN:
+		parseAFN(body, &r)
+	case KindDATIS:
+		parseDATIS(body, &r)
+	case KindMedia:
+		parseMedia(body, &r)
+	}
+	return r, nil
+}
+
+// findString returns the first string value stored under key anywhere in v.
+func findString(v any, key string) (string, bool) {
+	switch t := v.(type) {
+	case map[string]any:
+		if s, ok := t[key].(string); ok {
+			return s, true
+		}
+		for _, c := range t {
+			if s, ok := findString(c, key); ok {
+				return s, true
+			}
+		}
+	case []any:
+		for _, c := range t {
+			if s, ok := findString(c, key); ok {
+				return s, true
+			}
+		}
+	}
+	return "", false
+}
