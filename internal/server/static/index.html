@@ -355,7 +355,7 @@ function drawWaypoints(msgs) {
 // an estimate, so it is limited: not from a fix over an hour old, never more than 90 minutes beyond
 // the fix, not for an aircraft on the ground or too slow to be flying, and not past a known destination.
 const PROJ = {maxFixAgeMin: 60, maxSpanMin: 90, minGs: 100, maxGs: 700, tickMin: 10, ghostAfterSec: 45, destSlackDeg: 35};
-let aheadMin = 30, lastData = null;
+let aheadMin = 30, lastData = null, lastTrack = {pts: [], msgs: []};
 try { const v = localStorage.getItem('aheadMin'); if (['0', '15', '30', '60'].includes(v)) aheadMin = Number(v); } catch (e) { /* no storage: keep the default */ }
 const RAD = Math.PI / 180;
 function advance(lat, lon, trk, nm) {
@@ -426,6 +426,43 @@ function projection(w, pts, msgs, nowMs, ahead = aheadMin) {
   }
   return {fix: L0, ageMin, gs, trk, basis, stop, now: advance(L0.lat, L0.lon, trk, nowNm), end: advance(L0.lat, L0.lon, trk, endNm), ticks,
           endMin: endMin - Math.max(ageMin, 0), capped: ageMin + ahead > PROJ.maxSpanMin};
+}
+
+// Where the aircraft probably was when a message with no position of its own arrived: along the line
+// between the nearest trustworthy fixes either side of it. Only between two fixes, never beyond the
+// last (the live projection covers that), nor across a long silence, a change of flight or a jump
+// no aircraft could make.
+const GHOST = {maxGapMin: 180};
+function ghostAt(tMs, pts, msgs) {
+  const fixes = [
+    ...pts.map(p => ({lat: p.lat, lon: p.lon, t: Date.parse(p.t), src: p.source || 'ADS-B'})),
+    ...msgs.filter(m => m.lat != null && !m.suspect && !m.time_unverified).map(m =>
+      ({lat: m.lat, lon: m.lon, t: Date.parse(m.pos_t || m.t), src: SOURCES[m.kind] ? SOURCES[m.kind].name : m.kind})),
+  ].sort((a, b) => a.t - b.t);
+  let before = null, after = null;
+  for (const f of fixes) {
+    if (f.t <= tMs) before = f;
+    else { after = f; break; }
+  }
+  if (!before || !after) return null;
+  const gap = after.t - before.t;
+  if (gap > GHOST.maxGapMin * 60000) return null;
+  if (flightSegs.length > 1 && segOf(before.t) !== segOf(after.t)) return null;
+  const nm = distNM(before.lat, before.lon, after.lat, after.lon);
+  if (nm / (gap / 3600000) > PROJ.maxGs) return null;
+  const trk = bearingTo(before.lat, before.lon, after.lat, after.lon);
+  const [lat, lon] = nm < 0.05 ? [before.lat, before.lon] : advance(before.lat, before.lon, trk, nm * (tMs - before.t) / gap);
+  return {lat, lon, trk, before, after};
+}
+
+function drawGhost(m, pan) {
+  const g = ghostAt(Date.parse(reportTime(m)), lastTrack.pts, lastTrack.msgs);
+  if (!g) return;
+  const mk = L.marker(ll(g.lat, g.lon), {icon: planeIcon(g.trk, {fill: '#777', opacity: .6}), zIndexOffset: 900}).addTo(highlight)
+    .bindTooltip(tip(`Estimated position at ${fmtTime(reportTime(m))}`, 'this message carried no position',
+      `between the ${g.before.src} fix at ${fmtTime(g.before.t)} and the ${g.after.src} fix at ${fmtTime(g.after.t)}`));
+  if (pan && !map.getBounds().pad(-0.1).contains(ll(g.lat, g.lon))) map.panTo(ll(g.lat, g.lon));
+  mk.openTooltip();
 }
 
 function drawProjection() {
@@ -557,7 +594,7 @@ function latestFix(pts, msgs) {
 }
 
 async function showTrack(w, focus) {
-  if (!w.hex) { layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); lastData = null; drawProjection(); markers.clear(); renderMessages([]); return; }
+  if (!w.hex) { layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); lastData = null; lastTrack = {pts: [], msgs: []}; drawProjection(); markers.clear(); renderMessages([]); return; }
   const seq = ++showSeq;
   let [pts, msgs, segs] = await Promise.all([api(`/api/track/${w.hex}?hours=96`), api(`/api/messages/${w.hex}?hours=96`), api(`/api/flights/${w.hex}?hours=96`)]);
   if (seq !== showSeq) return;
@@ -632,6 +669,7 @@ async function showTrack(w, focus) {
   }
 
   lastData = current ? {w, pts, msgs} : null;
+  lastTrack = {pts, msgs};
   drawProjection();
   renderMessages(msgs);
   applyHighlight();
@@ -718,7 +756,8 @@ function applyHighlight(pan) {
   drawPredictions();                                               // the selected report's predictions, replacing the last one's
   rows.forEach((el, id) => el.classList.toggle('sel', id === selectedMsg));
   const m = lastMsgs.find(x => x.id === selectedMsg);
-  if (!m || m.lat == null) return;
+  if (!m) return;
+  if (m.lat == null) { drawGhost(m, pan); return; }   // no position of its own: a ghost where the flight path puts it
   L.circleMarker(ll(m.lat, m.lon), {radius: 13, color: '#0a58ca', weight: 3, fillColor: '#ffd43b', fillOpacity: .35, interactive: false}).addTo(highlight);
   if (pan && !map.getBounds().pad(-0.1).contains(ll(m.lat, m.lon))) map.panTo(ll(m.lat, m.lon));
   const mk = markers.get(m.id);

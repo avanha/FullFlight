@@ -216,6 +216,14 @@ reports, or one in the navigation database, the list adds the name (`ADS-C repor
 then KAPPU`) and the tooltip says which. CPDLC position reports list the names they carried. Run
 `fullflight -redecode` to give already-stored messages the names.
 
+## Ghost position for a message with no position
+
+Select a message that carries no position and, if trustworthy fixes (ADS-B or datalink) lie either side of
+its time, a faded plane appears where the flight path puts it, interpolated in time along the line between
+them; hover for which two fixes it used. It shows only for the selected message. There is none beyond the
+last fix (the projection covers that), across a silence of more than 3 hours, between two different
+flights, or between fixes no aircraft could fly between.
+
 ## Projection
 
 An estimated position now (a grey ghost plane) and a dotted look-ahead, dead-reckoned from the newest

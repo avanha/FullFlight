@@ -81,7 +81,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -143,10 +143,19 @@ highlightGroup = null;
   assert.strictEqual(openTips()[0], t.markers.get(3));
   assert.ok(t.rows.get(3)._cls.has('sel') && !t.rows.get(1)._cls.has('sel'));
 
-  // 6. a message without a location clears the ring
+  // 6. a message without a location has no ring; if fixes surround its time, a ghost plane stands where the path puts it
+  const ringsBefore = calls.circles.length;
   t.rows.get(2).onclick();
-  assert.strictEqual(highlightGroup.items.length, 0, 'ring cleared');
-  assert.strictEqual(openTips().length, 0, 'all popups closed');
+  assert.strictEqual(calls.circles.length, ringsBefore, 'no ring');
+  assert.strictEqual(highlightGroup.items.length, 1, 'the ghost');
+  assert.match(highlightGroup.items[0].o.icon.html, /opacity/, 'drawn as a faded plane');
+  assert.strictEqual(openTips().length, 1, 'its popup is open');
+  assert.match(lines(highlightGroup.items[0].tooltip)[0], /^Estimated position at /);
+  t.rows.get(1).onclick();
+  assert.strictEqual(highlightGroup.items.length, 1, 'the ghost is gone; just the ring of the message with a position');
+  assert.ok(calls.circles.length > ringsBefore, 'the ring');
+  t.rows.get(1).onclick();            // (clicking toggles the details: put them back)
+  t.rows.get(2).onclick();
   assert.strictEqual(t.selectedMsg, 2);
 
   // 6b. clicking through many messages never accumulates popups
@@ -540,6 +549,39 @@ highlightGroup = null;
   assert.ok(t.projection(W, [ap(10, 0, 0)], [], NOW), 'uses the selected look-ahead by default');
   // the newest TRUSTWORTHY fix is the basis: a later suspect or time-unverified datalink position is ignored
   const dl = (minAgo, lat, lon, extra = {}) => ({id: 200 + minAgo, t: iso(minAgo), pos_t: iso(minAgo), kind: 'adsc', summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, gs: 480, trk: 90, ...extra});
+  // ===== 8o. a message with no position: a ghost along the path between the fixes either side of it =====
+  {
+    const keep = t.flightSegs.slice();
+    t.flightSegs.length = 0;
+    const g = (minAgo, a, b, c) => t.ghostAt(NOW - minAgo * 60000, a, b);
+    // halfway in time between two fixes 60 min apart, 480 nm apart along the equator: halfway along
+    let gh = t.ghostAt(NOW - 30 * 60000, [ap(60, 0, 0), ap(0, 0, 8)], []);
+    assert.ok(gh && Math.abs(gh.lat) < 0.01 && Math.abs(gh.lon - 4) < 0.01, JSON.stringify(gh));
+    assert.ok(Math.abs(gh.trk - 90) < 0.5);
+    // a quarter of the way
+    gh = t.ghostAt(NOW - 45 * 60000, [ap(60, 0, 0), ap(0, 0, 8)], []);
+    assert.ok(Math.abs(gh.lon - 2) < 0.01, 'quarter way: ' + gh.lon);
+    // fixes may be datalink positions, mixed with ADS-B, in any order
+    gh = t.ghostAt(NOW - 30 * 60000, [ap(60, 0, 0)], [dl(0, 0, 8)]);
+    assert.ok(gh && Math.abs(gh.lon - 4) < 0.01 && gh.after.src === 'ADS-C', 'mixed sources');
+    // an untrustworthy neighbour is not used
+    assert.strictEqual(t.ghostAt(NOW - 30 * 60000, [ap(60, 0, 0)], [dl(0, 0, 8, {suspect: 'x'})]), null);
+    assert.strictEqual(t.ghostAt(NOW - 30 * 60000, [ap(60, 0, 0)], [dl(0, 0, 8, {time_unverified: true})]), null);
+    // before the first fix or after the last: nothing (the live projection covers the latter)
+    assert.strictEqual(t.ghostAt(NOW - 90 * 60000, [ap(60, 0, 0), ap(0, 0, 8)], []), null);
+    assert.strictEqual(t.ghostAt(NOW + 5 * 60000, [ap(60, 0, 0), ap(0, 0, 8)], []), null);
+    // too long a silence between the fixes
+    assert.strictEqual(t.ghostAt(NOW - 200 * 60000, [ap(400, 0, 0), ap(0, 0, 40)], []), null);
+    // a jump no aircraft could make
+    assert.strictEqual(t.ghostAt(NOW - 30 * 60000, [ap(60, 0, 0), ap(0, 0, 40)], []), null);
+    // across the date line: the short way round
+    gh = t.ghostAt(NOW - 30 * 60000, [ap(60, 0, 178), ap(0, 0, -174)], []);
+    assert.ok(gh && (gh.lon > 179.9 || gh.lon < -179.9) , 'date line ' + gh.lon);
+    // two fixes in different flights are not joined
+    t.flightSegs.push({startMs: NOW - 120 * 60000, endMs: NOW - 59 * 60000}, {startMs: NOW - 10 * 60000, endMs: NOW});
+    assert.strictEqual(t.ghostAt(NOW - 30 * 60000, [ap(60, 0, 0), ap(0, 0, 8)], []), null);
+    t.flightSegs.length = 0; t.flightSegs.push(...keep);
+  }
   // an ADS-C report with no speed or track still projects when it names its next waypoint and the time to it (B-LRD)
   const nx = (lat, lon, eta, extra = {}) => ({lat, lon, eta_sec: eta, kind: 'next', name: 'ISTEM', ...extra});
   pr = t.projection(W, [], [dl(7, -19.831, 156.228, {gs: undefined, trk: undefined, route: [nx(-24.598, 160.383, 2571), {lat: -27.1, lon: 163, kind: 'next+1'}]})], NOW, 30);
