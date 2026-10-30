@@ -152,15 +152,30 @@ function planeIcon(track) {
 
 const markers = new Map();   // message id -> its marker on the map
 let showSeq = 0;             // discards the result of a slower, superseded request
-async function showTrack(w, fit) {
+const FOCUS_ZOOM = 7;   // regional: a few hundred miles across
+
+// The newest position we hold for an aircraft, from ADS-B or from a message. Trustworthy ones come
+// first: a position flagged impossible, or one whose time is unverified, only counts if nothing
+// better exists, so it cannot win just by claiming to be recent.
+function latestFix(pts, msgs) {
+  const all = [
+    ...pts.map(p => ({lat: p.lat, lon: p.lon, t: new Date(p.t).getTime(), tier: 1, src: p.source})),
+    ...msgs.filter(m => m.lat != null).map(m => ({lat: m.lat, lon: m.lon, t: new Date(m.pos_t || m.t).getTime(),
+      tier: m.suspect ? 3 : m.time_unverified ? 2 : 1, src: m.kind})),
+  ];
+  if (!all.length) return null;
+  const best = Math.min(...all.map(f => f.tier));
+  return all.filter(f => f.tier === best).reduce((a, b) => (b.t > a.t ? b : a));
+}
+
+async function showTrack(w, focus) {
   if (!w.hex) { layer.clearLayers(); markers.clear(); renderMessages([]); return; }
   const seq = ++showSeq;
   const [pts, msgs] = await Promise.all([api(`/api/track/${w.hex}?hours=96`), api(`/api/messages/${w.hex}?hours=96`)]);
   if (seq !== showSeq) return;
   layer.clearLayers();
   markers.clear();
-  const group = [];
-  if (pts.length) group.push(L.polyline(pts.map(p => [p.lat, p.lon]), {color: '#06c', weight: 3}).addTo(layer));
+  if (pts.length) L.polyline(pts.map(p => [p.lat, p.lon]), {color: '#06c', weight: 3}).addTo(layer);
 
   // Positions reported inside messages: orange; grey if impossible; faint and dotted if their time is unverified.
   for (const m of msgs) {
@@ -171,7 +186,6 @@ async function showTrack(w, fit) {
     }).addTo(layer);
     mk.bindTooltip(tip(m.summary, fmt(m.pos_t || m.t), m.suspect ? '⚠ ' + m.suspect : '', m.time_unverified ? '⏱ time unverified' : ''));
     markers.set(m.id, mk);
-    if (!m.suspect) group.push(mk);
   }
 
   // Predicted route from the newest ADS-C report that has one.
@@ -190,17 +204,21 @@ async function showTrack(w, fit) {
     L.marker([last.lat, last.lon], {icon: planeIcon(last.track), zIndexOffset: 1000}).addTo(layer)
       .bindTooltip(aircraftTip(w, pts));
   } else {
-    const fix = msgs.filter(m => m.lat != null && !m.suspect && !m.time_unverified).pop();
-    if (fix) {
+    const fix = latestFix([], msgs.filter(m => !m.suspect && !m.time_unverified));
+    const m = fix && msgs.find(x => x.lat === fix.lat && x.lon === fix.lon && new Date(x.pos_t || x.t).getTime() === fix.t);
+    if (fix && m) {
       L.marker([fix.lat, fix.lon], {icon: planeIcon(null), zIndexOffset: 1000}).addTo(layer)
-        .bindTooltip(tip(`${w.callsign || w.hex}: last reported position`, fix.summary, fmt(fix.pos_t || fix.t)));
-      group.push(L.marker([fix.lat, fix.lon]));
+        .bindTooltip(tip(`${w.callsign || w.hex}: last reported position`, m.summary, fmt(m.pos_t || m.t)));
     }
   }
 
   renderMessages(msgs);
   applyHighlight();
-  if (fit && group.length) map.fitBounds(L.featureGroup(group).getBounds(), {maxZoom: 8, padding: [30, 30]});
+  // Choosing a target: centre and zoom on its newest fix. (A refresh leaves the view alone.)
+  if (focus) {
+    const f = latestFix(pts, msgs);
+    if (f) map.setView([f.lat, f.lon], FOCUS_ZOOM);
+  }
 }
 
 // ---- message list ---------------------------------------------------------
@@ -208,8 +226,9 @@ let showUndecoded = false, lastMsgs = [], selectedMsg = null;
 const expanded = new Set();   // message ids whose details are open; survives refreshes
 const rows = new Map();       // message id -> its row
 
-// Ring the selected message's position on the map, panning only if it is out of view.
+// Ring the selected message's position and show just its popup, panning only if it is out of view.
 function applyHighlight(pan) {
+  map.eachLayer(l => { if (l.closeTooltip) l.closeTooltip(); });   // no stray popups from earlier clicks
   highlight.clearLayers();
   rows.forEach((el, id) => el.classList.toggle('sel', id === selectedMsg));
   const m = lastMsgs.find(x => x.id === selectedMsg);
@@ -217,7 +236,7 @@ function applyHighlight(pan) {
   L.circleMarker([m.lat, m.lon], {radius: 13, color: '#0a58ca', weight: 3, fillColor: '#ffd43b', fillOpacity: .35, interactive: false}).addTo(highlight);
   if (pan && !map.getBounds().pad(-0.1).contains([m.lat, m.lon])) map.panTo([m.lat, m.lon]);
   const mk = markers.get(m.id);
-  if (pan && mk) mk.openTooltip();
+  if (mk) mk.openTooltip();
 }
 
 function renderMessages(msgs) {

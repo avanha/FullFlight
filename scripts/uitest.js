@@ -22,12 +22,13 @@ const document = {
   createTextNode: t => ({text: t}),
 };
 // --- a recording Leaflet ---
-const calls = { fitBounds: 0, panTo: [], markers: [], circles: [], polylines: 0, tooltipsOpened: 0, highlightAdds: [] };
-class Layer { constructor(){ this.items = []; } addTo(t) { this.target = t; t.items && t.items.push(this); if (t === highlightGroup) calls.highlightAdds.push(this); return this; }
-  bindTooltip(c) { this.tooltip = c; return this; } openTooltip() { calls.tooltipsOpened++; return this; } getBounds() { return {}; } }
+const calls = { fitBounds: 0, setView: [], panTo: [], markers: [], circles: [], polylines: 0, tooltipsOpened: 0, highlightAdds: [] };
+const allLayers = [];
+class Layer { constructor(){ this.items = []; this.open = false; allLayers.push(this); } addTo(t) { this.target = t; t.items && t.items.push(this); if (t === highlightGroup) calls.highlightAdds.push(this); return this; }
+  bindTooltip(c) { this.tooltip = c; return this; } openTooltip() { calls.tooltipsOpened++; this.open = true; return this; } closeTooltip() { this.open = false; return this; } getBounds() { return {}; } }
 let highlightGroup;
 const groups = [];
-const mapObj = { setView() { return this; }, fitBounds() { calls.fitBounds++; }, panTo(ll) { calls.panTo.push(ll); },
+const mapObj = { setView(ll, z) { calls.setView.push([ll, z]); return this; }, eachLayer(f) { allLayers.forEach(f); }, fitBounds() { calls.fitBounds++; }, panTo(ll) { calls.panTo.push(ll); },
   getBounds: () => ({ pad: () => ({ contains: ll => !(ll[0] > 50) }) }) };   // "in view" unless lat > 50
 const L = {
   map: () => mapObj, tileLayer: () => ({ addTo() {} }),
@@ -64,6 +65,7 @@ highlightGroup = null;
   vm.runInContext(src + '\n;globalThis.__t = {refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
+  const initialViews = calls.setView.length;
   const tick = () => new Promise(r => setTimeout(r, 10));
   await tick();
 
@@ -80,7 +82,11 @@ highlightGroup = null;
   assert.match(plane.o.icon.html, /rotate\(135deg\)/, 'plane turned to the track');
   assert.strictEqual(plane.o.icon.className, 'plane');
   assert.ok(!calls.circles.some(c => c.o && c.o.color === '#c00' && c.o.radius === 6), 'the old red dot is gone');
-  assert.strictEqual(calls.fitBounds, 1, 'fits once on selection');
+  const views = calls.setView.slice(initialViews);
+  assert.strictEqual(views.length, 1, 'centres once on selection');
+  assert.strictEqual(JSON.stringify(views[0]), '[[40,-100],7]', 'on the newest fix (the last ADS-B point), at regional zoom');
+  assert.strictEqual(calls.fitBounds, 0, 'no longer fits the whole history');
+  const openTips = () => allLayers.filter(l => l.open);
   const lines = el => el.children.map(c => c.textContent);
   assert.deepEqual(lines(plane.tooltip), ['CPA843 \u00b7 A359', '35,025 ft  \u2193 descending 1,800 ft/min', '480 kt \u00b7 track 135\u00b0', '2026-10-30 16:01Z (adsb.lol)'], 'plane hover text');
 
@@ -104,6 +110,8 @@ highlightGroup = null;
   assert.strictEqual(JSON.stringify(ring.ll), JSON.stringify([41, -105])); assert.strictEqual(ring.o.radius, 13);
   assert.strictEqual(calls.panTo.length, 0, 'no pan when already in view');
   assert.ok(calls.tooltipsOpened >= 1);
+  assert.strictEqual(openTips().length, 1, 'exactly one popup open');
+  assert.strictEqual(openTips()[0], t.markers.get(1));
   assert.ok(t.rows.get(1)._cls.has('sel') && !t.rows.get(3)._cls.has('sel'), 'row highlighted');
   assert.strictEqual(t.rows.get(1).children.at(-1).hidden, false, 'details opened too');
 
@@ -112,12 +120,19 @@ highlightGroup = null;
   assert.strictEqual(JSON.stringify(calls.panTo.at(-1)), '[60,10]', 'panned to the off-screen position');
   assert.strictEqual(JSON.stringify(calls.circles.at(-1).ll), JSON.stringify([60, 10]));
   assert.strictEqual(highlightGroup.items.length, 1, 'only one ring at a time');
+  assert.strictEqual(openTips().length, 1, 'the previous popup closed');
+  assert.strictEqual(openTips()[0], t.markers.get(3));
   assert.ok(t.rows.get(3)._cls.has('sel') && !t.rows.get(1)._cls.has('sel'));
 
   // 6. a message without a location clears the ring
   t.rows.get(2).onclick();
   assert.strictEqual(highlightGroup.items.length, 0, 'ring cleared');
+  assert.strictEqual(openTips().length, 0, 'all popups closed');
   assert.strictEqual(t.selectedMsg, 2);
+
+  // 6b. clicking through many messages never accumulates popups
+  for (let i = 0; i < 6; i++) { [1, 3, 2, 1, 3].forEach(id => t.rows.get(id).onclick()); }
+  assert.ok(openTips().length <= 1, 'at most one popup after lots of clicking, got ' + openTips().length);
 
   // 7. the 30 s refresh keeps the view, the selection and the open details
   t.rows.get(1).onclick();            // clicking toggles: this closes message 1 ...
@@ -127,7 +142,10 @@ highlightGroup = null;
   const [refreshFn] = intervals.find(([, ms]) => ms === 30000);
   await refreshFn(); await tick();
   assert.strictEqual(calls.fitBounds, fits, 'refresh must not re-fit the map');
+  const viewsBefore = calls.setView.length;
   assert.strictEqual(calls.panTo.length, pans, 'refresh must not pan');
+  assert.strictEqual(calls.setView.length, viewsBefore, 'refresh must not re-centre the map');
+  assert.strictEqual(openTips().length, 1, 'the selected message keeps its popup after a refresh');
   assert.strictEqual(t.selectedMsg, 1, 'selection survives');
   assert.strictEqual(t.rows.get(1).children.at(-1).hidden, false, 'open details survive');
   assert.ok(t.rows.get(1)._cls.has('sel'), 'row still highlighted');
@@ -149,11 +167,38 @@ highlightGroup = null;
   const savedPts = pts.splice(0);
   calls.markers.length = 0;
   await t.showTrack(t.watches()[0], false);
+  const fallbackViews = calls.setView.length;
   const fallback = calls.markers.find(m => m.o && m.o.icon);
   assert.ok(fallback, 'fallback plane drawn');
   assert.strictEqual(JSON.stringify(fallback.ll), '[41,-105]', 'uses message 1, not the unverified-time message 3');
   assert.match(fallback.o.icon.html, /rotate\(0deg\)/);
   pts.push(...savedPts);
+
+  // 8b. which fix a newly chosen target is centred on: the newest trustworthy one
+  const focusOn = async (ptsArr, msgsArr) => {
+    const sp = pts.slice(), sm = msgs.slice();
+    pts.splice(0, pts.length, ...ptsArr); msgs.splice(0, msgs.length, ...msgsArr);
+    const n = calls.setView.length;
+    await t.showTrack(t.watches()[0], true);
+    const r = calls.setView.length > n ? JSON.stringify(calls.setView.at(-1)) : null;
+    pts.splice(0, pts.length, ...sp); msgs.splice(0, msgs.length, ...sm);
+    return r;
+  };
+  const adsb = (hh, lat, lon) => ({t: `2026-10-30T${hh}:00Z`, lat, lon, alt_ft: 35000, track: 90, source: 'adsb.lol'});
+  const msg = (id, hh, lat, lon, extra = {}) => ({id, t: `2026-10-30T${hh}:00Z`, kind: 'adsc', summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
+  // ADS-B is stale, a datalink position is newer: centre on the datalink one (the oceanic case)
+  assert.strictEqual(await focusOn([adsb('14:00', 40, -100)], [msg(1, '15:00', 41, -105)]), '[[41,-105],7]');
+  // ADS-B is newer than the datalink position
+  assert.strictEqual(await focusOn([adsb('16:00', 40, -100)], [msg(1, '15:00', 41, -105)]), '[[40,-100],7]');
+  // a later position whose time is unverified, or one flagged impossible, does not beat an older trustworthy one
+  assert.strictEqual(await focusOn([], [msg(1, '15:00', 41, -105), msg(2, '17:00', 60, 10, {time_unverified: true}), msg(3, '18:00', 5, 5, {suspect: 'x'})]), '[[41,-105],7]');
+  // with only unverified-time positions, the newest of those; only impossible ones, the newest of those
+  assert.strictEqual(await focusOn([], [msg(2, '17:00', 60, 10, {time_unverified: true}), msg(3, '18:00', 5, 5, {suspect: 'x'})]), '[[60,10],7]');
+  assert.strictEqual(await focusOn([], [msg(3, '18:00', 5, 5, {suspect: 'x'}), msg(4, '19:00', 6, 6, {suspect: 'y'})]), '[[6,6],7]');
+  // a message position is placed by when it says it was, not when it arrived
+  assert.strictEqual(await focusOn([], [msg(1, '20:00', 41, -105, {pos_t: '2026-10-30T10:00:00Z'}), msg(2, '12:00', 42, -106)]), '[[42,-106],7]');
+  // nothing with a position: the map is left where it is
+  assert.strictEqual(await focusOn([], [{id: 9, t: '2026-10-30T15:00:00Z', kind: 'cpdlc', summary: 's', raw: 'r', label: 'BA', rx_count: 1}]), null);
 
   // 9. a watch with no aircraft yet clears the map without error
   await t.showTrack({id: 9, hex: ''}, true);
