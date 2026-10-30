@@ -222,7 +222,8 @@ type Fix struct {
 // Neighbors returns up to k fixes before and k after t (each within window)
 // from ADS-B and from messages, nearest first on each side, ignoring message
 // excludeID. Message fixes count whether or not they are flagged suspect, so
-// that a coherent run of fixes can vouch for one another.
+// that a coherent run of fixes can vouch for one another. Messages whose time is unverified
+// are left out: they say nothing about where the aircraft was at the time they are filed under.
 func (s *Store) Neighbors(hexAddr string, t time.Time, window time.Duration, excludeID int64, k int) []Fix {
 	lo, hi, at := ts(t.Add(-window)), ts(t.Add(window)), ts(t)
 	collect := func(q, from string, args ...any) []Fix {
@@ -250,7 +251,7 @@ func (s *Store) Neighbors(hexAddr string, t time.Time, window time.Duration, exc
 		return fs
 	}
 	const adsb = `SELECT lat, lon, ts FROM position WHERE hex=? AND ts BETWEEN ? AND ? ORDER BY ts %s LIMIT ?`
-	const msg = `SELECT lat, lon, pos_ts FROM message WHERE hex=? AND pos_ts BETWEEN ? AND ? AND lat IS NOT NULL AND id<>? ORDER BY pos_ts %s LIMIT ?`
+	const msg = `SELECT lat, lon, pos_ts FROM message WHERE hex=? AND pos_ts BETWEEN ? AND ? AND lat IS NOT NULL AND time_flag=0 AND id<>? ORDER BY pos_ts %s LIMIT ?`
 	before := append(collect(fmt.Sprintf(adsb, "DESC"), "adsb", hexAddr, lo, at, k),
 		collect(fmt.Sprintf(msg, "DESC"), "message", hexAddr, lo, at, excludeID, k)...)
 	after := append(collect(fmt.Sprintf(adsb, "ASC"), "adsb", hexAddr, at, hi, k),

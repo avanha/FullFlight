@@ -83,7 +83,14 @@ func decodeInto(st *store.Store, m *store.Message, dir decoder.Direction) {
 		if res.Pos != nil {
 			t := res.Pos.At(m.T)
 			m.Lat, m.Lon, m.AltFt, m.PosT = &res.Pos.Lat, &res.Pos.Lon, res.Pos.AltFt, &t
-			m.Suspect = checkPosition(st, m.Hex, m.ID, res.Pos.Lat, res.Pos.Lon, t)
+			if res.Kind == decoder.KindFMS {
+				m.TimeNote, m.TimeFlag = compareTimes(m.T, fmt.Sprint(res.Fields["wpt_time"]))
+			}
+			// A position whose time is in doubt cannot be judged against where other fixes were at that
+			// time: it may well be a true position at some other time. It is marked unverified instead.
+			if !m.TimeFlag {
+				m.Suspect = checkPosition(st, m.Hex, m.ID, res.Pos.Lat, res.Pos.Lon, t)
+			}
 		}
 		if res.Wx != nil {
 			m.WxDir, m.WxKt, m.WxTemp = res.Wx.WindDirDeg, res.Wx.WindKt, res.Wx.TempC
@@ -92,9 +99,6 @@ func decodeInto(st *store.Store, m *store.Message, dir decoder.Direction) {
 		m.Fixes = fixList(res, m)
 	}
 	m.Mismatch = mismatch(st, m.Hex, *m)
-	if res.Kind == decoder.KindFMS {
-		m.TimeNote, m.TimeFlag = compareTimes(m.T, fmt.Sprint(res.Fields["wpt_time"]))
-	}
 }
 
 // TimeTolerance is how far a message's own time may differ from its arrival
@@ -285,7 +289,11 @@ func Recheck(st *store.Store, hexAddr string, since time.Time) (changed int, err
 		if m.PosT == nil || m.Lat == nil || m.Lon == nil {
 			continue
 		}
-		if why := checkPosition(st, hexAddr, m.ID, *m.Lat, *m.Lon, *m.PosT); why != m.Suspect {
+		why := ""
+		if !m.TimeFlag {
+			why = checkPosition(st, hexAddr, m.ID, *m.Lat, *m.Lon, *m.PosT)
+		}
+		if why != m.Suspect {
 			if err := st.SetSuspect(m.ID, why); err != nil {
 				return changed, err
 			}

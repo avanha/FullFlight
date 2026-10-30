@@ -81,7 +81,10 @@ from the receiving station's clock). Their embedded waypoint time agrees with
 that for some stations and is hours off for others, for reasons not yet
 understood, so FMS positions can be misplaced in time. Those whose waypoint time
 is more than 10 minutes from arrival are marked ⏱ (time unverified), drawn faint
-and dotted, and never offered as the aircraft's last position. The newest ADS-C predicted route is drawn dashed.
+and dotted, and never offered as the aircraft's last position. Such a position is a real one at an unknown
+time, so it is not judged "impossible" against where other fixes were at its filing time, and it is not
+used as a neighbour to judge others by. (N393DA: a report filed at 21:45Z at 40.1N 111.6W was flown at
+17:45Z, as its waypoint time and the ADS-B track both say; the station filed it four hours late.) The newest ADS-C predicted route is drawn dashed.
 
 `GET /api/messages/{hex}?hours=48&limit=300` returns them, oldest first. Airline-
 specific engine/performance data (label H1 and others) has no public format; it

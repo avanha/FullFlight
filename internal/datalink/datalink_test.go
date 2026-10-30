@@ -410,7 +410,9 @@ func posn(latDeg int, latMin float64, lonDeg int, lonMin float64) string {
 	return fmt.Sprintf("POSN%02d%03dW%03d%03d,WPT,000000,350,NXT,000000,NX2,M50,270050,0", latDeg, int(latMin*10), lonDeg, int(lonMin*10))
 }
 
+// fmsMsg is an FMS report from a healthy station: its waypoint time is the arrival time.
 func fmsMsg(id int64, at time.Time, text string) airframes.Message {
+	text = strings.Replace(text, ",WPT,000000,", ",WPT,"+at.Format("150405")+",", 1)
 	return airframes.Message{ID: id, Timestamp: at, Label: "H1", Text: airframes.FlexString(text), FromHex: "A48E3A", ToHex: "260705"}
 }
 
@@ -660,4 +662,45 @@ func TestIngestKeepsWeatherSpeedAndFixes(t *testing.T) {
 	if ms[0].Fixes != "" || ms[0].WxKt != nil || ms[0].GS != nil {
 		t.Errorf("wilco: %+v", ms[0])
 	}
+}
+
+// A position whose own time is hours from its arrival time is not judged against where the other fixes were at
+// the arrival time: it is a real position at an unknown time (a station that stamps late), so it is called
+// unverified, not impossible. Healthy stations are judged as before.
+func TestMisdatedFMSIsUnverifiedNotImpossible(t *testing.T) {
+	st := newStore(t)
+	t0 := time.Date(2026, 10, 28, 21, 17, 0, 0, time.UTC)
+	Ingest(st, "A48E3A", fmsMsg(1, t0, posn(34, 9.8, 115, 41.8)))
+	Ingest(st, "A48E3A", fmsMsg(2, t0.Add(2*time.Minute), posn(34, 8.8, 115, 50.0)))
+	// Boston, 2 minutes later, but its waypoint time says it was sent 4 hours earlier
+	late := fmsMsg(3, t0.Add(4*time.Minute), posn(41, 28.9, 72, 12.2))
+	late.Text = airframes.FlexString(strings.Replace(string(late.Text), ","+t0.Add(4*time.Minute).Format("150405")+",", ",172100,", 1))
+	Ingest(st, "A48E3A", late)
+	// and the same place from a healthy station is still impossible
+	Ingest(st, "A48E3A", fmsMsg(4, t0.Add(5*time.Minute), posn(41, 28.9, 72, 12.2)))
+	check := func() {
+		t.Helper()
+		ms, _ := st.Messages("A48E3A", t0.Add(-time.Hour), t0.Add(2*time.Hour), 20)
+		for _, m := range ms {
+			switch m.ID {
+			case 3:
+				if m.Suspect != "" || !m.TimeFlag {
+					t.Errorf("misdated: suspect=%q timeflag=%v", m.Suspect, m.TimeFlag)
+				}
+			case 4:
+				if m.Suspect == "" || m.TimeFlag {
+					t.Errorf("healthy but impossible: suspect=%q timeflag=%v", m.Suspect, m.TimeFlag)
+				}
+			}
+		}
+	}
+	check()
+	if _, err := Recheck(st, "A48E3A", t0.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	check()
+	// an old flag on such a message is cleared by a recheck
+	st.SetSuspect(3, "left over from before")
+	Recheck(st, "A48E3A", t0.Add(-time.Hour))
+	check()
 }
