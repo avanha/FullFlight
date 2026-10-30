@@ -615,6 +615,20 @@ highlightGroup = null;
     assert.strictEqual(t.planGroup.items.length, 0, 'gone when the aircraft has no plan');
   }
 
+  // ===== 8o'. the estimated-position ghost only appears once the newest fix is no longer live =====
+  {
+    const saved = pts.map(p => ({...p}));
+    const ghosts = async minAgo => {
+      pts.splice(0, pts.length, {t: new Date(Date.now() - minAgo * 60000).toISOString(), lat: 40, lon: -100, alt_ft: 36000, gs: 480, track: 90, source: 'adsb.lol'});
+      await t.showTrack(t.watches()[0], false);
+      return t.projGroup.items.filter(l => l.o && l.o.icon && l.o.icon.className === 'plane').length;
+    };
+    assert.strictEqual(await ghosts(0.5), 0, 'a 30 second old ADS-B fix is live: no ghost');
+    assert.strictEqual(await ghosts(2), 0, 'nor one from two minutes ago, between polls and fetches');
+    assert.strictEqual(await ghosts(5), 1, 'five minutes without a fix: the ghost shows where it probably is now');
+    pts.splice(0, pts.length, ...saved);
+    await t.showTrack(t.watches()[0], false);
+  }
   // ===== 8o. a message with no position: a ghost along the path between the fixes either side of it =====
   {
     const keep = t.flightSegs.slice();

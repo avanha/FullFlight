@@ -356,7 +356,9 @@ function drawWaypoints(msgs) {
 // Dead reckoning from the newest trustworthy fix, along its track at its ground speed. It is only
 // an estimate, so it is limited: not from a fix over an hour old, never more than 90 minutes beyond
 // the fix, not for an aircraft on the ground or too slow to be flying, and not past a known destination.
-const PROJ = {maxFixAgeMin: 60, maxSpanMin: 90, minGs: 100, maxGs: 700, tickMin: 10, ghostAfterSec: 45, destSlackDeg: 35,
+// ghostAfterSec: a fix younger than this is the plane's position (ADS-B arrives every ~45 s, so a younger fix is
+// live); only an older one gets the estimated-position ghost drawn ahead of it.
+const PROJ = {maxFixAgeMin: 60, maxSpanMin: 90, minGs: 100, maxGs: 700, tickMin: 10, ghostAfterSec: 180, destSlackDeg: 35,
   planSlackNM: 60, planSlackDeg: 70};   // follow the filed route only if the fix is within this of it, heading roughly along it
 let aheadMin = 30, lastData = null, lastTrack = {pts: [], msgs: []};
 try { const v = localStorage.getItem('aheadMin'); if (['0', '15', '30', '60'].includes(v)) aheadMin = Number(v); } catch (e) { /* no storage: keep the default */ }
