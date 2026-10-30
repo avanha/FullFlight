@@ -3,6 +3,7 @@ package poller
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -447,5 +448,37 @@ func TestDatelessCallsignWatchLatchesAndFollows(t *testing.T) {
 	p.Once(context.Background())
 	if w, _ := st.ListWatches(true); w[0].Hex != "780AA4" || w[0].Status != watchlist.StatusTracking || w[0].Callsign != "CPA113" {
 		t.Errorf("entry = %+v", w[0])
+	}
+}
+
+func TestUnknownAirlineCallsignIsNotLookedUpAsATail(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 17, 0, 0, 0, time.UTC)
+	for _, in := range []string{"TZP1", "CKK624"} {
+		e, err := watchlist.Parse(in, now, time.Time{})
+		if err != nil || e.Kind != watchlist.KindFlight {
+			t.Fatalf("%s: %+v %v", in, e, err)
+		}
+		st.AddWatch(e)
+	}
+	f := &fake{byCallsign: map[string][]adsb.Aircraft{}, byHex: map[string][]adsb.Aircraft{}, byReg: map[string][]adsb.Aircraft{}}
+	lk := &fakeLookup{}
+	p := &Poller{Store: st, ADSB: f, Airframes: lk, Now: func() time.Time { return now }, WaitingEvery: time.Second}
+	p.Once(context.Background())
+	if lk.calls != 0 {
+		t.Errorf("airframes.io was asked %d times about a registration", lk.calls)
+	}
+	for _, c := range f.calls {
+		if strings.HasPrefix(c, "reg:") {
+			t.Errorf("looked up by registration: %v", f.calls)
+		}
+	}
+	want := map[string]bool{"cs:TZP1": true, "cs:TZP0001": true, "cs:CKK624": true, "cs:CKK0624": true}
+	for _, c := range f.calls {
+		delete(want, c)
+	}
+	if len(want) != 0 {
+		t.Errorf("callsign lookups missing %v; made %v", want, f.calls)
 	}
 }

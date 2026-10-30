@@ -127,7 +127,21 @@ var migrations = []string{
 		lon     REAL NOT NULL,
 		source  TEXT NOT NULL,
 		PRIMARY KEY (name, msg_id)
-	 ) WITHOUT ROWID;`,
+	 ) WITHOUT ROWID;`, // Callsigns of airlines we had no table entry for (TZP1, CKK624) used to be filed as tail watches and
+	// looked up as registrations. Nothing without a hyphen that is three letters then digits can be a
+	// registration, so any such watch that never found an aircraft is a callsign: make it one.
+	`UPDATE OR IGNORE watch SET kind='flight', tail='',
+		status = CASE WHEN status='tracking' THEN 'waiting' ELSE status END
+	 WHERE kind='tail' AND hex='' AND (
+		ident GLOB '[A-Z][A-Z][A-Z][0-9]'
+		OR ident GLOB '[A-Z][A-Z][A-Z][0-9][A-Z]'
+		OR ident GLOB '[A-Z][A-Z][A-Z][0-9][0-9]'
+		OR ident GLOB '[A-Z][A-Z][A-Z][0-9][0-9][A-Z]'
+		OR ident GLOB '[A-Z][A-Z][A-Z][0-9][0-9][0-9]'
+		OR ident GLOB '[A-Z][A-Z][A-Z][0-9][0-9][0-9][A-Z]'
+		OR ident GLOB '[A-Z][A-Z][A-Z][0-9][0-9][0-9][0-9]'
+		OR ident GLOB '[A-Z][A-Z][A-Z][0-9][0-9][0-9][0-9][A-Z]'
+	 );`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.

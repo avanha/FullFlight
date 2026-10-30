@@ -141,3 +141,72 @@ func TestParseBareFlight(t *testing.T) {
 		}
 	}
 }
+
+// Callsigns of airlines nobody told us about are still callsigns: three letters then digits is not a
+// registration. TZP1 (ZIPAIR) and CKK624 (China Cargo) were once looked up as tail numbers.
+func TestUnknownAirlineCallsigns(t *testing.T) {
+	for _, in := range []string{"TZP1", "CKK624", "tzp1", "QXZ9999", "QBC12D"} {
+		e, err := Parse(in, now, time.Time{})
+		if err != nil || e.Kind != KindFlight || e.Ident != strings.ToUpper(in) || e.Date != "" || e.Status != StatusWaiting {
+			t.Errorf("%q: %+v %v", in, e, err)
+		}
+	}
+	// with a destination and no date, and with a date
+	if e, err := Parse("CKK624 PANC", now, time.Time{}); err != nil || e.Kind != KindFlight || e.Dest != "PANC" || e.Date != "" {
+		t.Errorf("destination: %+v %v", e, err)
+	}
+	if e, err := Parse("TZP1 2026-11-05", now, time.Time{}); err != nil || e.Kind != KindFlight || e.Date != "2026-11-05" {
+		t.Errorf("dated: %+v %v", e, err)
+	}
+	// registrations that merely have digits in them are still registrations
+	for in, kind := range map[string]Kind{"N12345": KindTail, "JA123A": KindTail, "HL7500": KindTail, "B-LRM": KindTail, "VH-OQA": KindTail,
+		"N8538V": KindTail, "DAIMA": KindTail, "780AB8": KindHex, "A6F9B3": KindHex} {
+		if e, err := Parse(in, now, time.Time{}); err != nil || e.Kind != kind {
+			t.Errorf("%q: kind %v, want %v (%v)", in, e.Kind, kind, err)
+		}
+	}
+}
+
+// The one real clash: six hex digits that also read as a callsign. A known airline makes it a callsign,
+// otherwise it is an address (and flight: or hex: settles it either way).
+func TestHexShapedCallsign(t *testing.T) {
+	cases := map[string]Kind{"ACA123": KindFlight, "AFR456": KindFlight, "AEE123": KindHex, "ABC123": KindHex,
+		"flight:AEE123": KindFlight, "callsign:abc123": KindFlight, "hex:ACA123": KindHex, "tail:AEE123": KindTail}
+	for in, kind := range cases {
+		if e, err := Parse(in, now, time.Time{}); err != nil || e.Kind != kind {
+			t.Errorf("%q: kind %v, want %v (%v)", in, e.Kind, kind, err)
+		}
+	}
+	if e, _ := Parse("hex:abc123", now, time.Time{}); e.Hex != "ABC123" || e.Ident != "ABC123" {
+		t.Errorf("hex entry = %+v", e)
+	}
+}
+
+// A two-letter airline we do not know is taken for a registration, as JA123A must be; flight: says otherwise.
+func TestExplicitPrefixes(t *testing.T) {
+	if e, _ := Parse("CK624", now, time.Time{}); e.Kind != KindTail {
+		t.Errorf("CK624 alone = %+v", e)
+	}
+	for in, want := range map[string]struct {
+		kind      Kind
+		ident, dt string
+		dest      string
+	}{
+		"flight:CK624":                 {KindFlight, "CK624", "", ""},
+		"FLIGHT:ck624 2026-11-05":      {KindFlight, "CK624", "2026-11-05", ""},
+		"flight:CK624 PANC":            {KindFlight, "CK624", "", "PANC"},
+		"flight:CK624 2026-11-05 PANC": {KindFlight, "CK624", "2026-11-05", "PANC"},
+		"tail:CKK624":                  {KindTail, "CKK624", "", ""},
+		"reg:b-lrm":                    {KindTail, "B-LRM", "", ""},
+	} {
+		e, err := Parse(in, now, time.Time{})
+		if err != nil || e.Kind != want.kind || e.Ident != want.ident || e.Date != want.dt || e.Dest != want.dest {
+			t.Errorf("%q: %+v %v", in, e, err)
+		}
+	}
+	for _, in := range []string{"hex:TZP1", "hex:12345", "hex:", "foo:bar", "tail:", "tail:B-LRM 2026-11-05", "hex:ABC123 SFO", "tail:!!!", "flight:"} {
+		if e, err := Parse(in, now, time.Time{}); err == nil {
+			t.Errorf("%q should be rejected, got %+v", in, e)
+		}
+	}
+}

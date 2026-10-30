@@ -344,3 +344,57 @@ func TestFixNameAt(t *testing.T) {
 		t.Errorf("across the date line: %q %v", n, ok)
 	}
 }
+
+// Watches filed as registrations that are really callsigns (TZP1, CKK624) are corrected on upgrade.
+func TestMigrationFixesCallsignsFiledAsTails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "m.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins := func(kind, ident, status, hex, tail string) {
+		if _, err := s.db.Exec(`INSERT INTO watch (kind, ident, start_ts, end_ts, status, hex, tail) VALUES (?,?,?,?,?,?,?)`,
+			kind, ident, 1, 2, status, hex, tail); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ins("tail", "TZP1", "tracking", "", "TZP1")         // wrong: a callsign
+	ins("tail", "CKK624", "tracking", "", "CKK624")     // wrong
+	ins("tail", "QXZ9999A", "done", "", "QXZ9999A")     // wrong, and finished: stays finished
+	ins("tail", "B-LRM", "tracking", "780AB8", "B-LRM") // a real registration, latched
+	ins("tail", "N12345", "tracking", "", "N12345")     // a real one, never seen
+	ins("tail", "JA123A", "tracking", "", "JA123A")
+	ins("tail", "CKK624X7", "tracking", "", "CKK624X7") // five-digit-ish: not a callsign shape, left alone
+	ins("hex", "ABC123", "tracking", "ABC123", "")      // an address that looks like a callsign: untouched
+	ins("flight", "CPA113", "waiting", "", "")
+	s.db.Exec(`PRAGMA user_version = 6`) // as if this database predates the fix
+	s.Close()
+
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	all, _ := s.ListWatches(false)
+	got := map[string]string{}
+	for _, e := range all {
+		got[e.Ident] = string(e.Kind) + "/" + string(e.Status) + "/" + e.Tail
+	}
+	want := map[string]string{
+		"TZP1": "flight/waiting/", "CKK624": "flight/waiting/", "QXZ9999A": "flight/done/",
+		"B-LRM": "tail/tracking/B-LRM", "N12345": "tail/tracking/N12345", "JA123A": "tail/tracking/JA123A",
+		"CKK624X7": "tail/tracking/CKK624X7", "ABC123": "hex/tracking/", "CPA113": "flight/waiting/",
+	}
+	for k, w := range want {
+		if got[k] != w {
+			t.Errorf("%s = %q, want %q", k, got[k], w)
+		}
+	}
+	// and it ran once: a second open changes nothing
+	s.Close()
+	s2, _ := Open(path)
+	defer s2.Close()
+	if all2, _ := s2.ListWatches(false); len(all2) != len(all) {
+		t.Errorf("reopen changed the watchlist: %d -> %d", len(all), len(all2))
+	}
+}

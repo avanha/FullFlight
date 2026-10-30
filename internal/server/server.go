@@ -269,6 +269,14 @@ func (s *Server) addWatch(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err.Error())
 		return
 	}
+	if e.Kind == watchlist.KindFlight {
+		// a flight we could never find on the air (an airline code we cannot turn into a callsign) is refused now,
+		// not left to fail on every poll
+		if _, err := airlines.CallsignCandidates(e.Ident); err != nil {
+			fail(w, 400, err.Error())
+			return
+		}
+	}
 	if e.Dest != "" {
 		a, ok := airports.Lookup(e.Dest)
 		if !ok {

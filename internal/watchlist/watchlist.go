@@ -62,19 +62,34 @@ var (
 )
 
 // Parse builds an entry from user input such as "UA869 2026-10-31",
-// "UA869 2026-10-31 SFO" (with destination), "B-LRM" or "780AB8". The end of a tail/hex watch is until if non-zero,
-// otherwise now + TailDuration. A date on a tail/hex entry is rejected.
+// "UA869 2026-10-31 SFO" (with destination), "CPA113", "B-LRM" or "780AB8". The end of a tail/hex
+// watch is until if non-zero, otherwise now + TailDuration. A date on a tail/hex entry is rejected.
+//
+// What a lone word is is worked out from its shape (see isBareFlight). Where that cannot be told,
+// say so with a prefix: "flight:CK624", "tail:CKK624" or "hex:ABC123".
 func Parse(input string, now, until time.Time) (Entry, error) {
 	f := strings.Fields(strings.ToUpper(input))
+	force := Kind("")
+	if len(f) > 0 {
+		k, rest, err := splitPrefix(f[0])
+		if err != nil {
+			return Entry{}, err
+		}
+		force, f[0] = k, rest
+	}
+	if (force == KindTail || force == KindHex) && len(f) != 1 {
+		return Entry{}, fmt.Errorf("a %s watch takes just the %s, no date or destination", force, force)
+	}
+	bare := force == KindFlight || (force == "" && len(f) > 0 && isBareFlight(f[0]))
 	switch len(f) {
 	case 1:
-		if isBareFlight(f[0]) {
+		if bare {
 			return parseBareFlight(f[0], "", now, until)
 		}
-		return parseAircraft(f[0], now, until)
+		return parseAircraft(f[0], force, now, until)
 	case 2:
 		// "CPA113 SFO": a callsign with a destination and no date.
-		if isBareFlight(f[0]) && destRe.MatchString(f[1]) && !dateRe.MatchString(f[1]) {
+		if bare && destRe.MatchString(f[1]) && !dateRe.MatchString(f[1]) {
 			return parseBareFlight(f[0], f[1], now, until)
 		}
 		fallthrough
@@ -91,19 +106,45 @@ func Parse(input string, now, until time.Time) (Entry, error) {
 	return Entry{}, fmt.Errorf("expected \"UA869 2026-10-31 [SFO]\", a callsign, a tail, or a hex; got %q", input)
 }
 
+var prefixKinds = map[string]Kind{
+	"FLIGHT": KindFlight, "CALLSIGN": KindFlight, "FLT": KindFlight,
+	"TAIL": KindTail, "REG": KindTail, "REGISTRATION": KindTail,
+	"HEX": KindHex, "ICAO": KindHex,
+}
+
+// splitPrefix reads an optional "flight:", "tail:" or "hex:" off the front of a word.
+func splitPrefix(w string) (Kind, string, error) {
+	name, rest, ok := strings.Cut(w, ":")
+	if !ok {
+		return "", w, nil
+	}
+	k, known := prefixKinds[name]
+	if !known {
+		return "", "", fmt.Errorf("unknown prefix %q (use flight:, tail: or hex:)", name+":")
+	}
+	if rest == "" {
+		return "", "", fmt.Errorf("nothing after %q", name+":")
+	}
+	return k, rest, nil
+}
+
 var (
 	icaoCallsignRe = regexp.MustCompile(`^([A-Z]{3})\d{1,4}[A-Z]?$`)
 	iataFlightRe   = regexp.MustCompile(`^([A-Z0-9]{2})\d{1,4}[A-Z]?$`)
 	dateRe         = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 )
 
-// isBareFlight reports whether a lone token is a flight rather than an
-// aircraft: an ICAO callsign (3 known letters + digits, e.g. CPA113) or a flight
-// number with a known IATA airline code (UA869). Tails are checked after, so
-// N12345 or JA123A stay tails.
+// isBareFlight reports whether a lone word is a flight rather than an aircraft.
+//
+// An ICAO callsign is three letters then digits (CPA113, TZP1, CKK624), whatever the airline: no
+// registration looks like that, since they are hyphenated (B-LRM) or start N, JA, HL and so on. The one
+// clash is a six-character word made only of hex digits (AEE123), which is also an ICAO address; that
+// is a callsign only when we know the airline, otherwise an address. A two-letter flight number
+// (UA869) is a flight only for an airline code we know, since JA123A is a registration; for another
+// airline, write flight:CK624.
 func isBareFlight(s string) bool {
-	if m := icaoCallsignRe.FindStringSubmatch(s); m != nil && airlines.IsICAO(m[1]) {
-		return true
+	if m := icaoCallsignRe.FindStringSubmatch(s); m != nil {
+		return !hexRe.MatchString(s) || airlines.IsICAO(m[1])
 	}
 	m := iataFlightRe.FindStringSubmatch(s)
 	return m != nil && airlines.IsIATA(m[1])
@@ -146,18 +187,26 @@ func parseFlight(ident, date string, now time.Time) (Entry, error) {
 	return Entry{Kind: KindFlight, Ident: ident, Date: date, Start: start, End: end, Status: StatusWaiting}, nil
 }
 
-func parseAircraft(ident string, now, until time.Time) (Entry, error) {
+// parseAircraft reads a tail or an ICAO hex. force picks one when the caller said which; otherwise it
+// is a hex if it is six hex digits, else a tail.
+func parseAircraft(ident string, force Kind, now, until time.Time) (Entry, error) {
 	e := Entry{Ident: ident, Start: now, End: until, Status: StatusTracking}
 	if until.IsZero() {
 		e.End = now.Add(TailDuration)
 	} else if !until.After(now) {
 		return Entry{}, fmt.Errorf("end time must be in the future")
 	}
+	isHex := hexRe.MatchString(ident) && !strings.Contains(ident, "-")
 	switch {
-	case hexRe.MatchString(ident) && !strings.Contains(ident, "-"):
+	case force == KindHex && !isHex:
+		return Entry{}, fmt.Errorf("%q is not an ICAO hex address (six hex digits)", ident)
+	case force == KindHex || (force == "" && isHex):
 		e.Kind = KindHex
 		e.Hex = ident
-	case tailRe.MatchString(ident):
+	case force == KindTail || tailRe.MatchString(ident):
+		if !tailRe.MatchString(ident) {
+			return Entry{}, fmt.Errorf("%q does not look like a registration", ident)
+		}
 		e.Kind = KindTail
 	default:
 		return Entry{}, fmt.Errorf("%q is not a valid tail or ICAO hex", ident)

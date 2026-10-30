@@ -511,3 +511,33 @@ func TestFlightsEndpoint(t *testing.T) {
 		t.Errorf("unknown aircraft: %s", body)
 	}
 }
+
+func TestHowInputIsRead(t *testing.T) {
+	ts := setup(t, "")
+	cases := []struct {
+		input, kind, ident string
+	}{
+		{"TZP1", "flight", "TZP1"},        // ZIPAIR: not an airline we know, still a callsign
+		{"CKK624", "flight", "CKK624"},    // China Cargo
+		{"tail:CKK624", "tail", "CKK624"}, // unless you say otherwise
+		{"flight:CPA113", "flight", "CPA113"},
+		{"hex:abc123", "hex", "ABC123"},
+		{"B-LRM", "tail", "B-LRM"},
+		{"N8538V", "tail", "N8538V"},
+		{"AEE123", "hex", "AEE123"}, // six hex digits: an address unless you say flight:
+	}
+	for _, c := range cases {
+		code, body := do(t, "POST", ts.URL+"/api/watches", fmt.Sprintf(`{"input":%q}`, c.input))
+		if code != 201 || !strings.Contains(body, `"kind":"`+c.kind+`"`) || !strings.Contains(body, `"ident":"`+c.ident+`"`) {
+			t.Errorf("%q: %d %s", c.input, code, body)
+		}
+	}
+	// a flight whose airline we cannot turn into a callsign is refused now, with the way out
+	code, body := do(t, "POST", ts.URL+"/api/watches", `{"input":"flight:CK624"}`)
+	if code != 400 || !strings.Contains(body, `unknown airline code \"CK\"`) || !strings.Contains(body, "ICAO callsign") {
+		t.Errorf("flight:CK624 = %d %s", code, body)
+	}
+	if code, body = do(t, "POST", ts.URL+"/api/watches", `{"input":"bad:XYZ"}`); code != 400 || !strings.Contains(body, "unknown prefix") {
+		t.Errorf("bad prefix: %d %s", code, body)
+	}
+}

@@ -36,6 +36,7 @@
   #msgs .msg.sel { background: #fff3bf; }
   #msgs .msg.hasloc { border-left: 3px solid #d60; }
   .plane { background: none; border: none; }
+  .kindchip { font-weight: normal; font-size: 10px; margin-left: 5px; padding: 0 4px; border-radius: 3px; background: #e8eefc; color: #345; }
   .fhead { margin: 8px 0 2px; padding: 3px 5px; background: #eef2f7; border-left: 3px solid #1d3557; font-size: 12px; cursor: pointer; }
   .fhead.none { background: none; border-left-color: #bbb; color: #888; cursor: default; }
   .fflag-wrap { background: none; border: none; }
@@ -60,6 +61,7 @@
   </form>
   <p class="hint">Flight + date waits for takeoff; an optional destination (IATA or ICAO) ends the watch on arrival there instead of after a long ground stop. A tail or hex tracks now until the end time (default 36 h).</p>
   <div id="err"></div>
+  <div id="note" class="hint"></div>
   <ul id="list"></ul>
   <p class="hint" style="margin:8px 0 0"><label>Flights: <select id="flightsel" style="max-width:100%"><option value="recent">no flights identified yet</option></select></label></p>
   <p class="hint" style="margin:8px 0 0"><label>Projection: look ahead
@@ -185,6 +187,11 @@ async function refresh() {
     // copy button, so an aircraft first followed by callsign can be re-added by registration.
     li.innerHTML = `<button class="del" title="Remove">✕</button><b></b> <span class="${w.status}">${w.status}</span><small></small>`;
     li.querySelector('b').textContent = title;
+    // How the app read what was typed, so a misreading (a callsign taken for a registration) shows at a glance.
+    const chip = document.createElement('span');
+    chip.className = 'kindchip';
+    chip.textContent = w.kind === 'flight' ? (w.date ? 'flight' : 'callsign') : w.kind === 'tail' ? 'registration' : 'hex';
+    li.querySelector('b').append(chip);
     const idLine = li.querySelector('small');
     const bits = [];
     if (w.kind === 'flight' && w.callsign) bits.push(document.createTextNode(w.callsign));
@@ -761,13 +768,24 @@ function renderMessages(msgs) {
   })));
 }
 
+// Say how a new watch was read, and how to say otherwise.
+function readAs(w, typed) {
+  const explicit = /^\s*[a-z]+:/i.test(typed);
+  const hint = explicit ? '' : kind => ` For ${kind}, enter ${kind === 'a registration' ? 'tail' : kind === 'a callsign' ? 'flight' : 'hex'}:${w.ident}.`;
+  if (w.kind === 'flight') return w.date ? `Watching ${w.ident} on ${w.date} as a flight number.` : `Watching ${w.ident} as a callsign.${explicit ? '' : hint('a registration')}`;
+  if (w.kind === 'hex') return `Watching ${w.ident} as an ICAO hex address.${explicit ? '' : hint('a callsign')}`;
+  return `Watching ${w.ident} as a registration.${explicit ? '' : hint('a callsign')}`;
+}
+
 $('#add').onsubmit = async e => {
   e.preventDefault();
   $('#err').textContent = '';
+  $('#note').textContent = '';
   const f = new FormData(e.target), body = {input: f.get('input')};
   if (f.get('until')) body.until = new Date(f.get('until')).toISOString();
   try {
-    await api('/api/watches', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    const added = await api('/api/watches', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
+    $('#note').textContent = readAs(added, body.input);
     e.target.reset();
     refresh();
   } catch (err) { $('#err').textContent = err.message; }

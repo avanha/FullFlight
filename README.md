@@ -20,9 +20,14 @@ Type into the web UI (or `POST /api/watches {"input": "...", "until": "<RFC3339>
 
 - `UA869 2026-10-31`: waits for the callsign (UAL869) to appear, then follows
   that aircraft by hex. Window: 12 h before the date (UTC) through 60 h.
-- `CPA113` or `UA869` (no date): a callsign, or a flight number with a known
-  airline code, is a flight watch that starts now and runs 36 h (or until
-  `until`). `CPA113 SFO` adds a destination.
+- `CPA113`, `TZP1`, `CKK624` (no date): three letters then digits is a callsign, whatever the
+  airline, since no registration looks like that (they are hyphenated, or start N, JA, HL...). It is a
+  flight watch that starts now and runs 36 h (or until `until`); `CPA113 SFO` adds a destination.
+  `UA869` (no date) reads the same way for airlines whose two-letter code we know.
+- When the shape cannot tell, say so with a prefix: `flight:CK624` (a two-letter flight number for an
+  airline we have no code for; the ICAO callsign always works), `tail:CKK624`, `hex:ABC123`. Six hex
+  digits (`AEE123`) are an ICAO address unless we know the airline. The page says how it read each
+  entry, and every watch carries a chip (callsign, registration, hex, flight).
 - `B-LRM` or `780AB8`: tracks now until `until`, default 36 h. A tail is
   resolved to its hex via airframes.io, so it can be watched before it flies.
 

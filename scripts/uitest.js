@@ -61,12 +61,14 @@ const msgs = [
    time_unverified: true, time_note: 'arrived 15:20 Z, report waypoint time 23:55:30 (+8h35m)'},                                       // off-screen, unverified time
   {id: 4, t: '2026-10-30T15:30:00Z', kind: 'unknown', summary: 'Undecoded H1', raw: 'r4', label: 'H1', rx_count: 1, undecoded: true},
 ];
-global.fetch = async url => {
+let postReply = null, lastPostBody = null;
+global.fetch = async (url, opts) => {
+  if (opts && opts.method === 'POST') { lastPostBody = JSON.parse(opts.body); return { status: postReply.status, ok: postReply.status < 400, json: async () => postReply.body }; }
   const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : url.startsWith('/api/flights') ? flightData : null;
   return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(body)) };   // a fresh copy each time, like a real response
 };
 let intervals = [];
-const ctx = { document, L, fetch, console, Date, Number, Math, Set, Map, setInterval: (f, ms) => intervals.push([f, ms]), FormData: class {},
+const ctx = { document, L, fetch, console, Date, Number, Math, Set, Map, setInterval: (f, ms) => intervals.push([f, ms]), FormData: class { constructor(form) { this.v = (form && form.values) || {}; } get(k) { return this.v[k] ?? ''; } },
   setTimeout: f => { calls.timers.push(f); }, window: {isSecureContext: true},
   localStorage: {getItem: k => (k in storage ? storage[k] : null), setItem: (k, v) => { storage[k] = String(v); }},
   navigator: {clipboard: {writeText: async t => { calls.copied.push(t); }}} };
@@ -76,7 +78,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -792,6 +794,38 @@ highlightGroup = null;
   assert.strictEqual(byId['#flightsel'].children[0].textContent, 'no flights identified yet');
   assert.strictEqual(lonsOf(r).length >= 1, true, 'everything is drawn when there are no flights to choose between');
   assert.strictEqual(heads().length, 0, 'and no headings');
+
+  // ===== 8s. how what was typed is read ===========================================================
+  const submit = async (input, reply) => {
+    postReply = reply;
+    const q = id => document.querySelector(id);
+    q('#err').textContent = ''; q('#note').textContent = '';
+    await q('#add').onsubmit({preventDefault() {}, target: {values: {input, until: ''}, reset() {}}});
+    return {note: q('#note').textContent, err: q('#err').textContent, sent: lastPostBody};
+  };
+  let sub = await submit('TZP1', {status: 201, body: {id: 5, kind: 'flight', ident: 'TZP1', status: 'waiting', start: '2026-10-30T17:00:00Z', end: '2026-11-01T05:00:00Z'}});
+  assert.strictEqual(sub.sent.input, 'TZP1');
+  assert.strictEqual(sub.note, 'Watching TZP1 as a callsign. For a registration, enter tail:TZP1.');
+  sub = await submit('tail:CKK624', {status: 201, body: {id: 6, kind: 'tail', ident: 'CKK624', status: 'tracking', start: '2026-10-30T17:00:00Z', end: '2026-11-01T05:00:00Z'}});
+  assert.strictEqual(sub.note, 'Watching CKK624 as a registration.', 'no advice when you said which it was');
+  sub = await submit('CK624', {status: 201, body: {id: 7, kind: 'tail', ident: 'CK624', status: 'tracking', start: '2026-10-30T17:00:00Z', end: '2026-11-01T05:00:00Z'}});
+  assert.strictEqual(sub.note, 'Watching CK624 as a registration. For a callsign, enter flight:CK624.', 'the way out is stated');
+  sub = await submit('AEE123', {status: 201, body: {id: 8, kind: 'hex', ident: 'AEE123', status: 'tracking', start: '2026-10-30T17:00:00Z', end: '2026-11-01T05:00:00Z'}});
+  assert.strictEqual(sub.note, 'Watching AEE123 as an ICAO hex address. For a callsign, enter flight:AEE123.');
+  sub = await submit('UA869 2026-11-05', {status: 201, body: {id: 9, kind: 'flight', ident: 'UA869', date: '2026-11-05', status: 'waiting', start: '2026-10-30T17:00:00Z', end: '2026-11-01T05:00:00Z'}});
+  assert.strictEqual(sub.note, 'Watching UA869 on 2026-11-05 as a flight number.');
+  // a refusal shows the reason and no note
+  sub = await submit('flight:CK624', {status: 400, body: {error: 'unknown airline code "CK"; enter the ICAO callsign instead (three letters, e.g. UAL869)'}});
+  assert.ok(sub.err.includes('unknown airline code "CK"') && sub.note === '', sub.err + ' | ' + sub.note);
+
+  // each watch carries a chip saying how it was read
+  const chipOf = () => byId['#list'].children[0].querySelector('b').children.at(-1);
+  watch.kind = 'flight'; watch.ident = 'TZP1'; delete watch.date; await t.refresh();
+  assert.strictEqual(chipOf().textContent, 'callsign'); assert.strictEqual(chipOf().className, 'kindchip');
+  watch.date = '2026-11-05'; await t.refresh(); assert.strictEqual(chipOf().textContent, 'flight');
+  watch.kind = 'tail'; delete watch.date; await t.refresh(); assert.strictEqual(chipOf().textContent, 'registration');
+  watch.kind = 'hex'; await t.refresh(); assert.strictEqual(chipOf().textContent, 'hex');
+  watch.kind = 'tail'; watch.ident = 'B-LRM'; await t.refresh();
 
   // 9. a watch with no aircraft yet clears the map without error
   await t.showTrack({id: 9, hex: ''}, true);
