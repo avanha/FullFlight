@@ -7,3 +7,8 @@ test:
 	go vet ./... && go test ./...
 build:
 	go build -o bin/ ./cmd/...
+
+# Behavioural check of the web page script (needs node); not part of `make test`.
+.PHONY: uitest
+uitest:
+	node scripts/uitest.js

@@ -41,6 +41,11 @@ type Message struct {
 
 	// Raw link-layer facts used to work out the direction.
 	FromHex, ToHex, AFDir string
+
+	// TimeNote compares the message's own time with its arrival time;
+	// TimeFlag is set when they disagree by more than TimeTolerance.
+	TimeNote string
+	TimeFlag bool
 }
 
 // DupKey identifies a message independent of which station heard it.
@@ -71,11 +76,11 @@ func (s *Store) AddMessage(m Message) (bool, error) {
 	}
 	res, err := s.db.Exec(`INSERT OR IGNORE INTO message (id, hex, ts, label, block_id, msg_num, direction, source_type, station, freq,
 		text, dup_key, kind, tail, callsign, flight, summary, detail, decoded, route, lat, lon, alt_ft, pos_ts, suspect,
-		af_tail, af_flight, af_dep, af_dest, mismatch, from_hex, to_hex, af_dir)
-		VALUES (?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?)`,
+		af_tail, af_flight, af_dep, af_dest, mismatch, from_hex, to_hex, af_dir, time_note, time_flag)
+		VALUES (?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?, ?,?)`,
 		m.ID, m.Hex, ts(m.T), m.Label, m.BlockID, m.MsgNum, m.Direction, m.SourceType, m.Station, m.Freq,
 		m.Text, key, m.Kind, m.Tail, m.Callsign, m.Flight, m.Summary, m.Detail, m.Decoded, m.Route, m.Lat, m.Lon, m.AltFt, posT, m.Suspect,
-		m.AFTail, m.AFFlight, m.AFDep, m.AFDest, m.Mismatch, m.FromHex, m.ToHex, m.AFDir)
+		m.AFTail, m.AFFlight, m.AFDep, m.AFDest, m.Mismatch, m.FromHex, m.ToHex, m.AFDir, m.TimeNote, boolInt(m.TimeFlag))
 	if err != nil {
 		return false, err
 	}
@@ -85,7 +90,7 @@ func (s *Store) AddMessage(m Message) (bool, error) {
 
 const messageCols = `id, hex, ts, label, block_id, msg_num, direction, source_type, station, freq, text, rx_count,
 	kind, tail, callsign, flight, summary, detail, decoded, route, lat, lon, alt_ft, pos_ts, suspect,
-	af_tail, af_flight, af_dep, af_dest, mismatch, from_hex, to_hex, af_dir`
+	af_tail, af_flight, af_dep, af_dest, mismatch, from_hex, to_hex, af_dir, time_note, time_flag`
 
 func scanMessages(rows *sql.Rows) ([]Message, error) {
 	defer rows.Close()
@@ -94,12 +99,13 @@ func scanMessages(rows *sql.Rows) ([]Message, error) {
 		var m Message
 		var t int64
 		var posT *int64
+		var tflag int
 		if err := rows.Scan(&m.ID, &m.Hex, &t, &m.Label, &m.BlockID, &m.MsgNum, &m.Direction, &m.SourceType, &m.Station, &m.Freq,
 			&m.Text, &m.RxCount, &m.Kind, &m.Tail, &m.Callsign, &m.Flight, &m.Summary, &m.Detail, &m.Decoded, &m.Route,
-			&m.Lat, &m.Lon, &m.AltFt, &posT, &m.Suspect, &m.AFTail, &m.AFFlight, &m.AFDep, &m.AFDest, &m.Mismatch, &m.FromHex, &m.ToHex, &m.AFDir); err != nil {
+			&m.Lat, &m.Lon, &m.AltFt, &posT, &m.Suspect, &m.AFTail, &m.AFFlight, &m.AFDep, &m.AFDest, &m.Mismatch, &m.FromHex, &m.ToHex, &m.AFDir, &m.TimeNote, &tflag); err != nil {
 			return nil, err
 		}
-		m.T = time.Unix(t, 0).UTC()
+		m.T, m.TimeFlag = time.Unix(t, 0).UTC(), tflag == 1
 		if posT != nil {
 			v := time.Unix(*posT, 0).UTC()
 			m.PosT = &v
@@ -142,9 +148,9 @@ func (s *Store) UpdateDecoded(m Message) error {
 		posT = &v
 	}
 	_, err := s.db.Exec(`UPDATE message SET direction=?, kind=?, tail=?, callsign=?, flight=?, summary=?, detail=?, decoded=?, route=?,
-		lat=?, lon=?, alt_ft=?, pos_ts=?, suspect=?, mismatch=? WHERE id=?`,
+		lat=?, lon=?, alt_ft=?, pos_ts=?, suspect=?, mismatch=?, time_note=?, time_flag=? WHERE id=?`,
 		m.Direction, m.Kind, m.Tail, m.Callsign, m.Flight, m.Summary, m.Detail, m.Decoded, m.Route,
-		m.Lat, m.Lon, m.AltFt, posT, m.Suspect, m.Mismatch, m.ID)
+		m.Lat, m.Lon, m.AltFt, posT, m.Suspect, m.Mismatch, m.TimeNote, boolInt(m.TimeFlag), m.ID)
 	return err
 }
 
@@ -224,16 +230,23 @@ type MessagePosition struct {
 }
 
 // LastMessagePosition returns the newest position carried by a message for the
-// aircraft, skipping ones flagged suspect.
+// aircraft, skipping ones flagged suspect or whose time is unverified.
 func (s *Store) LastMessagePosition(hexAddr string) (MessagePosition, bool) {
 	var p MessagePosition
 	var t int64
 	err := s.db.QueryRow(`SELECT pos_ts, kind, lat, lon, alt_ft FROM message
-		WHERE hex=? AND pos_ts IS NOT NULL AND lat IS NOT NULL AND suspect=''
+		WHERE hex=? AND pos_ts IS NOT NULL AND lat IS NOT NULL AND suspect='' AND time_flag=0
 		ORDER BY pos_ts DESC LIMIT 1`, hexAddr).Scan(&t, &p.Kind, &p.Lat, &p.Lon, &p.AltFt)
 	if err != nil {
 		return MessagePosition{}, false
 	}
 	p.T = time.Unix(t, 0).UTC()
 	return p, true
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }

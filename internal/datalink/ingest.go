@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -84,6 +85,47 @@ func decodeInto(st *store.Store, m *store.Message, dir decoder.Direction) {
 		}
 	}
 	m.Mismatch = mismatch(st, m.Hex, *m)
+	if res.Kind == decoder.KindFMS {
+		m.TimeNote, m.TimeFlag = compareTimes(m.T, fmt.Sprint(res.Fields["wpt_time"]))
+	}
+}
+
+// TimeTolerance is how far a message's own time may differ from its arrival
+// time before the placement is called unverified. The two agree within a few
+// minutes for healthy stations; some are hours apart for unknown reasons.
+const TimeTolerance = 10 * time.Minute
+
+// compareTimes describes a message's own hhmmss time against when it arrived,
+// and reports whether they disagree by more than TimeTolerance. The embedded
+// time has no date, so the difference is taken modulo a day, in (-12h, 12h].
+func compareTimes(arrived time.Time, hhmmss string) (note string, flag bool) {
+	if len(hhmmss) != 6 {
+		return "", false
+	}
+	h, e1 := strconv.Atoi(hhmmss[:2])
+	m, e2 := strconv.Atoi(hhmmss[2:4])
+	s, e3 := strconv.Atoi(hhmmss[4:])
+	if e1 != nil || e2 != nil || e3 != nil || h > 23 || m > 59 || s > 59 {
+		return "", false
+	}
+	a := arrived.UTC()
+	d := time.Duration(h*3600+m*60+s)*time.Second - time.Duration(a.Hour()*3600+a.Minute()*60+a.Second())*time.Second
+	for d > 12*time.Hour {
+		d -= 24 * time.Hour
+	}
+	for d <= -12*time.Hour {
+		d += 24 * time.Hour
+	}
+	sign := "+"
+	if d < 0 {
+		sign, d = "-", -d
+	}
+	flag = d > TimeTolerance
+	note = fmt.Sprintf("arrived %s Z, report waypoint time %s:%s:%s (%s%s)", a.Format("15:04:05"), hhmmss[:2], hhmmss[2:4], hhmmss[4:], sign, d.Round(time.Second))
+	if flag {
+		note += ": more than 10 minutes apart, so the position's time is unverified"
+	}
+	return note, flag
 }
 
 // Redecode re-runs our decoder over every stored message, oldest first, and

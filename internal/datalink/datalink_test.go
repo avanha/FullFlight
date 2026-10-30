@@ -495,3 +495,80 @@ func TestRecheckClearsFlagsOnceNeighboursArrive(t *testing.T) {
 		t.Errorf("second recheck changed %d", n)
 	}
 }
+
+func TestCompareTimes(t *testing.T) {
+	at := func(h, m, s int) time.Time { return time.Date(2026, 10, 28, h, m, s, 0, time.UTC) }
+	cases := []struct {
+		name    string
+		arrived time.Time
+		embed   string
+		flag    bool
+		note    []string
+	}{
+		{"Boston run (healthy station)", at(21, 46, 32), "214212", false, []string{"arrived 21:46:32 Z", "21:42:12", "-4m20s"}},
+		{"California run (hours apart)", at(21, 17, 17), "235530", true, []string{"+2h38m13s", "unverified"}},
+		{"just inside tolerance", at(12, 0, 0), "125959", false, []string{"+59m59s"}[:0]},
+		{"across midnight, close", at(23, 59, 0), "000100", false, []string{"+2m0s"}},
+		{"across midnight, far", at(23, 59, 0), "060000", true, []string{"+6h1m0s"}},
+		{"embedded hours behind", at(1, 0, 0), "230000", true, []string{"-2h0m0s"}},
+	}
+	cases[2].embed, cases[2].arrived = "120959", at(12, 0, 0) // 9m59s ahead: inside the 10 minute tolerance
+	cases[2].note = []string{"+9m59s"}
+	for _, c := range cases {
+		note, flag := compareTimes(c.arrived, c.embed)
+		if flag != c.flag {
+			t.Errorf("%s: flag = %v, want %v (%s)", c.name, flag, c.flag, note)
+		}
+		for _, want := range c.note {
+			if !strings.Contains(note, want) {
+				t.Errorf("%s: note %q missing %q", c.name, note, want)
+			}
+		}
+	}
+	for _, bad := range []string{"", "12", "ab1234", "246100", "126100", "123499"} {
+		if n, f := compareTimes(at(12, 0, 0), bad); n != "" || f {
+			t.Errorf("%q: %q %v", bad, n, f)
+		}
+	}
+}
+
+func TestIngestFMSTimeNote(t *testing.T) {
+	st := newStore(t)
+	f := fixture(t, "dal_fms_posn") // arrived 16:34:19Z, waypoint time 23:27:18: hours apart
+	if _, err := Ingest(st, "A48E3A", msg(1, f)); err != nil {
+		t.Fatal(err)
+	}
+	ms, _ := st.Messages("A48E3A", f.Received.Add(-time.Hour), f.Received.Add(time.Hour), 5)
+	m := ms[0]
+	if !m.TimeFlag || !strings.Contains(m.TimeNote, "23:27:18") || !strings.Contains(m.TimeNote, "unverified") {
+		t.Errorf("flag=%v note=%q", m.TimeFlag, m.TimeNote)
+	}
+	// The position is still stored (and drawn), but it no longer counts as the aircraft's last position.
+	if m.Lat == nil {
+		t.Fatal("position dropped")
+	}
+	if _, ok := st.LastMessagePosition("A48E3A"); ok {
+		t.Error("an unverified-time position was offered as the last position")
+	}
+	// Other message kinds carry no such note.
+	st2 := newStore(t)
+	w := fixture(t, "cpdlc_wilco")
+	Ingest(st2, "780AA4", msg(1, w))
+	ms, _ = st2.Messages("780AA4", w.Received.Add(-time.Hour), w.Received.Add(time.Hour), 5)
+	if ms[0].TimeNote != "" || ms[0].TimeFlag {
+		t.Errorf("cpdlc: %q %v", ms[0].TimeNote, ms[0].TimeFlag)
+	}
+}
+
+func TestRedecodeFillsTimeNote(t *testing.T) {
+	st := newStore(t)
+	f := fixture(t, "dal_fms_posn")
+	st.AddMessage(store.Message{ID: 1, Hex: "A48E3A", T: f.Received, Label: "H1", Text: f.Text, FromHex: "A48E3A", ToHex: "260705"})
+	if n, err := Redecode(st); err != nil || n != 1 {
+		t.Fatalf("%d %v", n, err)
+	}
+	ms, _ := st.Messages("A48E3A", f.Received.Add(-time.Hour), f.Received.Add(time.Hour), 5)
+	if !ms[0].TimeFlag || ms[0].TimeNote == "" {
+		t.Errorf("%+v", ms[0])
+	}
+}

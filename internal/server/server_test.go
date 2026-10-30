@@ -193,8 +193,29 @@ func TestMessagesFlagUndecoded(t *testing.T) {
 	st.AddMessage(store.Message{ID: 3, Hex: "A48E3A", T: now.Add(-time.Hour), Label: "BA", Text: "x3", Kind: "cpdlc", Summary: "CPDLC downlink: WILCO"})
 	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
 	defer ts.Close()
+	st.AddMessage(store.Message{ID: 4, Hex: "A48E3A", T: now.Add(-time.Hour), Label: "H1", Text: "x4", Kind: "fms_position", Summary: "FMS", TimeNote: "arrived 1 Z", TimeFlag: true})
 	_, body := do(t, "GET", ts.URL+"/api/messages/A48E3A", "")
+	if strings.Count(body, `"time_unverified":true`) != 1 || !strings.Contains(body, `"time_note":"arrived 1 Z"`) {
+		t.Errorf("time fields: %s", body)
+	}
 	if strings.Count(body, `"undecoded":true`) != 2 {
 		t.Errorf("want 2 undecoded: %s", body)
+	}
+}
+
+func TestTrackCarriesSpeedHeadingAndVerticalRate(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 18, 0, 0, 0, time.UTC)
+	alt, gs, trk, vr := 35025.0, 480.5, 135.0, -1800.0
+	st.AddPosition(store.Position{Hex: "A48E3A", T: now.Add(-time.Minute), Lat: 40, Lon: -100, AltFt: &alt, GS: &gs, Track: &trk, VRate: &vr, Callsign: "DAL1317", Source: "adsb.lol"})
+	st.AddPosition(store.Position{Hex: "A48E3A", T: now.Add(-30 * time.Second), Lat: 40.1, Lon: -100, OnGround: true, Source: "adsb.lol"})
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	_, body := do(t, "GET", ts.URL+"/api/track/A48E3A", "")
+	for _, want := range []string{`"gs":480.5`, `"track":135`, `"vrate":-1800`, `"alt_ft":35025`, `"on_ground":true`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("track JSON missing %s: %s", want, body)
+		}
 	}
 }

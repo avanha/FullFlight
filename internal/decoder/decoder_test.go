@@ -423,6 +423,9 @@ func TestDeltaH1(t *testing.T) {
 	if !r.Pos.At(f.Received).Equal(f.Received) {
 		t.Error("a POSN report should be placed at its receipt time")
 	}
+	if r.Fields["wpt_time"] != "232718" {
+		t.Errorf("wpt_time = %v", r.Fields["wpt_time"])
+	}
 	if r.Summary != "FMS position report 34.745N 119.325W FL250, next MDOTS" {
 		t.Errorf("summary = %q", r.Summary)
 	}

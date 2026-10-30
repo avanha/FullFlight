@@ -61,7 +61,9 @@ FMS position reports are placed at their receipt time, which is the time
 airframes.io stored them (its `timestamp` equals its `createdAt`; it is not read
 from the receiving station's clock). Their embedded waypoint time agrees with
 that for some stations and is hours off for others, for reasons not yet
-understood, so FMS positions can be misplaced in time. The newest ADS-C predicted route is drawn dashed.
+understood, so FMS positions can be misplaced in time. Those whose waypoint time
+is more than 10 minutes from arrival are marked ⏱ (time unverified), drawn faint
+and dotted, and never offered as the aircraft's last position. The newest ADS-C predicted route is drawn dashed.
 
 `GET /api/messages/{hex}?hours=48&limit=300` returns them, oldest first. Airline-
 specific engine/performance data (label H1 and others) has no public format; it
@@ -71,6 +73,14 @@ the link is the aircraft (`fromHex`/`toHex`), else tried both ways.
 
 After improving the decoder, run `bin/fullflight -config config.yaml -redecode` to
 re-decode every stored message from its raw text (idempotent).
+
+## Web page
+
+Click a message that has a position (orange bar on its left) to ring it on the
+map; the map pans only if it is out of view. Hover a message's time for its age.
+The aircraft is drawn as a plane turned to its track; hovering it shows altitude,
+climb/descent trend, ground speed and track. `make uitest` (needs node) drives the
+page script against a fake DOM.
 
 ## Status
 

@@ -205,6 +205,8 @@ type pointJSON struct {
 	AltFt    *float64  `json:"alt_ft"`
 	GS       *float64  `json:"gs"`
 	Track    *float64  `json:"track"`
+	VRate    *float64  `json:"vrate"` // ft/min, positive climbing
+	OnGround bool      `json:"on_ground,omitempty"`
 	Callsign string    `json:"callsign"`
 	Source   string    `json:"source"`
 }
@@ -224,7 +226,7 @@ func (s *Server) track(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]pointJSON, 0, len(ps))
 	for _, p := range ps {
-		out = append(out, pointJSON{p.T, p.Lat, p.Lon, p.AltFt, p.GS, p.Track, p.Callsign, p.Source})
+		out = append(out, pointJSON{T: p.T, Lat: p.Lat, Lon: p.Lon, AltFt: p.AltFt, GS: p.GS, Track: p.Track, VRate: p.VRate, OnGround: p.OnGround, Callsign: p.Callsign, Source: p.Source})
 	}
 	writeJSON(w, 200, out)
 }
@@ -251,29 +253,31 @@ func (s *Server) airframes(w http.ResponseWriter, r *http.Request) {
 }
 
 type messageJSON struct {
-	ID        int64      `json:"id"`
-	T         time.Time  `json:"t"`
-	Label     string     `json:"label"`
-	Kind      string     `json:"kind"`
-	Direction string     `json:"dir,omitempty"`
-	Summary   string     `json:"summary"`
-	Undecoded bool       `json:"undecoded,omitempty"` // we have no decoder for it (vendor data, MIAM fragments)
-	Detail    string     `json:"detail,omitempty"`
-	Raw       string     `json:"raw"`
-	Tail      string     `json:"tail,omitempty"`
-	Flight    string     `json:"flight,omitempty"`
-	Callsign  string     `json:"callsign,omitempty"`
-	Station   string     `json:"station,omitempty"`
-	RxCount   int        `json:"rx_count"`
-	Lat       *float64   `json:"lat,omitempty"`
-	Lon       *float64   `json:"lon,omitempty"`
-	AltFt     *float64   `json:"alt_ft,omitempty"`
-	PosT      *time.Time `json:"pos_t,omitempty"`
-	Suspect   string     `json:"suspect,omitempty"`
-	Mismatch  string     `json:"mismatch,omitempty"`
-	AFTail    string     `json:"af_tail,omitempty"`
-	AFFlight  string     `json:"af_flight,omitempty"`
-	Route     any        `json:"route,omitempty"`
+	ID             int64      `json:"id"`
+	T              time.Time  `json:"t"`
+	Label          string     `json:"label"`
+	Kind           string     `json:"kind"`
+	Direction      string     `json:"dir,omitempty"`
+	Summary        string     `json:"summary"`
+	Undecoded      bool       `json:"undecoded,omitempty"` // we have no decoder for it (vendor data, MIAM fragments)
+	Detail         string     `json:"detail,omitempty"`
+	Raw            string     `json:"raw"`
+	Tail           string     `json:"tail,omitempty"`
+	Flight         string     `json:"flight,omitempty"`
+	Callsign       string     `json:"callsign,omitempty"`
+	Station        string     `json:"station,omitempty"`
+	RxCount        int        `json:"rx_count"`
+	Lat            *float64   `json:"lat,omitempty"`
+	Lon            *float64   `json:"lon,omitempty"`
+	AltFt          *float64   `json:"alt_ft,omitempty"`
+	PosT           *time.Time `json:"pos_t,omitempty"`
+	Suspect        string     `json:"suspect,omitempty"`
+	TimeNote       string     `json:"time_note,omitempty"`
+	TimeUnverified bool       `json:"time_unverified,omitempty"`
+	Mismatch       string     `json:"mismatch,omitempty"`
+	AFTail         string     `json:"af_tail,omitempty"`
+	AFFlight       string     `json:"af_flight,omitempty"`
+	Route          any        `json:"route,omitempty"`
 }
 
 // messages returns an aircraft's decoded datalink messages, oldest first.
@@ -298,7 +302,7 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	for _, m := range ms {
 		j := messageJSON{Undecoded: m.Kind == "unknown" || m.Summary == "MIAM (not decoded)", ID: m.ID, T: m.T, Label: m.Label, Kind: m.Kind, Direction: m.Direction, Summary: m.Summary,
 			Detail: m.Detail, Raw: m.Text, Tail: m.Tail, Flight: m.Flight, Callsign: m.Callsign, Station: m.Station,
-			RxCount: m.RxCount, Lat: m.Lat, Lon: m.Lon, AltFt: m.AltFt, PosT: m.PosT, Suspect: m.Suspect,
+			RxCount: m.RxCount, Lat: m.Lat, Lon: m.Lon, AltFt: m.AltFt, PosT: m.PosT, Suspect: m.Suspect, TimeNote: m.TimeNote, TimeUnverified: m.TimeFlag,
 			Mismatch: m.Mismatch, AFTail: m.AFTail, AFFlight: m.AFFlight}
 		if m.Route != "" {
 			json.Unmarshal([]byte(m.Route), &j.Route)

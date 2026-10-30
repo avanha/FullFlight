@@ -107,6 +107,10 @@ var migrations = []string{
 	`ALTER TABLE message ADD COLUMN from_hex TEXT NOT NULL DEFAULT '';
 	 ALTER TABLE message ADD COLUMN to_hex   TEXT NOT NULL DEFAULT '';
 	 ALTER TABLE message ADD COLUMN af_dir   TEXT NOT NULL DEFAULT '';`,
+	// Where a message carries its own time that can be compared with its arrival
+	// time: both, and whether they disagree by enough to distrust the placement.
+	`ALTER TABLE message ADD COLUMN time_note TEXT NOT NULL DEFAULT '';
+	 ALTER TABLE message ADD COLUMN time_flag INTEGER NOT NULL DEFAULT 0;`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.

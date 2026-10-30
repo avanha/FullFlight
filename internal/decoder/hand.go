@@ -178,6 +178,9 @@ func parseFMS(body string, r *Result) {
 		p.AltFt = &ft
 	}
 	r.Pos = p
+	if t := get(2); len(t) == 6 {
+		r.Fields["wpt_time"] = t // hhmmss, as sent
+	}
 	for k, i := range map[string]int{"waypoint": 1, "next_waypoint": 4, "next_next_waypoint": 6} {
 		if v := get(i); v != "" {
 			r.Fields[k] = v
