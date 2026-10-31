@@ -17,11 +17,12 @@ const ClockSkew = 5 * time.Minute
 const MaxPlausibleKt = 700.0
 
 // ResolveSecondsPastHour places an ADS-C "seconds past the hour" timestamp:
-// the hour that puts the report at or just before recv (allowing ClockSkew).
+// the hour that puts the report at or just before recv (allowing ClockSkew). The next hour is a candidate too: a
+// station whose clock is behind logs a report from 12:02:56 at 11:59:40.
 func ResolveSecondsPastHour(secs float64, recv time.Time) time.Time {
 	recv = recv.UTC()
-	t := recv.Truncate(time.Hour).Add(time.Duration(secs * float64(time.Second)))
-	if t.After(recv.Add(ClockSkew)) {
+	t := recv.Truncate(time.Hour).Add(time.Hour).Add(time.Duration(secs * float64(time.Second)))
+	for t.After(recv.Add(ClockSkew)) {
 		t = t.Add(-time.Hour)
 	}
 	return t
@@ -29,11 +30,12 @@ func ResolveSecondsPastHour(secs float64, recv time.Time) time.Time {
 
 // ResolveSecondsOfDay places a time-of-day (seconds since 00:00 UTC) on a date:
 // the day that puts it at or just before recv, allowing ClockSkew. CPDLC
-// reports carry only hh:mm.
+// reports carry only hh:mm. The next day is a candidate too, for a report timed just after midnight and logged just
+// before it.
 func ResolveSecondsOfDay(secs float64, recv time.Time) time.Time {
 	recv = recv.UTC()
-	t := recv.Truncate(24 * time.Hour).Add(time.Duration(secs * float64(time.Second)))
-	if t.After(recv.Add(ClockSkew)) {
+	t := recv.Truncate(24 * time.Hour).Add(24 * time.Hour).Add(time.Duration(secs * float64(time.Second)))
+	for t.After(recv.Add(ClockSkew)) {
 		t = t.Add(-24 * time.Hour)
 	}
 	return t
@@ -103,7 +105,7 @@ func ResolveDayTime(day int, secs float64, recv time.Time) time.Time {
 	recv = recv.UTC()
 	base := recv.Truncate(24 * time.Hour)
 	var fallback time.Time
-	for k := 0; k <= 10; k++ {
+	for k := -1; k <= 10; k++ { // k = -1: tomorrow, for a report timed just after midnight and logged just before
 		t := base.AddDate(0, 0, -k).Add(time.Duration(secs * float64(time.Second)))
 		if t.After(recv.Add(ClockSkew)) {
 			continue

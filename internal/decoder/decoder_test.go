@@ -259,9 +259,11 @@ func TestResolveSecondsPastHour(t *testing.T) {
 		want time.Time
 	}{
 		{429, at(4, 7, 17), at(4, 7, 9)},
-		{3590, at(5, 0, 5), at(4, 59, 50)}, // report just before the hour turned
-		{429, at(4, 5, 0), at(4, 7, 9)},    // station clock ~2 min behind: stay in this hour
-		{429, at(4, 1, 0), at(3, 7, 9)},    // far too early: previous hour
+		{3590, at(5, 0, 5), at(4, 59, 50)},   // report just before the hour turned
+		{429, at(4, 5, 0), at(4, 7, 9)},      // station clock ~2 min behind: stay in this hour
+		{429, at(4, 1, 0), at(3, 7, 9)},      // far too early: previous hour
+		{176, at(11, 59, 40), at(12, 2, 56)}, // logged 3 min before the report's own time, over the hour
+		{3590, at(4, 59, 0), at(4, 59, 50)},  // ... and still this hour when that is the nearer
 	}
 	for _, c := range cases {
 		if got := ResolveSecondsPastHour(c.secs, c.recv); !got.Equal(c.want) {
@@ -813,6 +815,7 @@ func TestResolveDayTime(t *testing.T) {
 		{"7 h late, same day", 28, sec(10, 20), at(28, 17, 30), at(28, 10, 20)},
 		{"a flight dated the 28th, reporting late in the evening of the 29th", 28, sec(23, 0), at(30, 3, 0), at(29, 23, 0)},
 		{"no matching day: the latest time of day", 15, sec(10, 20), at(30, 12, 0), at(30, 10, 20)},
+		{"timed just after midnight, logged just before", 31, sec(0, 2), at(30, 23, 59), at(31, 0, 2)},
 	} {
 		if got := ResolveDayTime(tc.day, tc.s, tc.recv); !got.Equal(tc.want) {
 			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
@@ -899,7 +902,7 @@ func TestChinaCargoPOSA1(t *testing.T) {
 	// Delivered after the window closed: the middle of it.
 	f, r = load(t, "ck_posa1_late")
 	near(t, "lon", r.Pos.Lon, -118.539, 1e-6)
-	want := time.Date(2026, 10, 30, 17, 11, 46, 0, time.UTC).Add(time.Duration(((17*3600+13*60+25)-(17*3600+11*60+46))*1e9 / 2))
+	want := time.Date(2026, 10, 30, 17, 11, 46, 0, time.UTC).Add(time.Duration(((17*3600 + 13*60 + 25) - (17*3600 + 11*60 + 46)) * 1e9 / 2))
 	if got := r.Pos.At(f.Received); !got.Equal(want) {
 		t.Errorf("late: placed at %v, want %v", got, want)
 	}
