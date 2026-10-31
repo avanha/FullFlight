@@ -20,6 +20,7 @@ import (
 	"github.com/avanha/fullflight/internal/flights"
 	"github.com/avanha/fullflight/internal/landing"
 	"github.com/avanha/fullflight/internal/navdata"
+	"github.com/avanha/fullflight/internal/regs"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/watchlist"
 	"github.com/avanha/fullflight/internal/waypoints"
@@ -557,6 +558,8 @@ func (s *Server) airframes(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(a.Tails) > 0 {
 			j.Tail = a.Tails[0].Tail
+		} else if t, ok := regs.TailForHex(a.Hex); ok {
+			j.Tail = t // never seen with a registration, but its address gives it away
 		}
 		out = append(out, j)
 	}

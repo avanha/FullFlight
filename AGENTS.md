@@ -15,6 +15,7 @@ the user-facing reference and must be kept in step with the code.
   `internal/adsb/` and `internal/poller/` are the ADS-B sources and polling, `internal/aerodatabox/` is the optional lookup.
 - `internal/flights/` divides an aircraft's history into flights; `internal/airlines/` maps airline codes;
   `internal/flightplan/`, `internal/waypoints/`, `internal/navdata/`, `internal/airports/` hold route and place data.
+  `internal/regs/` works out a hex from a US, Canadian or Australian registration and back (the countries whose addresses follow a rule).
 - `internal/store/` is SQLite (tables `watch`, `position`, `message`, `fix`, `airframe`, ...), `internal/server/` the HTTP API,
   `internal/server/static/index.html` the whole map page (HTML, CSS and script in one file).
 - `scripts/uitest.js` and `scripts/uitest-notes.js` drive the page script against a fake DOM and a recording fake Leaflet.

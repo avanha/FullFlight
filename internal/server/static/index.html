@@ -82,7 +82,7 @@
   .fhead { margin: 8px 0 2px; padding: 3px 5px; background: #eef2f7; border-left: 3px solid #1d3557; font-size: 12px; cursor: pointer; }
   .fhead.none { background: none; border-left-color: #bbb; color: #888; cursor: default; }
   /* Leaflet keeps a tooltip on one line; a long line (where a landed aircraft says how it was inferred) wraps instead */
-  .leaflet-tooltip { white-space: normal; max-width: 340px; overflow-wrap: anywhere; }
+  .leaflet-tooltip { white-space: normal; width: max-content; max-width: 340px; overflow-wrap: break-word; }
   .fflag-wrap { background: none; border: none; }
   .fflag { position: absolute; transform: translate(6px, -50%); background: #1d3557; color: #fff; font: 11px system-ui, sans-serif; padding: 1px 5px; border-radius: 3px; white-space: nowrap; cursor: pointer; }
   .fflag.latest { background: #c00; }

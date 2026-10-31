@@ -169,6 +169,34 @@ func TestAirframesLastFlight(t *testing.T) {
 	}
 }
 
+// An aircraft known only by its hex still gets its registration where the address gives it away.
+func TestAirframesTailFromHex(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	for _, h := range []string{"A762CC", "C023C8", "780AB8"} { // known only from a watch, so with no registration on file
+		e, _ := watchlist.Parse("hex:"+h, now, time.Time{})
+		e.Tail = ""
+		if _, err := st.AddWatch(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ts := httptest.NewServer((&Server{Store: st}).Handler())
+	defer ts.Close()
+	_, body := do(t, "GET", ts.URL+"/api/airframes", "")
+	var got []airframeJSON
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatal(err, body)
+	}
+	tails := map[string]string{}
+	for _, a := range got {
+		tails[a.Hex] = a.Tail
+	}
+	if tails["A762CC"] != "N575UP" || tails["C023C8"] != "C-FNOH" || tails["780AB8"] != "" {
+		t.Errorf("tails = %v", tails)
+	}
+}
+
 func TestAuth(t *testing.T) {
 	ts := setup(t, "secret")
 	if code, _ := do(t, "GET", ts.URL+"/api/watches", ""); code != 401 {

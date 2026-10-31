@@ -32,8 +32,11 @@ Type into the web UI (or `POST /api/watches {"input": "...", "until": "<RFC3339>
   airline we have no code for; the ICAO callsign always works), `tail:CKK624`, `hex:ABC123`. Six hex
   digits (`AEE123`) are an ICAO address unless we know the airline. The page says how it read each
   entry, and every watch carries a chip (callsign, registration, hex, flight).
-- `B-LRM` or `780AB8`: tracks now until `until`, default 36 h. A tail is
-  resolved to its hex via airframes.io, so it can be watched before it flies.
+- `B-LRM` or `780AB8`: tracks now until `until`, default 36 h. A tail is resolved to its hex so it can be watched
+  before it flies. For a **US** registration (`N575UP`), a **Canadian** one (`C-FNOH`, `C-GAZI`) and an **Australian** one
+  (`VH-OQA`) the hex is worked out from the registration (and the registration from the hex), with no lookup: those
+  countries hand out addresses by a rule (`internal/regs`). Anywhere else the hex comes from what we have already seen, or airframes.io (asked at
+  most once an hour per registration).
 
 Add an optional destination, IATA or ICAO: `UA869 2026-10-31 SFO`.
 
@@ -256,7 +259,8 @@ with the HTTP status.
 `/airframes.html` lists every aircraft we know of (searchable, sortable, filterable to those with notes):
 its current registration and any earlier ones, hex, type, when first and last heard from, whether it is on a
 watch, its **last flight** (`SQ23 KJFK → WSSS`, with when it left, or when it was last heard on that flight; hover for the
-callsign and airport names), and a preview of its newest note. An aircraft known only from a watch or a note is listed too.
+callsign and airport names), and a preview of its newest note. An aircraft known only from a watch or a note is listed too. An aircraft that is not being watched has a **Watch**
+button: it starts a hex watch (the usual 36 hours) that then appears on the map page; a refusal is shown at the top.
 
 You can write any number of **notes** about an airframe (`This was the plane Yen took from SEA to HKG on
 2026-10-27`), each with its own date, and edit or delete them later. They attach to the hex, the aircraft,

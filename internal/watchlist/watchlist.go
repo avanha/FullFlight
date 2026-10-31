@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/avanha/fullflight/internal/airlines"
+	"github.com/avanha/fullflight/internal/regs"
 )
 
 type Kind string
@@ -206,11 +207,17 @@ func parseAircraft(ident string, force Kind, now, until time.Time) (Entry, error
 	case force == KindHex || (force == "" && isHex):
 		e.Kind = KindHex
 		e.Hex = ident
+		if t, ok := regs.TailForHex(ident); ok {
+			e.Tail = t // an address in a range that follows its registration
+		}
 	case force == KindTail || tailRe.MatchString(ident):
 		if !tailRe.MatchString(ident) {
 			return Entry{}, fmt.Errorf("%q does not look like a registration", ident)
 		}
 		e.Kind = KindTail
+		if h, ok := regs.HexForTail(ident); ok {
+			e.Hex = h // no lookup needed: the address follows from the registration
+		}
 	default:
 		return Entry{}, fmt.Errorf("%q is not a valid tail or ICAO hex", ident)
 	}

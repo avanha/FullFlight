@@ -125,9 +125,9 @@ func TestTailTracksImmediately(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()
 	now := time.Date(2026, 10, 30, 14, 0, 0, 0, time.UTC)
-	e, _ := watchlist.Parse("N12345", now, time.Time{})
+	e, _ := watchlist.Parse("B-LRX", now, time.Time{})
 	st.AddWatch(e)
-	f := &fake{byReg: map[string][]adsb.Aircraft{"N12345": {ac(41)}}}
+	f := &fake{byReg: map[string][]adsb.Aircraft{"B-LRX": {ac(41)}}}
 	p := &Poller{Store: st, ADSB: f, Now: func() time.Time { return now }}
 	p.Once(context.Background())
 	w, _ := st.ListWatches(true)
@@ -308,11 +308,41 @@ func TestTailResolvedBeforeItFlies(t *testing.T) {
 	}
 }
 
+// A US, Canadian or Australian registration needs no lookup: its hex follows from it, so the watch carries the hex from the start and is
+// polled by it, and airframes.io is never asked.
+func TestTailInARuleBasedCountryNeedsNoLookup(t *testing.T) {
+	for tail, hex := range map[string]string{"N575UP": "A762CC", "C-FNOH": "C023C8", "C-GAZI": "C0473B", "VH-AMQ": "7C01C0"} {
+		st, _ := store.Open(":memory:")
+		now := time.Date(2026, 10, 30, 14, 0, 0, 0, time.UTC)
+		e, _ := watchlist.Parse(tail, now, time.Time{})
+		if e.Hex != hex {
+			t.Errorf("%s: parsed with hex %q, want %q", tail, e.Hex, hex)
+		}
+		st.AddWatch(e)
+		f := &fake{byHex: map[string][]adsb.Aircraft{hex: {ac(41)}}}
+		lk := &fakeLookup{}
+		p := &Poller{Store: st, ADSB: f, Airframes: lk, Now: func() time.Time { return now }}
+		p.Once(context.Background())
+		if lk.calls != 0 || !reflect.DeepEqual(f.calls, []string{"hex:" + hex}) {
+			t.Errorf("%s: lookups=%d calls=%v", tail, lk.calls, f.calls)
+		}
+		st.Close()
+	}
+	// the other way: a hex watch learns its registration
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 14, 0, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("hex:A762CC", now, time.Time{})
+	if e.Tail != "N575UP" {
+		t.Errorf("hex watch tail = %q", e.Tail)
+	}
+}
+
 func TestUnknownTailFallsBackToRegAndRetriesHourly(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()
 	now := time.Date(2026, 10, 30, 14, 0, 0, 0, time.UTC)
-	e, _ := watchlist.Parse("N12345", now, time.Time{})
+	e, _ := watchlist.Parse("B-LRX", now, time.Time{})
 	st.AddWatch(e)
 	f := &fake{byReg: map[string][]adsb.Aircraft{}}
 	lk := &fakeLookup{}
@@ -320,7 +350,7 @@ func TestUnknownTailFallsBackToRegAndRetriesHourly(t *testing.T) {
 	p.Once(context.Background())
 	now = now.Add(5 * time.Minute)
 	p.Once(context.Background())
-	if lk.calls != 1 || !reflect.DeepEqual(f.calls, []string{"reg:N12345", "reg:N12345"}) {
+	if lk.calls != 1 || !reflect.DeepEqual(f.calls, []string{"reg:B-LRX", "reg:B-LRX"}) {
 		t.Errorf("lookups=%d calls=%v", lk.calls, f.calls)
 	}
 	now = now.Add(time.Hour)

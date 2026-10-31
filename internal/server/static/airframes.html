@@ -20,6 +20,9 @@
   td small { display: block; color: #777; }
   .watching { color: #070; font-weight: 600; }
   .gone { color: #999; }
+  button.watchbtn { font: inherit; font-size: 12px; padding: 1px 8px; cursor: pointer; }
+  #err { color: #b00; font-size: 13px; }
+  #err:empty { display: none; }
   td.notes { min-width: 220px; }
   button.notecell { border: none; background: none; cursor: pointer; text-align: left; padding: 0; font: inherit; }
   button.notecell.empty { opacity: .4; }
@@ -38,6 +41,7 @@
   <label>Sort <select id="sort">
     <option value="seen">last seen</option><option value="tail">registration</option><option value="notes">notes first</option>
   </select></label>
+  <span id="err"></span>
   <span id="count"></span>
 </header>
 <main>
@@ -77,7 +81,7 @@ async function load() {
 function visible() {
   const q = $('#q').value.trim().toLowerCase();
   const onlyNotes = $('#onlynotes').checked;
-  const hay = a => [a.hex, a.type, a.last_note, ...(a.tails || []).map(t => t.tail), ...(a.last_flight ? [a.last_flight.flight, a.last_flight.callsign, a.last_flight.from, a.last_flight.to] : [])].filter(Boolean).join(' ').toLowerCase();
+  const hay = a => [a.hex, a.tail, a.type, a.last_note, ...(a.tails || []).map(t => t.tail), ...(a.last_flight ? [a.last_flight.flight, a.last_flight.callsign, a.last_flight.from, a.last_flight.to] : [])].filter(Boolean).join(' ').toLowerCase();
   const list = all.filter(a => (!onlyNotes || a.notes > 0) && (!q || hay(a).includes(q)));
   const seen = a => (a.last_seen ? Date.parse(a.last_seen) : 0);
   const order = {
@@ -100,6 +104,23 @@ function flightCell(a) {
   td.title = [f.callsign && `Callsign ${f.callsign}`, [f.from_name, f.to_name].filter(Boolean).join(' \u2192 '),
     `Flight from ${fmt(f.start)} to ${fmt(f.end)}`].filter(Boolean).join('\n');
   return td;
+}
+
+// Start a watch on the aircraft, by its hex (a registration can change; the hex does not). It appears on the map page.
+async function startWatch(a, b) {
+  b.disabled = true;
+  $('#err').textContent = '';
+  try {
+    const r = await fetch('/api/watches', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({input: 'hex:' + a.hex})});
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j.error || r.statusText);
+    }
+    await load();   // the row now says "watching"
+  } catch (e) {
+    $('#err').textContent = `Could not watch ${a.tail || a.hex}: ${e.message}`;
+    b.disabled = false;
+  }
 }
 
 function noteCell(a) {
@@ -125,6 +146,12 @@ function row(a) {
   }
   const first = el('td', '', a.first_seen ? fmt(a.first_seen).slice(0, 10) : '—');
   const watching = el('td', a.watched ? 'watching' : 'gone', a.watched ? 'watching' : '');
+  if (!a.watched) {
+    const b = el('button', 'watchbtn', 'Watch');
+    b.title = 'Start tracking this aircraft (a hex watch, for the usual 36 hours)';
+    b.onclick = () => startWatch(a, b);
+    watching.append(b);
+  }
   tr.append(reg, el('td', 'hex', a.hex), el('td', '', a.type || ''), flightCell(a), seen, first, watching, noteCell(a));
   return tr;
 }

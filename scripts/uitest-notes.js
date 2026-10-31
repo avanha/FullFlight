@@ -26,6 +26,13 @@ function newWorld() {
     w.calls.push([method, url, opts.body ? JSON.parse(opts.body) : undefined]);
     const reply = (status, body) => ({status, ok: status < 400, statusText: 'x', json: async () => JSON.parse(JSON.stringify(body ?? null))});
     if (url === '/api/airframes') return reply(200, w.airframes);
+    if (url === '/api/watches' && method === 'POST') {
+      const hex = JSON.parse(opts.body).input.replace(/^hex:/, '');
+      if (w.refuseWatch) return reply(400, {error: w.refuseWatch});
+      const a = w.airframes.find(x => x.hex === hex);
+      if (a) a.watched = true;
+      return reply(201, {id: 9, kind: 'hex', ident: hex});
+    }
     const m = url.match(/^\/api\/airframes\/([0-9A-F]{6})\/notes(?:\/(\d+))?$/);
     if (!m) return reply(404, {error: 'not found'});
     const [, hex, id] = m, list = (w.notes[hex] ||= []);
@@ -239,6 +246,21 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   assert.ok(!rows()[1].className.includes('open'));
   // it keeps itself up to date
   assert.ok(w.intervals.some(([, ms]) => ms === 30000));
+
+  // starting a watch from the page: only those not already watched have the button
+  const watchBtn = r => r.children[6].children.find(c => c.className === 'watchbtn');
+  assert.strictEqual(watchBtn(rows()[0]), undefined, 'already watched: no button');
+  assert.ok(watchBtn(rows()[1]) && watchBtn(rows()[2]));
+  w.refuseWatch = 'too many watches';
+  await watchBtn(rows()[1]).onclick(); await tick();
+  assert.strictEqual(q('#err').textContent, 'Could not watch B-LRD: too many watches');
+  assert.strictEqual(watchBtn(rows()[1]).disabled, false, 'it can be tried again');
+  w.refuseWatch = null;
+  await watchBtn(rows()[1]).onclick(); await tick();
+  assert.deepStrictEqual(w.calls.filter(c => c[0] === 'POST' && c[1] === '/api/watches').pop().slice(2), [{input: 'hex:780AA4'}], 'by hex');
+  assert.strictEqual(q('#err').textContent, '');
+  assert.strictEqual(rows()[1].children[6].textContent, 'watching', 'the row updates');
+  assert.strictEqual(watchBtn(rows()[1]), undefined);
 
   // no airframes at all
   w.airframes = [];

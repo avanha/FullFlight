@@ -16,6 +16,7 @@ import (
 	"github.com/avanha/fullflight/internal/airlines"
 	"github.com/avanha/fullflight/internal/airports"
 	"github.com/avanha/fullflight/internal/geo"
+	"github.com/avanha/fullflight/internal/regs"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/watchlist"
 )
@@ -213,6 +214,8 @@ func (p *Poller) poll(ctx context.Context, e watchlist.Entry, now time.Time) (er
 	if e.Tail == "" && e.Hex != "" {
 		if t, ok := p.Store.TailForHex(e.Hex); ok {
 			e.Tail, changed = t, true
+		} else if t, ok := regs.TailForHex(e.Hex); ok {
+			e.Tail, changed = t, true
 		}
 	}
 
@@ -404,9 +407,13 @@ func (p *Poller) checkStopover(e *watchlist.Entry, now time.Time) bool {
 	return true
 }
 
-// resolveHex finds the hex for a registration from the permanent table, else
-// from airframes.io (at most once an hour per registration), and remembers it.
+// resolveHex finds the hex for a registration: worked out from it where the country allocates addresses by a rule
+// (the United States and Canada), else from the permanent table, else from airframes.io (at most once an hour per
+// registration), and remembers it.
 func (p *Poller) resolveHex(ctx context.Context, tail string, now time.Time) string {
+	if hex, ok := regs.HexForTail(tail); ok {
+		return hex
+	}
 	if hex, ok := p.Store.HexForTail(tail); ok {
 		return hex
 	}
