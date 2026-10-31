@@ -405,6 +405,12 @@ leaves coverage would be called a landing until the aircraft is heard again.
 
 ## Web page
 
+The sidebar's Watches tab is split in two, each part folding away like an accordion: **Targets** above (the add
+form stays put, the list of watches scrolls on its own) and **Messages** below (with the flight selector and the
+projection control above its own scrolling list). Fold one and the other takes the height; the header of a folded
+Targets shows the target you have selected, and each header counts what is in it. Your choice is remembered, and
+choosing a message on the map opens Messages if it is folded.
+
 Choosing a watch centres the map (zoom 7) on that aircraft's newest trustworthy
 fix, from ADS-B or a datalink message, whichever is later. Each position source has its own track
 and colour (ADS-B blue, ADS-C orange, CPDLC purple, REP081 teal, FMS green, ACMF crimson) with a

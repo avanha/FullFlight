@@ -8,7 +8,26 @@
 <link rel="stylesheet" href="notes.css">
 <style>
   body { margin: 0; font: 14px system-ui, sans-serif; display: grid; grid-template-columns: 340px 1fr; height: 100vh; }
-  aside { padding: 12px; overflow: auto; border-right: 1px solid #ccc; }
+  aside { padding: 12px 12px 0; overflow: hidden; border-right: 1px solid #ccc; display: flex; flex-direction: column; min-height: 0; }
+  /* The Watches tab is two folding sections that share the height: the targets above, the messages below, each
+     scrolling on its own, so the messages never sit under a long list of targets. */
+  #tab-watch { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; }
+  #tab-watch[hidden] { display: none; }
+  #tab-fixes, #tab-airports { flex: 1 1 0; min-height: 0; overflow: auto; }
+  .acc { display: flex; flex-direction: column; min-height: 0; border-top: 1px solid #d5dbe6; }
+  .acc.open { flex: 1 1 0; }
+  #acc-targets.open { flex: 0 1 auto; max-height: 45%; }
+  #tab-watch.msgs-closed #acc-targets.open { flex: 1 1 0; max-height: none; }
+  .acchead { display: flex; align-items: center; gap: 6px; width: 100%; margin: 0; padding: 6px 4px; border: none; background: #f1f4f9; cursor: pointer;
+             font: 600 13px system-ui, sans-serif; text-align: left; color: #1d3557; flex: none; }
+  .acchead:hover { background: #e6ebf4; }
+  .acchead .chev { width: 1em; display: inline-block; }
+  .acchead .count, .acchead .accsel { font-weight: normal; color: #666; }
+  .acchead .accsel { margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 55%; }
+  .accbody { overflow: auto; min-height: 0; flex: 1 1 auto; padding: 6px 4px 8px; }
+  .acccontrols { flex: none; padding: 4px 4px 0; }
+  .info { color: #667; cursor: help; align-self: center; font-size: 15px; }
+  .acc:not(.open) .accbody, .acc:not(.open) .acccontrols { display: none; }
   #map { height: 100%; }
   form { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
   input[name=input] { flex: 1 1 100%; padding: 6px; }
@@ -38,6 +57,7 @@
   #msgs .warn { color: #b60; cursor: help; margin-left: 4px; }
   #msgs pre { white-space: pre-wrap; word-break: break-all; background: #f6f6f6; padding: 6px; margin: 4px 0 0; font-size: 11px; }
   #msgs .empty { color: #888; padding: 4px; }
+  #msgs .msg { overflow-wrap: anywhere; }
   #msgs .msg.sel { background: #fff3bf; }
   #msgs .msg.hasloc { border-left: 3px solid #d60; }
   .plane { background: none; border: none; }
@@ -80,7 +100,13 @@
   .plane svg { display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
   #clock { position: fixed; top: 8px; right: 8px; z-index: 1000; padding: 3px 8px; border-radius: 4px;
            background: rgba(255,255,255,.9); border: 1px solid #aaa; font: 13px ui-monospace, monospace; }
-  @media (max-width: 700px) { body { grid-template-columns: 1fr; grid-template-rows: auto 50vh; height: auto; } }
+  @media (max-width: 700px) {
+    body { grid-template-columns: 1fr; grid-template-rows: auto 50vh; height: auto; }
+    aside { display: block; overflow: visible; }
+    #tab-watch { display: block; }
+    .acc.open, #acc-targets.open { max-height: none; }
+    .accbody { overflow: visible; }
+  }
 </style>
 </head>
 <body>
@@ -88,21 +114,34 @@
   <h3 style="margin-top:0">FullFlight <a href="/airframes.html" class="navlink" title="Every aircraft we know of, with your notes">Airframes</a></h3>
   <div id="tabs"><button id="tabwatch" class="on">Watches</button><button id="tabfixes" title="Search the waypoints we know">Fixes</button><button id="tabairports" title="Search airports">Airports</button></div>
   <div id="tab-watch">
+  <section class="acc open" id="acc-targets">
+  <button class="acchead" id="acchead-targets" title="Fold the list of targets away"><span class="chev" id="chev-targets">&#9662;</span> Targets <span class="count" id="targetcount"></span><span class="accsel" id="targetsel"></span></button>
+  <div class="acccontrols">
   <form id="add">
     <input name="input" placeholder="UA869 2026-10-31 [SFO]   or   CPA113   or   B-LRM   or   780AB8" required autocomplete="off">
     <input name="until" type="datetime-local" title="Optional end (tail/hex only; default 36 h)">
     <button>Watch</button>
+    <span class="info" title="Flight + date waits for takeoff; an optional destination (IATA or ICAO) ends the watch on arrival there instead of after a long ground stop. A tail or hex tracks now until the end time (default 36 h).">&#9432;</span>
   </form>
-  <p class="hint">Flight + date waits for takeoff; an optional destination (IATA or ICAO) ends the watch on arrival there instead of after a long ground stop. A tail or hex tracks now until the end time (default 36 h).</p>
   <div id="err"></div>
   <div id="note" class="hint"></div>
+  </div>
+  <div class="accbody">
   <ul id="list"></ul>
+  </div>
+  </section>
+  <section class="acc open" id="acc-msgs">
+  <button class="acchead" id="acchead-msgs" title="Fold the messages away"><span class="chev" id="chev-msgs">&#9662;</span> Messages <span class="count" id="msgcount"></span></button>
+  <div class="acccontrols">
   <p class="hint" style="margin:8px 0 0"><label>Flights: <select id="flightsel" style="max-width:100%"><option value="recent">no flights identified yet</option></select></label></p>
   <p class="hint" style="margin:8px 0 0"><label>Projection: look ahead
     <select id="ahead"><option value="0">off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></label>
     <span title="Dead reckoning from the newest fix. Never from a fix over an hour old, never more than 90 minutes from the fix, never past a known destination. As its newest fix ages the plane fades and shows the age of the fix; at an hour old it is ringed and no estimate is drawn.">ⓘ</span></p>
-  <h4>Messages</h4>
+  </div>
+  <div class="accbody">
   <div id="msgs"><div class="empty">Select a watch that has an aircraft.</div></div>
+  </div>
+  </section>
   </div>
   <div id="tab-fixes" hidden>
     <input id="fixq" placeholder="Fix name, e.g. WEDES" autocomplete="off" spellcheck="false">
@@ -244,6 +283,9 @@ function copyButton(text) {
 
 async function refresh() {
   watches = await api('/api/watches');
+  $('#targetcount').textContent = watches.length ? `(${watches.length})` : '';
+  const chosen = watches.find(w => w.id === selected);
+  $('#targetsel').textContent = chosen ? chosen.ident : '';   // shown when the list is folded away
   const ul = $('#list');
   ul.replaceChildren(...watches.map(w => {
     const li = document.createElement('li');
@@ -1103,6 +1145,7 @@ function drawPredictions() {
 let showUndecoded = false, lastMsgs = [], selectedMsg = null;
 // A dot or waypoint on the map was clicked: select its message in the list and bring it into view.
 function pickMessage(id) {
+  if (!accOpen.msgs) setAcc('msgs', true);   // choosing a message on the map shows it in the list
   selectedMsg = id;
   applyHighlight(false);
   const row = rows.get(id);
@@ -1148,6 +1191,7 @@ function renderMessages(msgs) {
   lastMsgs = msgs;
   rows.clear();
   const box = $('#msgs');
+  $('#msgcount').textContent = msgs.length ? `(${msgs.length})` : '';
   if (!msgs.length) { box.innerHTML = '<div class="empty">No messages yet.</div>'; return; }
   const hidden = msgs.filter(m => m.undecoded).length;
   const shown = showUndecoded ? msgs : msgs.filter(m => !m.undecoded);
@@ -1249,6 +1293,23 @@ function setAhead(v) {
   sel.onchange = () => setAhead(Number(sel.value) || 0);
 }
 setInterval(drawProjection, 5000);   // the estimate moves with the clock, between 30 s refreshes
+
+// ---- accordion -------------------------------------------------------------------------------
+// The Watches tab is Targets above Messages. Each folds away (the other then takes the height) and the choice is kept.
+const accOpen = {targets: true, msgs: true};
+function setAcc(name, open, save = true) {
+  accOpen[name] = open;
+  $('#acc-' + name).classList.toggle('open', open);
+  $('#chev-' + name).textContent = open ? '\u25be' : '\u25b8';
+  $('#tab-watch').classList.toggle('msgs-closed', !accOpen.msgs);
+  if (save) { try { localStorage.setItem('acc-' + name, open ? '1' : '0'); } catch (e) { /* not saved: fine */ } }
+}
+for (const name of ['targets', 'msgs']) {
+  let open = true;
+  try { open = localStorage.getItem('acc-' + name) !== '0'; } catch (e) { /* default: open */ }
+  setAcc(name, open, false);
+  $('#acchead-' + name).onclick = () => setAcc(name, !accOpen[name]);
+}
 
 // ---- fix search -----------------------------------------------------------------------------
 // The waypoints we hold: positions learned from the aircraft's own messages, and the navigation
