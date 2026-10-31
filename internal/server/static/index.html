@@ -51,6 +51,20 @@
   .wpt-wrap { background: none; border: none; }
   .wpt { width: 8px; height: 8px; margin: 3px; transform: rotate(45deg); background: #fff; border: 2px solid #1d3557; box-sizing: content-box; }
   .wpt.est { border-style: dashed; border-color: #6b7a8f; background: transparent; opacity: .9; }
+  #tabs { display: flex; gap: 2px; margin: 0 0 10px; border-bottom: 1px solid #ccc; }
+  #tabs button { border: none; background: none; padding: 5px 12px; cursor: pointer; font: inherit; color: #555; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  #tabs button.on { color: #1d3557; border-bottom-color: #1d3557; font-weight: 600; }
+  #fixq { width: 100%; box-sizing: border-box; padding: 6px; }
+  #fixlist li { padding: 6px 8px; }
+  #fixlist li b { font-family: ui-monospace, monospace; }
+  #fixlist li small { color: #555; }
+  #fixlist li small.dim { color: #999; }
+  #fixlist li .kindchip.learned { background: #fde4ee; color: #8a1c46; }
+  #fixlist .sep { cursor: default; color: #666; font-size: 12px; background: #f6f6f6; }
+  .fixpin-wrap { background: none; border: none; }
+  .fixpin { width: 10px; height: 10px; margin: 3px; transform: rotate(45deg); box-sizing: content-box; }
+  .fixpin.learned { background: #c2255c; border: 2px solid #fff; box-shadow: 0 0 0 2px #c2255c; }
+  .fixpin.db { background: #fff; border: 2px solid #6c757d; }
   .plane svg { display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
   #clock { position: fixed; top: 8px; right: 8px; z-index: 1000; padding: 3px 8px; border-radius: 4px;
            background: rgba(255,255,255,.9); border: 1px solid #aaa; font: 13px ui-monospace, monospace; }
@@ -60,6 +74,8 @@
 <body>
 <aside>
   <h3 style="margin-top:0">FullFlight <a href="/airframes.html" class="navlink" title="Every aircraft we know of, with your notes">Airframes</a></h3>
+  <div id="tabs"><button id="tabwatch" class="on">Watches</button><button id="tabfixes" title="Search the waypoints we know">Fixes</button></div>
+  <div id="tab-watch">
   <form id="add">
     <input name="input" placeholder="UA869 2026-10-31 [SFO]   or   CPA113   or   B-LRM   or   780AB8" required autocomplete="off">
     <input name="until" type="datetime-local" title="Optional end (tail/hex only; default 36 h)">
@@ -75,6 +91,16 @@
     <span title="Dead reckoning from the newest fix. Never from a fix over an hour old, never more than 90 minutes from the fix, never past a known destination.">ⓘ</span></p>
   <h4>Messages</h4>
   <div id="msgs"><div class="empty">Select a watch that has an aircraft.</div></div>
+  </div>
+  <div id="tab-fixes" hidden>
+    <input id="fixq" placeholder="Fix name, e.g. WEDES" autocomplete="off" spellcheck="false">
+    <p class="hint" id="fixstat" style="margin:6px 0 4px"></p>
+    <p class="hint" style="margin:0 0 6px">
+      <label>Sort <select id="fixsort"><option value="name">name</option><option value="last">last confirmed</option><option value="n">most messages</option></select></label>
+      <label style="margin-left:8px"><input type="checkbox" id="fixall"> all on the map</label></p>
+    <div id="fixerr" style="color:#b00"></div>
+    <ul id="fixlist"></ul>
+  </div>
 </aside>
 <div id="map"></div>
 <div id="clock" title="Current time, UTC"></div>
@@ -1053,6 +1079,143 @@ function setAhead(v) {
   sel.onchange = () => setAhead(Number(sel.value) || 0);
 }
 setInterval(drawProjection, 5000);   // the estimate moves with the clock, between 30 s refreshes
+
+// ---- fix search -----------------------------------------------------------------------------
+// The waypoints we hold: positions learned from the aircraft's own messages, and the navigation
+// database. The list is searched on the server; the one chosen is drawn here, in its own groups,
+// which a refresh of the watches never clears.
+const fixGroup = L.layerGroup().addTo(map);     // the fix chosen in the list, with others of the same name
+const fixAllGroup = L.layerGroup().addTo(map);  // every learned fix, when asked for
+const FIX_HOW = {'adsc-eta': 'ADS-C predicted ETA', 'adsc-chain': 'ADS-C route order', 'adsc-wpt': 'ADS-C waypoint event'};
+let fixData = null, fixChosen = null, fixTimer = null, fixSeq = 0;
+const fixKey = f => `${f.kind}|${f.name}|${f.lat.toFixed(3)}|${f.lon.toFixed(3)}`;
+const nearLon = (lon, ref) => lon + 360 * Math.round((ref - lon) / 360);
+const coord = f => `${Math.abs(f.lat).toFixed(3)}°${f.lat < 0 ? 'S' : 'N'} ${Math.abs(f.lon).toFixed(3)}°${f.lon < 0 ? 'W' : 'E'}`;
+
+// What is known of a fix, one line each.
+function fixLines(f) {
+  const lines = [coord(f)];
+  if (f.kind !== 'learned') {
+    lines.push(`navigation database${fixData && fixData.database_cycle ? ' ' + fixData.database_cycle : ''} (${f.kind})`);
+    return lines;
+  }
+  lines.push(`${f.n} message${f.n === 1 ? '' : 's'} · ${(f.sources || []).map(x => FIX_HOW[x] || x).join(', ')}`);
+  lines.push(f.first ? `first heard ${fmt(f.first)} · last confirmed ${fmt(f.last)} (${ago(f.last)})` : 'the messages that taught it are no longer stored');
+  if (f.db_nm != null) lines.push(`navigation database: ${f.db_nm < 0.1 ? 'same place' : f.db_nm.toFixed(1) + ' nm away'}`);
+  else if (fixData && fixData.database_names) lines.push('not in the navigation database');
+  return lines;
+}
+
+function fixTip(f) {
+  const d = document.createElement('div');
+  const b = document.createElement('b');
+  b.textContent = f.name;
+  d.append(b);
+  for (const l of fixLines(f)) { const e = document.createElement('div'); e.textContent = l; d.append(e); }
+  return d;
+}
+
+function fixMarker(f, chosen) {
+  const m = L.marker(ll2(f), {icon: L.divIcon({className: 'fixpin-wrap', iconSize: [18, 18], iconAnchor: [9, 9], html: `<div class="fixpin ${f.kind === 'learned' ? 'learned' : 'db'}"></div>`}),
+                              zIndexOffset: chosen ? 1000 : 0});
+  m.bindTooltip(fixTip(f), {permanent: chosen, direction: 'right', offset: [10, 0]});
+  return m;
+}
+// A fix drawn one world over from the map's centre is hard to find: pick the copy nearest it.
+function ll2(f) { return [f.lat, nearLon(f.lon, map.getCenter ? map.getCenter().lng : 0)]; }
+
+// Draw a fix (and any other of the same name, which is a reused name) and move the map to it.
+function showFix(f) {
+  fixChosen = fixKey(f);
+  fixGroup.clearLayers();
+  for (const g of (fixData && fixData.fixes || []).filter(g => g.name === f.name)) fixMarker(g, fixKey(g) === fixChosen).addTo(fixGroup);
+  map.setView(ll2(f), Math.max(map.getZoom ? map.getZoom() : 0, 6));
+  renderFixes();
+}
+
+function renderFixes() {
+  const ul = $('#fixlist');
+  const all = fixData ? fixData.fixes : [];
+  const learned = all.filter(f => f.kind === 'learned'), db = all.filter(f => f.kind !== 'learned');
+  const by = $('#fixsort').value;
+  if (by === 'last') learned.sort((a, b) => (b.last || '').localeCompare(a.last || ''));
+  else if (by === 'n') learned.sort((a, b) => b.n - a.n || a.name.localeCompare(b.name));
+  const row = f => {
+    const li = document.createElement('li');
+    li.className = fixKey(f) === fixChosen ? 'sel' : '';
+    const b = document.createElement('b');
+    b.textContent = f.name;
+    const chip = document.createElement('span');
+    chip.className = 'kindchip ' + (f.kind === 'learned' ? 'learned' : '');
+    chip.textContent = f.kind === 'learned' ? 'learned' : f.kind;
+    li.append(b, chip);
+    fixLines(f).forEach((l, i) => { const s = document.createElement('small'); s.textContent = l; if (i === 0) s.className = 'lastpos'; li.append(s); });
+    li.onclick = () => showFix(f);
+    return li;
+  };
+  const items = learned.map(row);
+  if (db.length) {
+    const sep = document.createElement('li');
+    sep.className = 'sep';
+    sep.textContent = `Navigation database${fixData.more ? ' (first ' + db.length + ')' : ''}`;
+    items.push(sep, ...db.map(row));
+  }
+  if (!items.length) {
+    const e = document.createElement('li');
+    e.className = 'sep';
+    e.textContent = $('#fixq').value.trim() ? 'No fix by that name.' : 'No fix has been learned yet.';
+    items.push(e);
+  }
+  ul.replaceChildren(...items);
+  if (fixData) {
+    const nav = fixData.database_names ? `navigation database: ${fixData.database_names.toLocaleString()} names${fixData.database_cycle ? ', cycle ' + fixData.database_cycle : ''}`
+                                       : 'no navigation database loaded';
+    $('#fixstat').textContent = `${fixData.learned_names} fixes learned from messages (${fixData.learned_positions} positions) · ${nav}`;
+  }
+}
+
+async function loadFixes() {
+  const seq = ++fixSeq;
+  try {
+    const d = await api('/api/fixes?q=' + encodeURIComponent($('#fixq').value.trim()));
+    if (seq !== fixSeq || !d) return;   // a newer search is under way
+    fixData = d;
+    $('#fixerr').textContent = '';
+    renderFixes();
+  } catch (e) { $('#fixerr').textContent = e.message; }
+}
+
+// Every learned fix as a small dot, if asked for; clicking one finds it in the list.
+async function drawAllFixes() {
+  fixAllGroup.clearLayers();
+  if (!$('#fixall').checked) return;
+  try {
+    const d = await api('/api/fixes');
+    if (!d || !$('#fixall').checked) return;
+    for (const f of d.fixes) {
+      const dot = L.circleMarker(ll2(f), {radius: 4, color: '#fff', weight: 1, fillColor: '#c2255c', fillOpacity: .85});
+      dot.bindTooltip(fixTip(f));
+      dot.on('click', () => { $('#fixq').value = f.name; loadFixes().then(() => showFix(f)); });
+      dot.addTo(fixAllGroup);
+    }
+  } catch (e) { $('#fixerr').textContent = e.message; }
+}
+
+function showTab(name) {
+  $('#tab-watch').hidden = name !== 'watch';
+  $('#tab-fixes').hidden = name !== 'fixes';
+  $('#tabwatch').classList.toggle('on', name === 'watch');
+  $('#tabfixes').classList.toggle('on', name === 'fixes');
+  if (name === 'fixes') { loadFixes(); drawAllFixes(); }
+}
+$('#tabwatch').onclick = () => showTab('watch');
+$('#tabfixes').onclick = () => showTab('fixes');
+$('#fixq').oninput = () => { clearTimeout(fixTimer); fixTimer = setTimeout(loadFixes, 200); };
+$('#fixq').onkeydown = e => {   // Enter goes to the first match
+  if (e.key === 'Enter' && fixData && fixData.fixes.length) { e.preventDefault(); showFix(fixData.fixes[0]); }
+};
+$('#fixsort').onchange = renderFixes;
+$('#fixall').onchange = drawAllFixes;
 
 function tick() { $('#clock').textContent = new Date().toISOString().slice(0, 19).replace('T', ' ') + 'Z'; }
 tick();

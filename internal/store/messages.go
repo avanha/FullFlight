@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -353,31 +354,115 @@ func (s *Store) AddFix(name string, msgID int64, lat, lon float64, source string
 	return err
 }
 
-// LearnedFixes returns the positions learned for a waypoint name, most supported first. Positions
-// within a quarter of a degree count as the same place.
+// fixRow is one piece of evidence: a message that named a waypoint, and where the match put it.
+type fixRow struct {
+	name     string
+	lat, lon float64
+	source   string
+	ts       sql.NullInt64 // when the message was received, if it is still stored
+}
+
+// clusterFixes groups evidence into places: for each name, positions within a quarter of a degree are
+// one place. The place is the position most of its evidence agrees on (ADS-C coordinates repeat
+// exactly), not their mean, which a single mismatched report would drag off. Clusters come in the
+// order they were first met.
+func clusterFixes(rows []fixRow) []FixSummary {
+	type acc struct {
+		FixSummary
+		lat0, lon0 float64
+		votes      map[[2]int64]int // exact positions (to 1e-5 degree) and how many reports gave each
+		best       int
+	}
+	var all []*acc
+	byName := map[string][]*acc{}
+	for _, r := range rows {
+		var a *acc
+		for _, c := range byName[r.name] {
+			if math.Abs(c.lat0-r.lat) < 0.25 && math.Abs(geo.DLon(c.lon0, r.lon)) < 0.25 {
+				a = c
+				break
+			}
+		}
+		if a == nil {
+			a = &acc{FixSummary: FixSummary{Name: r.name, Lat: r.lat, Lon: r.lon}, lat0: r.lat, lon0: r.lon, votes: map[[2]int64]int{}}
+			byName[r.name] = append(byName[r.name], a)
+			all = append(all, a)
+		}
+		a.N++
+		k := [2]int64{int64(math.Round(r.lat * 1e5)), int64(math.Round(geo.NormLon(r.lon) * 1e5))}
+		if a.votes[k]++; a.votes[k] > a.best {
+			a.best, a.Lat, a.Lon = a.votes[k], r.lat, r.lon
+		}
+		if r.ts.Valid {
+			t := time.Unix(r.ts.Int64, 0).UTC()
+			if a.First.IsZero() || t.Before(a.First) {
+				a.First = t
+			}
+			if t.After(a.Last) {
+				a.Last = t
+			}
+		}
+		if !slices.Contains(a.Sources, r.source) {
+			a.Sources = append(a.Sources, r.source)
+		}
+	}
+	out := make([]FixSummary, len(all))
+	for i, a := range all {
+		out[i] = a.FixSummary
+	}
+	return out
+}
+
+// LearnedFixes returns the positions learned for a waypoint name, most supported first.
 func (s *Store) LearnedFixes(name string) []LearnedFix {
-	rows, err := s.db.Query(`SELECT lat, lon FROM fix WHERE name=?`, name)
+	rows, err := s.db.Query(`SELECT lat, lon FROM fix WHERE name=? ORDER BY msg_id`, name)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
-	var out []LearnedFix
-next:
+	var ev []fixRow
 	for rows.Next() {
-		var la, lo float64
-		if rows.Scan(&la, &lo) != nil {
-			continue
+		r := fixRow{name: name}
+		if rows.Scan(&r.lat, &r.lon) == nil {
+			ev = append(ev, r)
 		}
-		for i := range out {
-			if math.Abs(out[i].Lat-la) < 0.25 && math.Abs(geo.DLon(out[i].Lon, lo)) < 0.25 {
-				out[i].N++
-				continue next
-			}
-		}
-		out = append(out, LearnedFix{la, lo, 1})
+	}
+	var out []LearnedFix
+	for _, c := range clusterFixes(ev) {
+		out = append(out, LearnedFix{c.Lat, c.Lon, c.N})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].N > out[j].N })
 	return out
+}
+
+// FixSummary is one learned waypoint position with the evidence behind it.
+type FixSummary struct {
+	Name        string
+	Lat, Lon    float64   // the position most of the evidence agrees on
+	N           int       // messages that support the place
+	First, Last time.Time // when the earliest and the latest of them was received
+	Sources     []string  // how the evidence was matched, e.g. "adsc-eta"
+}
+
+// FixSummaries lists every learned place, grouped as LearnedFixes groups them, by name. First and Last
+// come from the messages that taught it, so they are when it was first heard and last heard again, not
+// when we processed them; evidence whose message has since been purged still counts but has no time.
+func (s *Store) FixSummaries() ([]FixSummary, error) {
+	rows, err := s.db.Query(`SELECT f.name, f.lat, f.lon, f.source, m.ts FROM fix f
+		LEFT JOIN message m ON m.id = f.msg_id ORDER BY f.name, f.msg_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ev []fixRow
+	for rows.Next() {
+		var r fixRow
+		if err := rows.Scan(&r.name, &r.lat, &r.lon, &r.source, &r.ts); err != nil {
+			return nil, err
+		}
+		ev = append(ev, r)
+	}
+	return clusterFixes(ev), rows.Err()
 }
 
 // FixNameAt returns the learned waypoint name whose position is within tolDeg of (lat, lon), the

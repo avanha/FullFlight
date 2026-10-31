@@ -49,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/messages/{hex}", s.messages)
 	mux.HandleFunc("GET /api/flights/{hex}", s.flights)
 	mux.HandleFunc("GET /api/plan/{hex}", s.plans)
+	mux.HandleFunc("GET /api/fixes", s.fixes)
 	return s.auth(mux)
 }
 

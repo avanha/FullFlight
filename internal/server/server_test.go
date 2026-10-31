@@ -775,3 +775,70 @@ func TestTruncatedPlanCopyDoesNotWin(t *testing.T) {
 		}
 	}
 }
+
+func TestFixesAPI(t *testing.T) {
+	st, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	t1 := time.Date(2026, 10, 26, 7, 0, 0, 0, time.UTC)
+	st.AddMessage(store.Message{ID: 1, Hex: "C880A8", T: t1, Label: "BA", Text: "a", Kind: "cpdlc"})
+	st.AddFix("WEDES", 1, 30.668, -123.124, "adsc-eta")
+	st.AddFix("AKOTA", 99, 16.46, 117.21, "adsc-chain")
+	nav := navdata.New()
+	nav.Add("WEDES", navdata.Point{Lat: 30.7, Lon: -123.1, Kind: "fix"}) // the same fix, 2 nm off
+	nav.Add("WEDGE", navdata.Point{Lat: 10, Lon: 10, Kind: "fix"})
+	nav.Add("OTHER", navdata.Point{Lat: 1, Lon: 1, Kind: "vor"})
+	ts := httptest.NewServer((&Server{Store: st, Nav: nav}).Handler())
+	defer ts.Close()
+	get := func(q string) (r struct {
+		Names, Positions, DBNames int
+		Fixes                     []struct {
+			Name, Kind string
+			N          int
+			First      *time.Time
+			DBNM       *float64 `json:"db_nm"`
+		}
+	}) {
+		_, body := do(t, "GET", ts.URL+"/api/fixes"+q, "")
+		var raw struct {
+			LearnedNames     int `json:"learned_names"`
+			LearnedPositions int `json:"learned_positions"`
+			DatabaseNames    int `json:"database_names"`
+		}
+		json.Unmarshal([]byte(body), &raw)
+		json.Unmarshal([]byte(body), &r)
+		r.Names, r.Positions, r.DBNames = raw.LearnedNames, raw.LearnedPositions, raw.DatabaseNames
+		return
+	}
+
+	// No query: everything learned, by name, and nothing from the database.
+	r := get("")
+	if r.Names != 2 || r.Positions != 2 || r.DBNames != 3 || len(r.Fixes) != 2 || r.Fixes[0].Name != "AKOTA" || r.Fixes[1].Name != "WEDES" {
+		t.Fatalf("all = %+v", r)
+	}
+	if w := r.Fixes[1]; w.Kind != "learned" || w.N != 1 || w.First == nil || !w.First.Equal(t1) || w.DBNM == nil || *w.DBNM > 3 {
+		t.Errorf("WEDES = %+v", w)
+	}
+	if a := r.Fixes[0]; a.DBNM != nil || a.First != nil { // not in the database; its message is not stored
+		t.Errorf("AKOTA = %+v", a)
+	}
+
+	// A query: learned names containing it, database names starting with it. The database's copy of a
+	// learned fix is not listed again.
+	r = get("?q=wed")
+	if len(r.Fixes) != 2 || r.Fixes[0].Name != "WEDES" || r.Fixes[0].Kind != "learned" || r.Fixes[1].Name != "WEDGE" || r.Fixes[1].Kind != "fix" {
+		t.Errorf("q=wed = %+v", r.Fixes)
+	}
+	// One letter is too short to search the database, but still filters what we learned.
+	if r = get("?q=o"); len(r.Fixes) != 1 || r.Fixes[0].Name != "AKOTA" {
+		t.Errorf("q=o = %+v", r.Fixes)
+	}
+	// Without a database the learned fixes are still served.
+	ts2 := httptest.NewServer((&Server{Store: st}).Handler())
+	defer ts2.Close()
+	if code, body := do(t, "GET", ts2.URL+"/api/fixes?q=wed", ""); code != 200 || !strings.Contains(body, `"WEDES"`) {
+		t.Errorf("no database: %d %s", code, body)
+	}
+}

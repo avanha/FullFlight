@@ -224,6 +224,20 @@ but not where they are. Each name gets coordinates from the most trustworthy sou
 Solid diamonds are exact, dashed ones estimates; hover for how each was placed. Clicking one selects
 the report that named it. Position-report tooltips also show wind (from, true), temperature, speed and track.
 
+## Fix search
+
+The **Fixes** tab in the sidebar lists every waypoint position learned from messages and searches the navigation
+database by name. Type to filter (learned names containing the text, database names starting with it; two letters
+to search the database); click one, or press Enter for the first, to centre the map on it. A name that is in
+use in more than one place is drawn at each. "All on the map" draws every learned fix as a dot.
+
+For each learned fix the list shows how many messages support it, how it was matched (ADS-C predicted ETA, ADS-C
+route order, ADS-C waypoint event), **first heard** and **last confirmed** (the receive times of the earliest and
+latest message that taught it, not when we processed them), and how far it is from the navigation database's point
+of the same name. That last figure is a check on the learning: most agree to 0.01 nm. Where messages disagree
+about a name's position within a quarter of a degree, the position most of them agree on is used, not an average.
+`GET /api/fixes?q=` serves the same.
+
 ## Predictions
 
 Selecting a report that carried predictions plots them, and selecting any other point replaces them

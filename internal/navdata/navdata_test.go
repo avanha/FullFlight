@@ -133,3 +133,25 @@ func TestNear(t *testing.T) {
 		t.Error("nil DB found something")
 	}
 }
+
+func TestSearch(t *testing.T) {
+	d := New()
+	d.Add("KADAB", Point{Lat: 1, Lon: 1, Kind: "fix"})
+	d.Add("KAPPU", Point{Lat: 2, Lon: 2, Kind: "fix"})
+	d.Add("KAPPU", Point{Lat: 30, Lon: 30, Kind: "vor"}) // a reused name
+	d.Add("LILIA", Point{Lat: 3, Lon: 3, Kind: "fix"})
+	got, more := d.Search("ka", 10)
+	if more || len(got) != 3 || got[0].Name != "KADAB" || got[1].Name != "KAPPU" || got[2].Kind != "vor" {
+		t.Errorf("Search(ka) = %+v more %v", got, more)
+	}
+	if got, more = d.Search("KA", 2); !more || len(got) != 2 {
+		t.Errorf("limited = %+v more %v", got, more)
+	}
+	if got, _ = d.Search("ZZ", 5); got != nil {
+		t.Errorf("no match = %+v", got)
+	}
+	var none *DB
+	if got, _ = none.Search("KA", 5); got != nil || none.Len() != 0 {
+		t.Error("a missing database must search as empty")
+	}
+}

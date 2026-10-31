@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -825,5 +826,46 @@ func TestTailAndHexAreOneWatch(t *testing.T) {
 	again, _ := s2.AddWatch(tail)
 	if again.ID == h.ID {
 		t.Error("reused a finished watch")
+	}
+}
+
+func TestFixSummaries(t *testing.T) {
+	s := open(t)
+	t1, t2 := time.Date(2026, 10, 26, 7, 0, 0, 0, time.UTC), time.Date(2026, 10, 30, 7, 2, 0, 0, time.UTC)
+	for id, at := range map[int64]time.Time{1: t2, 2: t1} { // out of order on purpose
+		s.AddMessage(Message{ID: id, Hex: "C880A8", T: at, Label: "BA", Text: fmt.Sprint("m", id), Kind: "cpdlc"})
+	}
+	s.AddFix("WEDES", 1, 30.668, -123.124, "adsc-eta")
+	s.AddFix("WEDES", 2, 30.605, -123.18, "adsc-eta")    // a report that matched a neighbouring waypoint
+	s.AddFix("WEDES", 3, 30.668, -123.124, "adsc-chain") // its message has been purged: counts, has no time
+	s.AddFix("WEDES", 4, 10, 10, "adsc-eta")             // reused elsewhere: a place of its own
+	s.AddFix("DLINE", 5, 5, 179.95, "adsc-eta")
+	s.AddFix("DLINE", 6, 5, -179.95, "adsc-eta")
+	got, err := s.FixSummaries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[string][]FixSummary{}
+	for _, f := range got {
+		by[f.Name] = append(by[f.Name], f)
+	}
+	if len(by["WEDES"]) != 2 {
+		t.Fatalf("WEDES = %+v", by["WEDES"])
+	}
+	w := by["WEDES"][0]
+	if w.N != 3 || !w.First.Equal(t1) || !w.Last.Equal(t2) || len(w.Sources) != 2 || w.Lat != 30.668 || w.Lon != -123.124 {
+		t.Errorf("WEDES near = %+v", w)
+	}
+	if o := by["WEDES"][1]; o.N != 1 || !o.First.IsZero() || o.Lat != 10 {
+		t.Errorf("WEDES elsewhere = %+v", o)
+	}
+	// What most reports agree on is the position, not an average pulled off by the odd one out; the
+	// resolver is told the same.
+	if l := s.LearnedFixes("WEDES"); len(l) != 2 || l[0].N != 3 || l[0].Lat != 30.668 || l[0].Lon != -123.124 {
+		t.Errorf("LearnedFixes = %+v", l)
+	}
+	// Two sightings either side of the date line are one place.
+	if d := by["DLINE"]; len(d) != 1 || d[0].N != 2 || math.Abs(math.Abs(d[0].Lon)-180) > 0.06 {
+		t.Errorf("DLINE = %+v", d)
 	}
 }

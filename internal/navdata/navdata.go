@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -101,7 +102,44 @@ func (d *DB) Lookup(name string) []Point {
 	return d.byName[strings.ToUpper(name)]
 }
 
-func (d *DB) Len() int { return len(d.byName) }
+// Len is how many distinct names the database holds.
+func (d *DB) Len() int {
+	if d == nil {
+		return 0
+	}
+	return len(d.byName)
+}
+
+// Match is a point of the database with its name.
+type Match struct {
+	Name string
+	Point
+}
+
+// Search returns the points whose name starts with prefix, by name, at most limit of them; more says
+// whether there were others.
+func (d *DB) Search(prefix string, limit int) (out []Match, more bool) {
+	if d == nil || prefix == "" {
+		return nil, false
+	}
+	prefix = strings.ToUpper(prefix)
+	var names []string
+	for n := range d.byName {
+		if strings.HasPrefix(n, prefix) {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		for _, p := range d.byName[n] {
+			if len(out) == limit {
+				return out, true
+			}
+			out = append(out, Match{n, p})
+		}
+	}
+	return out, false
+}
 
 var cycleRe = regexp.MustCompile(`data cycle (\d{4}\.\d{2})`)
 
