@@ -236,7 +236,13 @@ but not where they are. Each name gets coordinates from the most trustworthy sou
    time; the next fix projected from the report's position, speed and track by its ETA. The fix after
    next has no time, so without 1 or 2 it is not placed.
 
-Solid diamonds are exact, dashed ones estimates; hover for how each was placed. Clicking one selects
+Solid diamonds are exact, dashed ones estimates; hover for how each was placed.
+
+**Wind barbs.** A report that gives the wind's direction and speed (a 787 ACMF report, an ADS-C meteorological group,
+REP081, an FMS position, a CPDLC report with winds) gets a wind barb on its dot, in the source's colour: the staff
+points the way the wind comes *from*, with a half barb for each 5 kt, a full barb for 10 and a pennant for 50 (to the
+nearest 5 kt), as winds aloft are drawn on upper-air charts. Under 5 kt nothing is drawn: no calm circle. The hover on
+the dot gives the numbers: `wind from 211° at 81 kt · -49.6°C`. They can be switched off with "Wind barbs" in the legend. Clicking one selects
 the report that named it. Position-report tooltips also show wind (from, true), temperature, speed and track.
 
 ## Fix search

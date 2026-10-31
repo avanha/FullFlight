@@ -488,7 +488,7 @@ highlightGroup = null;
     lat: 10, lon: 100, wx: {dir: 70, kt: 50, temp_c: -45}, gs: 520, trk: 184};
   r = await draw([], [wxmsg], false);
   let dotTip = lines(r.circles.find(c => c.o.radius === 4).tooltip);
-  assert.ok(dotTip.includes('wind 070°/50 kt · -45°C'), 'wind (3 digits) and temperature: ' + dotTip);
+  assert.ok(dotTip.includes('wind from 070° at 50 kt · -45°C'), 'wind (3 digits) and temperature: ' + dotTip);
   assert.ok(dotTip.includes('520 kt · track 184°'), 'speed and track: ' + dotTip);
   r = await draw([], [{...wxmsg, wx: {kt: 12.4}, gs: null, trk: null}], false);
   dotTip = lines(r.circles.find(c => c.o.radius === 4).tooltip);
