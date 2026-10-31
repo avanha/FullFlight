@@ -102,6 +102,9 @@
   .agebadge.s4 { color: #555; border: 1px dashed #868e96; font-style: italic; }
   .agering { position: absolute; left: -3px; top: -3px; width: 30px; height: 30px; border: 2px dashed #868e96; border-radius: 50%; pointer-events: none; }
   .plane svg { display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
+  #radarbadge { position: fixed; top: 40px; right: 8px; z-index: 1000; padding: 2px 8px; border-radius: 4px; font: 12px system-ui, sans-serif;
+                background: rgba(255,255,255,.9); border: 1px solid #aaa; color: #345; }
+  #radarbadge[hidden] { display: none; }
   #clock { position: fixed; top: 8px; right: 8px; z-index: 1000; padding: 3px 8px; border-radius: 4px;
            background: rgba(255,255,255,.9); border: 1px solid #aaa; font: 13px ui-monospace, monospace; }
   @media (max-width: 700px) {
@@ -165,6 +168,7 @@
 </aside>
 <div id="map"></div>
 <div id="clock" title="Current time, UTC"></div>
+<div id="radarbadge" hidden title="The newest frame of the radar composite on the map. It is refreshed every 5 minutes."></div>
 <div id="notespanel" hidden>
   <div class="nphead"><b id="notestitle"></b><button id="notesclose" title="Close">&#10005;</button></div>
   <div id="notesbody"></div>
@@ -201,7 +205,51 @@ const predGroup = L.layerGroup().addTo(map);  // what the selected report predic
 const planGroup = L.layerGroup().addTo(map);  // the filed flight plan: planned route and its fixes
 const bridgeGroup = L.layerGroup().addTo(map);  // estimated path across a silence between two fixes
 const windGroup = L.layerGroup().addTo(map);    // a wind barb on every report that gives wind direction and speed
+// ---- weather radar -------------------------------------------------------------------------------------
+// RainViewer's global radar composite (frames every 10 minutes), switched on from the legend and remembered. Its tiles
+// are only made to zoom 7: closer than that Leaflet enlarges them (asking for more returns a "not supported" tile).
+// Colour scheme 6 is the NEXRAD one (green to red, as radar is usually read). The newest frame is fetched when it is
+// switched on and every 5 minutes after.
+const RADAR = {index: 'https://api.rainviewer.com/public/weather-maps.json', refreshMs: 5 * 60000, scheme: 6};
+const BLANK_TILE = 'data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==';
+const radarLayer = L.tileLayer(BLANK_TILE, {opacity: .65, maxNativeZoom: 7, maxZoom: 18, zIndex: 5,
+  attribution: 'Radar &copy; <a href="https://www.rainviewer.com" target="_blank" rel="noopener">RainViewer</a>'});
+let radarTimer = null, radarFrameMs = null, radarFailed = false;
+async function loadRadar() {
+  try {
+    const r = await fetch(RADAR.index);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    const past = (j.radar && j.radar.past) || [];
+    const f = past[past.length - 1];
+    if (!f) throw new Error('no frames');
+    radarLayer.setUrl(`${j.host}${f.path}/256/{z}/{x}/{y}/${RADAR.scheme}/1_1.png`);
+    radarFrameMs = f.time * 1000;
+    radarFailed = false;
+  } catch (e) { radarFailed = true; }
+  showRadarBadge();
+}
+function showRadarBadge() {
+  const b = $('#radarbadge');
+  const on = map.hasLayer(radarLayer);
+  b.hidden = !on;
+  if (!on) return;
+  b.textContent = radarFrameMs && !radarFailed ? `Weather radar \u00b7 ${fmtTime(radarFrameMs).slice(0, 5)}Z (${ago(radarFrameMs)})`
+                                              : radarFailed ? 'Weather radar unavailable' : 'Weather radar\u2026';
+}
+radarLayer.on('add', () => {
+  loadRadar();
+  radarTimer = setInterval(loadRadar, RADAR.refreshMs);
+  try { localStorage.setItem('radar', '1'); } catch (e) { /* not saved: fine */ }
+});
+radarLayer.on('remove', () => {
+  clearInterval(radarTimer);
+  radarFrameMs = null;
+  showRadarBadge();
+  try { localStorage.setItem('radar', '0'); } catch (e) { /* not saved: fine */ }
+});
 L.control.layers(null, {
+  '<span style="font-weight:bold">&#9638;</span> Weather radar': radarLayer,
   '<span style="font-weight:bold">&#9671;</span> Waypoints': wptGroup,
   '<span style="color:#e8590c;font-weight:bold">&#8211; &#8211;</span> Predictions': predGroup,
   '<span style="color:#5c6b8a;font-weight:bold">&#8211; &#8211;</span> Planned route': planGroup,
@@ -1554,10 +1602,11 @@ $('#fixq').onkeydown = e => {   // Enter goes to the first match
 $('#fixsort').onchange = renderFixes;
 $('#fixall').onchange = drawAllFixes;
 
-function tick() { $('#clock').textContent = new Date().toISOString().slice(0, 19).replace('T', ' ') + 'Z'; }
+function tick() { $('#clock').textContent = new Date().toISOString().slice(0, 19).replace('T', ' ') + 'Z'; showRadarBadge(); }
 tick();
 setInterval(tick, 1000);
 
+try { if (localStorage.getItem('radar') === '1') radarLayer.addTo(map); } catch (e) { /* default: off */ }
 refresh();
 // Every 30 s: update the list and redraw the selected aircraft, leaving the map view,
 // the highlight and any open message details alone.

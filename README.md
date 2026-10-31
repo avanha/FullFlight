@@ -347,6 +347,15 @@ when it was filed). It can be switched off in the legend. The projection follows
 route and heading roughly along it (70 degrees) is projected along the legs, turning where they turn, and stops at the
 destination; otherwise the straight-line projection is used as before. The plan is as filed, not as flown.
 
+## Weather radar
+
+"Weather radar" in the map legend (first entry, off until you tick it, and remembered) lays [RainViewer](https://www.rainviewer.com)'s
+global radar composite over the map, in the NEXRAD colours (green to red), at 65% opacity. A label under the clock gives
+the time of the frame and its age; the newest frame is fetched when it is switched on and every 5 minutes after. The
+browser fetches it straight from RainViewer (the server is not involved), and the map credits it; see RainViewer's
+terms for what it may be used for. Radar only exists where there is radar: there is none over the open ocean, so the
+oceanic routes show nothing there. Its tiles are made to zoom 7 and are enlarged when you zoom in further.
+
 ## Estimated path and ADS-B points
 
 Where the aircraft went quiet and was next heard from, a dotted grey line joins the two fixes: ADS-C handing over to
