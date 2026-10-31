@@ -356,6 +356,22 @@ browser fetches it straight from RainViewer (the server is not involved), and th
 terms for what it may be used for. Radar only exists where there is radar: there is none over the open ocean, so the
 oceanic routes show nothing there. Its tiles are made to zoom 7 and are enlarged when you zoom in further.
 
+### Satellite (IR)
+
+Over most of the oceans there is no ground radar, but storms still show in the infrared: the colder the cloud top, the
+taller the cloud. "Satellite (IR)" in the legend (also remembered) lays NASA [GIBS](https://earthdata.nasa.gov/gibs)'s
+band 13 "clean infrared" imagery over the map at 55% opacity, with the cold, high cloud tops coloured from blue to red
+on the grey cloud, from the three geostationary satellites that cover the Pacific and the Americas: Himawari (60E to the
+date line: East Asia, Australia, the western Pacific), GOES-West (to 105W: the eastern Pacific, Hawaii) and GOES-East (to
+6E: the Americas and the Atlantic). Each draws only the longitudes it sees well, since imagery near a satellite's edge is
+stretched into streaks. **Europe, Africa and the western Indian Ocean are not covered.**
+
+GIBS serves frames 10 minutes apart, by time, and the newest is about half an hour old; the newest of each satellite is
+found by trying back from now, and found again every 10 minutes. Frames have holes (a tile can be missing from one and
+present in the one before), so a missing tile is taken from the previous frame or the one before that. A label under the
+clock says which frames are showing and how old the oldest is. Infrared sees cloud tops, not rain: cold high cirrus can look
+like a storm and heavy rain from low cloud can be missed. Faint lines between tiles are in the imagery, not a gap.
+
 ## Estimated path and ADS-B points
 
 Where the aircraft went quiet and was next heard from, a dotted grey line joins the two fixes: ADS-C handing over to

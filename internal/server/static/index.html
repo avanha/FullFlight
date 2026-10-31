@@ -102,9 +102,9 @@
   .agebadge.s4 { color: #555; border: 1px dashed #868e96; font-style: italic; }
   .agering { position: absolute; left: -3px; top: -3px; width: 30px; height: 30px; border: 2px dashed #868e96; border-radius: 50%; pointer-events: none; }
   .plane svg { display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
-  #radarbadge { position: fixed; top: 40px; right: 8px; z-index: 1000; padding: 2px 8px; border-radius: 4px; font: 12px system-ui, sans-serif;
-                background: rgba(255,255,255,.9); border: 1px solid #aaa; color: #345; }
-  #radarbadge[hidden] { display: none; }
+  #wxbadges { position: fixed; top: 40px; right: 8px; z-index: 1000; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; pointer-events: none; }
+  .wxbadge { padding: 2px 8px; border-radius: 4px; font: 12px system-ui, sans-serif; background: rgba(255,255,255,.9); border: 1px solid #aaa; color: #345; }
+  .wxbadge[hidden] { display: none; }
   #clock { position: fixed; top: 8px; right: 8px; z-index: 1000; padding: 3px 8px; border-radius: 4px;
            background: rgba(255,255,255,.9); border: 1px solid #aaa; font: 13px ui-monospace, monospace; }
   @media (max-width: 700px) {
@@ -168,7 +168,10 @@
 </aside>
 <div id="map"></div>
 <div id="clock" title="Current time, UTC"></div>
-<div id="radarbadge" hidden title="The newest frame of the radar composite on the map. It is refreshed every 5 minutes."></div>
+<div id="wxbadges">
+  <div class="wxbadge" id="radarbadge" hidden title="The newest frame of the radar composite on the map. It is refreshed every 5 minutes."></div>
+  <div class="wxbadge" id="satbadge" hidden title="The newest infrared satellite frames on the map, from the satellites that see each part of the world. Refreshed every 10 minutes."></div>
+</div>
 <div id="notespanel" hidden>
   <div class="nphead"><b id="notestitle"></b><button id="notesclose" title="Close">&#10005;</button></div>
   <div id="notesbody"></div>
@@ -248,8 +251,111 @@ radarLayer.on('remove', () => {
   showRadarBadge();
   try { localStorage.setItem('radar', '0'); } catch (e) { /* not saved: fine */ }
 });
+
+// ---- infrared satellite --------------------------------------------------------------------------------
+// Where there is no ground radar (most of the oceans) storms show up in the infrared: the colder the cloud top the taller
+// the cloud, and NASA GIBS serves the three geostationary satellites' band-13 imagery, 10 minutes apart and about half an
+// hour behind, coloured so that cold cloud tops stand out (blue to red) on the grey cloud. Himawari sees East Asia, Australia
+// and the western Pacific, GOES-West the eastern Pacific and Hawaii, GOES-East the Americas and the Atlantic; nothing here
+// covers Europe, Africa or the Indian Ocean. A tile has to be asked for by time, so the newest frame of each is found by
+// trying back from now (a loaded image is the test: no CORS needed). Infrared sees cloud tops, not rain, so cold high
+// cirrus can look like a storm and heavy rain from low cloud can be missed.
+//
+// The three views overlap, and imagery near a satellite's edge is stretched into streaks, so each satellite draws only the
+// longitudes it sees well (lonRange, degrees east, from the first to the second, wrapping the date line if the first is the
+// larger): Himawari from 60E to the date line, GOES-West from there to 105W, GOES-East from there to 6E. A tile belongs to
+// the range its centre is in.
+//
+// GIBS frames have holes: a tile can be missing from one frame and present in the one before. So a tile that is not there
+// is asked for again from the frame before, and the one before that, before it is given up on.
+const RegionTiles = L.TileLayer.extend({
+  frameMs: null,   // the newest frame; set when it has been found, then redraw()
+  createTile(coords, done) {
+    const tile = document.createElement('img');
+    tile.alt = '';
+    const lon = ((((coords.x + .5) / 2 ** coords.z) * 360 - 180 + 540) % 360) - 180;
+    const [a, b] = this.options.lonRange;
+    const mine = a <= b ? lon >= a && lon < b : lon >= a || lon < b;
+    if (!mine || !this.frameMs) {            // not this satellite's part of the world, or no frame yet
+      setTimeout(() => done(null, tile), 0);
+      return tile;
+    }
+    const tryFrame = k => {
+      if (k > SAT.olderFrames) { tile.removeAttribute('src'); tile.style.visibility = 'hidden'; done(null, tile); return; }
+      tile.onload = () => done(null, tile);
+      tile.onerror = () => tryFrame(k + 1);
+      tile.src = this.options.urlFor(coords, this.frameMs - k * SAT.stepMin * 60000);
+    };
+    tryFrame(0);
+    return tile;
+  },
+});
+const SAT = {
+  base: 'https://gibs.earthdata.nasa.gov/wmts/epsg3857/best', stepMin: 10, startBackMin: 20, maxBackMin: 150, olderFrames: 2, refreshMs: 10 * 60000,
+  attribution: 'Satellite imagery: <a href="https://earthdata.nasa.gov/gibs" target="_blank" rel="noopener">NASA GIBS</a> (JMA Himawari, NOAA GOES)',
+  // probe: a tile inside the satellite's view (zoom/row/column), for finding its newest frame
+  birds: [
+    {name: 'Himawari', layer: 'Himawari_AHI_Band13_Clean_Infrared', probe: '3/3/7', lonRange: [60, 180]},
+    {name: 'GOES-West', layer: 'GOES-West_ABI_Band13_Clean_Infrared', probe: '3/3/1', lonRange: [-180, -105]},
+    {name: 'GOES-East', layer: 'GOES-East_ABI_Band13_Clean_Infrared', probe: '3/3/1', lonRange: [-105, 6]},
+  ],
+};
+for (const b of SAT.birds) {
+  b.tiles = new RegionTiles(BLANK_TILE, {opacity: .55, maxNativeZoom: 6, maxZoom: 18, zIndex: 4, attribution: SAT.attribution, lonRange: b.lonRange,
+    urlFor: (coords, ms) => tileUrl(b, ms, `${coords.z}/${coords.y}/${coords.x}`)});
+  b.frameMs = null;
+}
+const satGroup = L.layerGroup(SAT.birds.map(b => b.tiles));
+let satTimer = null, satSeq = 0, satTried = false;
+const gibsTime = ms => new Date(ms).toISOString().slice(0, 19) + 'Z';
+const tileUrl = (bird, ms, tile) => `${SAT.base}/${bird.layer}/default/${gibsTime(ms)}/GoogleMapsCompatible_Level6/${tile}.png`;
+const imageLoads = url => new Promise(done => { const i = new Image(); i.onload = () => done(true); i.onerror = () => done(false); i.src = url; });
+// The newest frame that exists: tried from a little way back, at the satellite's 10 minute steps.
+async function newestFrame(bird) {
+  const step = SAT.stepMin * 60000, now = Date.now();
+  for (let t = Math.floor((now - SAT.startBackMin * 60000) / step) * step; t > now - SAT.maxBackMin * 60000; t -= step) {
+    if (await imageLoads(tileUrl(bird, t, bird.probe))) return t;
+  }
+  return null;
+}
+async function loadSatellite() {
+  const seq = ++satSeq;
+  await Promise.all(SAT.birds.map(async b => {
+    const t = await newestFrame(b);
+    if (seq !== satSeq || !map.hasLayer(satGroup)) return;   // switched off, or a newer load is under way
+    if (t && t !== b.frameMs) { b.frameMs = b.tiles.frameMs = t; b.tiles.redraw(); }
+  }));
+  satTried = true;
+  showSatBadge();
+}
+function showSatBadge() {
+  const b = $('#satbadge');
+  const on = map.hasLayer(satGroup);
+  b.hidden = !on;
+  if (!on) return;
+  const have = SAT.birds.filter(x => x.frameMs);
+  if (!have.length) { b.textContent = satTried ? 'Satellite IR unavailable' : 'Satellite IR\u2026'; return; }
+  const times = have.map(x => x.frameMs), oldest = Math.min(...times), newest = Math.max(...times);
+  const hhmm = ms => fmtTime(ms).slice(0, 5);
+  b.textContent = `Satellite IR \u00b7 ${oldest === newest ? hhmm(oldest) : hhmm(oldest) + '\u2013' + hhmm(newest)}Z (${ago(oldest)})`;
+}
+satGroup.on('add', () => {
+  loadSatellite();
+  satTimer = setInterval(loadSatellite, SAT.refreshMs);
+  try { localStorage.setItem('sat', '1'); } catch (e) { /* not saved: fine */ }
+});
+satGroup.on('remove', () => {
+  clearInterval(satTimer);
+  ++satSeq;
+  SAT.birds.forEach(b => { b.frameMs = b.tiles.frameMs = null; });
+  satTried = false;
+  showSatBadge();
+  try { localStorage.setItem('sat', '0'); } catch (e) { /* not saved: fine */ }
+});
+
 L.control.layers(null, {
   '<span style="font-weight:bold">&#9638;</span> Weather radar': radarLayer,
+  '<span style="font-weight:bold">&#9729;</span> Satellite (IR)': satGroup,
   '<span style="font-weight:bold">&#9671;</span> Waypoints': wptGroup,
   '<span style="color:#e8590c;font-weight:bold">&#8211; &#8211;</span> Predictions': predGroup,
   '<span style="color:#5c6b8a;font-weight:bold">&#8211; &#8211;</span> Planned route': planGroup,
@@ -1602,11 +1708,12 @@ $('#fixq').onkeydown = e => {   // Enter goes to the first match
 $('#fixsort').onchange = renderFixes;
 $('#fixall').onchange = drawAllFixes;
 
-function tick() { $('#clock').textContent = new Date().toISOString().slice(0, 19).replace('T', ' ') + 'Z'; showRadarBadge(); }
+function tick() { $('#clock').textContent = new Date().toISOString().slice(0, 19).replace('T', ' ') + 'Z'; showRadarBadge(); showSatBadge(); }
 tick();
 setInterval(tick, 1000);
 
 try { if (localStorage.getItem('radar') === '1') radarLayer.addTo(map); } catch (e) { /* default: off */ }
+try { if (localStorage.getItem('sat') === '1') satGroup.addTo(map); } catch (e) { /* default: off */ }
 refresh();
 // Every 30 s: update the list and redraw the selected aircraft, leaving the map view,
 // the highlight and any open message details alone.
