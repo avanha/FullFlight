@@ -601,3 +601,47 @@ func TestFixNames(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+func TestACMFReport(t *testing.T) {
+	// The first block of a 787 ACMF report: header plus two fixes. The newest fix is the message's position.
+	f, r := load(t, "acmf_header")
+	if r.Kind != KindACMF || r.Label != "H1" || r.Pos == nil {
+		t.Fatalf("header block: %v %q %+v", r.Kind, r.Label, r.Pos)
+	}
+	if r.Identity.Tail != "N24993" || r.Identity.Callsign != "UAL143" {
+		t.Errorf("identity = %+v", r.Identity)
+	}
+	if r.Fields["origin"] != "KDEN" || r.Fields["dest"] != "RJAA" || r.Fields["elapsed_s"] != 16591 || r.Fields["report_time"] != "225335" {
+		t.Errorf("fields = %v", r.Fields)
+	}
+	near(t, "lat", r.Pos.Lat, 58+18.3/60, 1e-9)
+	near(t, "lon", r.Pos.Lon, -(145 + 55.3/60), 1e-9)
+	if r.Pos.AltFt == nil || *r.Pos.AltFt != 36002 {
+		t.Errorf("alt = %v", r.Pos.AltFt)
+	}
+	if want := time.Date(2026, 10, 30, 22, 41, 0, 0, time.UTC); !r.Pos.At(f.Received).Equal(want) {
+		t.Errorf("fix time = %v, want %v", r.Pos.At(f.Received), want)
+	}
+	if r.Wx == nil || *r.Wx.WindDirDeg != 211 || *r.Wx.WindKt != 81 || *r.Wx.TempC != -49.6 {
+		t.Errorf("wx = %+v", r.Wx)
+	}
+	if pts, _ := r.Fields["points"].([]ACMFPoint); len(pts) != 2 || pts[0].Phase != "ER" {
+		t.Errorf("points = %+v", r.Fields["points"])
+	}
+	if want := "ACMF report KDEN→RJAA 58.305N 145.922W FL360 en route, 2 fixes"; r.Summary != want {
+		t.Errorf("summary = %q, want %q", r.Summary, want)
+	}
+
+	// A continuation block has no header, and is cut off mid-line: only whole lines count.
+	f, r = load(t, "acmf_continuation")
+	if r.Kind != KindACMF || r.Pos == nil || r.Identity.Tail != "" {
+		t.Fatalf("continuation: %v %+v %+v", r.Kind, r.Pos, r.Identity)
+	}
+	if pts, _ := r.Fields["points"].([]ACMFPoint); len(pts) != 3 {
+		t.Errorf("points = %d, want 3", len(pts))
+	}
+	near(t, "lon", r.Pos.Lon, -(4 + 12.4/60), 1e-9)
+	if want := time.Date(2026, 10, 27, 12, 39, 0, 0, time.UTC); !r.Pos.At(f.Received).Equal(want) {
+		t.Errorf("fix time = %v, want %v", r.Pos.At(f.Received), want)
+	}
+}
