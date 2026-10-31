@@ -22,6 +22,22 @@ Sample: `testdata/adsblol_point_sample.json`.
 
 Decision: make the ADS-B provider pluggable (base URL + reg path in config). Default adsb.lol, with adsb.fi as fallback. Add airplanes.live if its operators grant access.
 
+### airplanes.live, as of 2026-10-31
+
+Its API reference (pasted from the site) documents `GET https://api.airplanes.live/v2/reg/{reg}` (comma-separated
+registrations allowed) returning the same `{ac:[...], msg, now, total, ctime, ptime}` envelope, and by the same pattern
+`/v2/hex/{hex}`, `/v2/callsign/{cs}` and `/v2/point/{lat}/{lon}/{nm}`. The reference says nothing about keys or approval,
+but unauthenticated requests from here still got **HTTP 403** ("Please contact us at contact@airplanes.live. Your email
+MUST include any links, a description of the project…"), so it stays opt-in: name `airplanes.live` in `adsb.sources`
+once its operators have agreed. A source that answers 401/403 is left alone for an hour, 429 for five minutes (or its
+`Retry-After`).
+
+Fields it documents that the other two may not send, and we do not read yet: `wd`/`ws` (wind direction and speed,
+calculated), `oat`/`tat` (outside and total air temperature, calculated, not below Mach 0.395), `tas`/`ias`/`mach`,
+`nav_altitude_mcp`/`nav_modes`/`nav_qnh` (what the autopilot is set to), `lastPosition` (when the live position is
+older than 60 s), `rr_lat`/`rr_lon` (a rough position when there is no ADS-B or MLAT one), `dbFlags` (military, etc).
+Wind and temperature at every ADS-B point would fill the hover the way they do for datalink reports.
+
 ## airframes.io (`https://api.airframes.io/v1`), works unauthenticated
 
 - `GET /airframes/icao/{hex}` and `GET /airframes/tail/{tail}` → `{id, tail, icao, icaoType, …}`. (`/airframes/hex/…` is 404.)

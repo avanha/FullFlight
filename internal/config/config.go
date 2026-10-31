@@ -20,7 +20,7 @@ type Config struct {
 	} `yaml:"auth"`
 
 	ADSB struct {
-		Sources []string `yaml:"sources"` // "adsb.lol", "adsb.fi"; tried in order
+		Sources []string `yaml:"sources"` // "adsb.lol", "adsb.fi", "airplanes.live" (needs its operators' permission); tried in order
 	} `yaml:"adsb"`
 
 	// AeroDataBox is the optional fallback for finding a flight by number when ADS-B has lost it, such as

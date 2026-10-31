@@ -227,3 +227,58 @@ func TestMergeKeepsDistinctAircraft(t *testing.T) {
 		t.Fatalf("got %+v", ac)
 	}
 }
+
+// A source that refuses us (HTTP 403, as airplanes.live does until its operators grant access) is asked once,
+// then left alone for an hour; one that says slow down (429) for a while, longer if it says so.
+func TestRefusedSourceIsPaused(t *testing.T) {
+	for _, tc := range []struct {
+		code       int
+		retryAfter string
+		pause      time.Duration
+	}{
+		{403, "", time.Hour}, {401, "", time.Hour}, {429, "", 5 * time.Minute}, {429, "1200", 20 * time.Minute}, {429, "99999", time.Hour},
+	} {
+		var refused, answered int
+		bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			refused++
+			if tc.retryAfter != "" {
+				w.Header().Set("Retry-After", tc.retryAfter)
+			}
+			w.WriteHeader(tc.code)
+		}))
+		good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			answered++
+			w.Write([]byte(`{"ac":[{"hex":"86d646","flight":"TZP1","lat":35,"lon":140,"seen_pos":1}],"msg":"No error"}`))
+		}))
+		clock := time.Date(2026, 10, 31, 4, 0, 0, 0, time.UTC)
+		c := NewClient(Source{Name: "refuses", BaseURL: bad.URL, RegPath: "reg"}, Source{Name: "answers", BaseURL: good.URL, RegPath: "reg"})
+		c.MinSpacing = time.Millisecond
+		c.Now = func() time.Time { return clock }
+		for i := 0; i < 3; i++ {
+			if ac, err := c.Reg(context.Background(), "JA826J"); err != nil || len(ac) != 1 {
+				t.Fatalf("%d: %v %v", tc.code, ac, err)
+			}
+		}
+		if refused != 1 || answered != 3 {
+			t.Errorf("HTTP %d (Retry-After %q): refused source asked %d times, other %d; want 1 and 3", tc.code, tc.retryAfter, refused, answered)
+		}
+		clock = clock.Add(tc.pause - time.Second)
+		c.Reg(context.Background(), "JA826J")
+		if refused != 1 {
+			t.Errorf("HTTP %d: asked again before the pause (%v) was over", tc.code, tc.pause)
+		}
+		clock = clock.Add(2 * time.Second)
+		c.Reg(context.Background(), "JA826J")
+		if refused != 2 {
+			t.Errorf("HTTP %d: not asked again after the pause", tc.code)
+		}
+		bad.Close()
+		good.Close()
+	}
+}
+
+func TestAirplanesLiveSource(t *testing.T) {
+	if AirplanesLive.BaseURL != "https://api.airplanes.live/v2" || AirplanesLive.RegPath != "reg" {
+		t.Errorf("%+v", AirplanesLive) // GET https://api.airplanes.live/v2/reg/{reg}, per its API reference
+	}
+}

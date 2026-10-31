@@ -113,6 +113,8 @@ func main() {
 			sources = append(sources, adsb.ADSBLol)
 		case "adsb.fi":
 			sources = append(sources, adsb.ADSBFi)
+		case "airplanes.live":
+			sources = append(sources, adsb.AirplanesLive)
 		default:
 			log.Error("unknown adsb source", "name", name)
 			os.Exit(1)

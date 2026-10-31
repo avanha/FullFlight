@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +24,16 @@ type Source struct {
 var (
 	ADSBLol = Source{Name: "adsb.lol", BaseURL: "https://api.adsb.lol/v2", RegPath: "reg"}
 	ADSBFi  = Source{Name: "adsb.fi", BaseURL: "https://opendata.adsb.fi/api/v2", RegPath: "registration"}
+	// AirplanesLive answers the same queries (GET /v2/hex/{hex}, /callsign/{cs}, /reg/{reg}, /point/...). Its
+	// operators have asked to be contacted for access (it has answered 403 to requests without it), so it is
+	// only used when named in the configuration.
+	AirplanesLive = Source{Name: "airplanes.live", BaseURL: "https://api.airplanes.live/v2", RegPath: "reg"}
+)
+
+// A source that refuses us is left alone for a while rather than asked again with every poll.
+const (
+	refusedFor = time.Hour       // HTTP 401 or 403: we are not allowed
+	tooManyFor = 5 * time.Minute // HTTP 429: slow down (a longer Retry-After is honoured, up to refusedFor)
 )
 
 // Aircraft is one entry of the "ac" array. Only fields we use are mapped.
@@ -98,8 +109,28 @@ type Client struct {
 	MinSpacing time.Duration // between requests to the same source; default 1.1s
 	UserAgent  string
 
-	mu   sync.Mutex
-	next map[string]time.Time
+	Now func() time.Time // for tests; default time.Now
+
+	mu      sync.Mutex
+	next    map[string]time.Time
+	blocked map[string]time.Time // source name -> not before
+}
+
+func (c *Client) now() time.Time {
+	if c.Now != nil {
+		return c.Now()
+	}
+	return time.Now()
+}
+
+// block leaves a source alone for d.
+func (c *Client) block(name string, d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.blocked == nil {
+		c.blocked = map[string]time.Time{}
+	}
+	c.blocked[name] = c.now().Add(d)
 }
 
 func NewClient(sources ...Source) *Client {
@@ -217,6 +248,12 @@ func fresher(x, y Aircraft) bool {
 }
 
 func (c *Client) get(ctx context.Context, s Source, path string) ([]Aircraft, error) {
+	c.mu.Lock()
+	until := c.blocked[s.Name]
+	c.mu.Unlock()
+	if c.now().Before(until) {
+		return nil, fmt.Errorf("paused until %s after it refused us", until.UTC().Format("15:04Z"))
+	}
 	if err := c.wait(ctx, s.Name); err != nil {
 		return nil, err
 	}
@@ -231,6 +268,16 @@ func (c *Client) get(ctx context.Context, s Source, path string) ([]Aircraft, er
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		switch resp.StatusCode {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			c.block(s.Name, refusedFor)
+		case http.StatusTooManyRequests:
+			d := tooManyFor
+			if n, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && n > 0 {
+				d = min(max(time.Duration(n)*time.Second, d), refusedFor)
+			}
+			c.block(s.Name, d)
+		}
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	var r response
