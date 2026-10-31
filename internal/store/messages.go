@@ -8,6 +8,7 @@ import (
 	"math"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -544,9 +545,13 @@ const routeReportsSQL = `
 	FROM message WHERE hex=?1 AND kind='miam' AND ts BETWEEN ?2 AND ?3 AND time_flag=0
 	  AND COALESCE(json_extract(decoded, '$.fields.a350.Dest'), json_extract(decoded, '$.fields.rtr.Dest'), json_extract(decoded, '$.fields.takeoff.Dest'), '') != ''
 	UNION ALL
+	SELECT ts, json_extract(decoded, '$.fields.departure.Origin'), json_extract(decoded, '$.fields.departure.Dest'), 'airline report'
+	FROM message WHERE hex=?1 AND kind IN ('departure_report', 'miam') AND ts BETWEEN ?2 AND ?3 AND time_flag=0
+	  AND COALESCE(json_extract(decoded, '$.fields.departure.Dest'), '') != ''
+	UNION ALL
 	SELECT COALESCE(pos_ts, ts), COALESCE(json_extract(decoded, '$.fields.origin'), ''), json_extract(decoded, '$.fields.dest'),
 		CASE kind WHEN 'acmf_report' THEN 'ACMF' ELSE 'airline report' END
-	FROM message WHERE hex=?1 AND kind IN ('acmf_report', 'aoc_position', 'posrpt') AND COALESCE(pos_ts, ts) BETWEEN ?2 AND ?3 AND time_flag=0
+	FROM message WHERE hex=?1 AND kind IN ('acmf_report', 'aoc_position', 'posrpt', 'pos_report') AND COALESCE(pos_ts, ts) BETWEEN ?2 AND ?3 AND time_flag=0
 	  AND json_extract(decoded, '$.fields.dest') IS NOT NULL AND json_extract(decoded, '$.fields.dest') != ''
 	UNION ALL
 	SELECT ts, COALESCE(json_extract(decoded, '$.fields.plan.from'), ''), json_extract(decoded, '$.fields.plan.to'), 'flight plan'
@@ -584,4 +589,89 @@ func (s *Store) CountMessages(hexAddr string, from, to time.Time) int {
 	var n int
 	s.db.QueryRow(`SELECT COUNT(*) FROM message WHERE hex=? AND ts BETWEEN ? AND ?`, hexAddr, ts(from), ts(to)).Scan(&n)
 	return n
+}
+
+// Departure is a moment an aircraft is known to have left: how we know decides how it is worded.
+type Departure struct {
+	T   time.Time
+	How string // "takeoff" (a takeoff report), "adsb" (seen leaving the ground), "pushback" or "taxi" (a departure report)
+}
+
+// timeBefore places a time of day ("hhmm" or "hhmmss", UTC) on the day that puts it at or just before when: a report
+// is sent after what it describes, though a station's clock may run a few minutes behind.
+func timeBefore(when time.Time, hms string) (time.Time, bool) {
+	if len(hms) != 4 && len(hms) != 6 {
+		return time.Time{}, false
+	}
+	n := func(i int) int {
+		v, err := strconv.Atoi(hms[i : i+2])
+		if err != nil {
+			v = 99
+		}
+		return v
+	}
+	h, m, sec := n(0), n(2), 0
+	if len(hms) == 6 {
+		sec = n(4)
+	}
+	if h > 23 || m > 59 || sec > 59 {
+		return time.Time{}, false
+	}
+	when = when.UTC()
+	t := time.Date(when.Year(), when.Month(), when.Day(), h, m, sec, 0, time.UTC)
+	for t.After(when.Add(5 * time.Minute)) {
+		t = t.AddDate(0, 0, -1)
+	}
+	return t, true
+}
+
+// Departures returns the moments in [since, until] when the aircraft is known to have left: the takeoff time of a takeoff
+// report, the gate and taxi times of a departure report, and where ADS-B saw it leave the ground. Oldest first.
+func (s *Store) Departures(hexAddr string, since, until time.Time) ([]Departure, error) {
+	rows, err := s.db.Query(`
+		WITH m AS (SELECT ts, CASE WHEN json_valid(decoded) THEN decoded ELSE '{}' END AS decoded FROM message
+		           WHERE hex=?1 AND ts BETWEEN ?2 AND ?3 AND time_flag=0 AND kind IN ('miam', 'departure_report'))
+		SELECT ts, 'takeoff', json_extract(decoded, '$.fields.takeoff.Off') FROM m WHERE json_extract(decoded, '$.fields.takeoff.Off') IS NOT NULL
+		UNION ALL
+		SELECT ts, 'pushback', json_extract(decoded, '$.fields.departure.Events.out."OUT EVENT"') FROM m WHERE json_extract(decoded, '$.fields.departure.Events.out."OUT EVENT"') IS NOT NULL
+		UNION ALL
+		SELECT ts, 'taxi', json_extract(decoded, '$.fields.departure.Events.taxi.MOVEMENT') FROM m WHERE json_extract(decoded, '$.fields.departure.Events.taxi.MOVEMENT') IS NOT NULL`,
+		hexAddr, ts(since), ts(until.Add(time.Hour)))
+	if err != nil {
+		return nil, err
+	}
+	var out []Departure
+	for rows.Next() {
+		var t int64
+		var how, hms string
+		if err := rows.Scan(&t, &how, &hms); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if d, ok := timeBefore(time.Unix(t, 0), hms); ok && !d.Before(since) && !d.After(until) {
+			out = append(out, Departure{d, how})
+		}
+	}
+	rows.Close()
+
+	prows, err := s.db.Query(`SELECT ts, on_ground FROM position WHERE hex=? AND ts BETWEEN ? AND ? ORDER BY ts`, hexAddr, ts(since), ts(until))
+	if err != nil {
+		return nil, err
+	}
+	defer prows.Close()
+	var prevT int64
+	prevGround := false
+	for prows.Next() {
+		var t int64
+		var ground bool
+		if err := prows.Scan(&t, &ground); err != nil {
+			return nil, err
+		}
+		if prevGround && !ground && t-prevT <= 15*60 {
+			out = append(out, Departure{time.Unix(t, 0).UTC(), "adsb"})
+		}
+		prevT, prevGround = t, ground
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].T.Before(out[j].T) })
+	return out, prows.Err()
 }

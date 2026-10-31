@@ -237,6 +237,9 @@ func summarize(r Result) string {
 		if x, ok := r.Fields["takeoff"].(TakeoffReport); ok {
 			return x.summary()
 		}
+		if x, ok := r.Fields["departure"].(DepartureReport); ok {
+			return x.summary()
+		}
 		if strings.Contains(r.Text, "MIAM CORE Ack") {
 			if n, ok := findNum(r.Tree, "msg_ack_num"); ok {
 				return fmt.Sprintf("MIAM acknowledgement of message %.0f", n)
@@ -275,6 +278,11 @@ func summarize(r Result) string {
 		return acmfSummary(r)
 	case KindAOC:
 		return aocSummary(r)
+	case KindDeparture:
+		if d, ok := r.Fields["departure"].(DepartureReport); ok {
+			return d.summary()
+		}
+		return undecodedSummary(r)
 	case KindPOS:
 		return posRptSummary(r)
 	case KindPOSRPT:

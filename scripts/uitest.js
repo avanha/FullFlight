@@ -96,7 +96,11 @@ highlightGroup = null;
   assert.ok(li.children.some(c => /last ADS-B .* · A359/.test(c.textContent || '')), 'last position + type line');
 
   // 2. selecting the watch draws the plane at the last ADS-B point, rotated to its track
+  // (the page judges how old a fix is by the clock: stand it at a minute after this one, as when it was written)
+  const realNow = Date.now;
+  Date.now = () => Date.parse('2026-10-30T16:02:00Z');
   li.onclick(); await tick(); await tick();
+  Date.now = realNow;
   const plane = calls.markers.find(m => m.o && m.o.icon);
   assert.ok(plane, 'a marker with an icon was created');
   assert.strictEqual(JSON.stringify(plane.ll), JSON.stringify([40, -100]));
@@ -908,7 +912,7 @@ highlightGroup = null;
   // ===== 8r. flights: most recent by default, all of them on request ==============================
   const seg = (id, flight, start, end, extra = {}) => ({id, flight, callsign: flight && 'CPA' + flight.slice(2), start, end, messages: 10, positions: 5, identified: !!flight, latest: false, ...extra});
   const OLD = seg('CX840@1', 'CX840', '2026-10-29T10:00:00Z', '2026-10-29T16:00:00Z', {from: 'VHHH', to: 'KJFK', messages: 40});
-  const NEW = seg('CX843@2', 'CX843', '2026-10-30T10:00:00Z', '2026-10-30T20:00:00Z', {from: 'KJFK', to: 'VHHH', messages: 67, latest: true, from_name: 'John F Kennedy Intl', to_name: 'Hong Kong Intl'});
+  const NEW = seg('CX843@2', 'CX843', '2026-10-30T10:00:00Z', '2026-10-30T20:00:00Z', {from: 'KJFK', to: 'VHHH', messages: 67, latest: true, from_name: 'John F Kennedy Intl', to_name: 'Hong Kong Intl', departed: '2026-10-30T10:05:00Z', departed_how: 'takeoff'});
   const bp = (day, hh, mm, lon) => ({t: `2026-10-${day}T${hh}:${mm}:00Z`, lat: 10, lon, alt_ft: 36000, gs: 480, track: 90, source: 'adsb.lol'});
   const FPTS = [bp(29, 11, '00', 10.0), bp(29, 11, '02', 10.2), bp(29, 11, '04', 10.4),     // the older flight
                 bp(30, '02', '00', 50.0),                                                     // between flights: belongs to neither
@@ -939,7 +943,10 @@ highlightGroup = null;
     assert.strictEqual(r.circles.filter(c => c.o.radius === 4).length, 1, 'only its message position');
     assert.ok(planes(r).length === 1, 'the plane is there: this is the flight in progress');
     assert.strictEqual(flagsOf(r).length, 1);
-    assert.strictEqual(flagsOf(r)[0].o.icon.html.textContent, 'CX843 · 30 Oct');
+    assert.strictEqual(flagsOf(r)[0].o.icon.html.textContent, 'CX843 KJFK \u2192 VHHH · 30 Oct · dep 10:05Z', 'flight, route and when it left');
+    // the aircraft's own hover names the flight, the route and the departure too
+    const pt = lines(planes(r)[0].tooltip);
+    assert.ok(pt.includes('CX843 KJFK \u2192 VHHH') && pt.some(l => /^took off \(takeoff report\) 2026-10-30 10:05Z$/.test(l)), pt.join(' | '));
     assert.ok(flagsOf(r)[0].o.icon.html.className.includes('latest'));
     assert.strictEqual(JSON.stringify(rowIds()), '[302]', 'the list holds the latest flight\'s messages, not the older flight\'s or the ground chatter');
     assert.strictEqual(JSON.stringify(heads()), JSON.stringify(['CX843 · 30 Oct · KJFK→VHHH · 67 msgs']));

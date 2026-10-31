@@ -156,6 +156,9 @@ ACARS from its UPS80 flight of 28 October on the 31st.
   the flight (fuel, to judge by the rate). Sent on time they match their arrival to the minute, so they are decoded
   and placed at their own time, however late they came: the late ones show up on the 28th, where the flight was, with
   a note saying how late they were delivered.
+  Once a flight, on the way down, one more arrives with a ground address in front (`/SDFAD5X.*POS`) and the route
+  behind (`...0367TODHKGANC`, airports as IATA codes): shown as `top of descent VHHH→PANC`, and it counts as a route
+  report. Of the four we have, all were sent at FL209, so it may be the report for passing that level.
 - **POSRPT** (label 80, Delta and Fiji Airways: `3N01 POSRPT 0039/30 KLAX/ZSPD .N501DN`, then `/POS N34414W119598/ALT 252/
   MCH 759/FOB 2022` and `/TME 1941/WND 239 032/OAT -029/TAS 0462/ETA 0925`) is decoded too: position in degrees and
   tenths of minutes, flight level, Mach, wind (a negative direction is 180 to 360, so -142 is 218), temperature, and the
@@ -206,6 +209,9 @@ decoded, but the flight and route are used like any other: they count as sightin
 out, off and ETA times) are read the same way. MIAM acknowledgements are named, and a block that continues a message
 too long for one is listed as a data block, with the undecoded messages: its start, with the header, is in an earlier
 block (or the whole message in one that airframes.io joined).
+Some Delta aircraft send a departure report as they start to taxi (label 4M, or inside a MIAM message): flight number,
+origin and destination, and the times of the pushback and the taxi (out event, brake release, movement, engine run, doors
+closed). It reads `Departure report flight 87 KLAX→VHHH: out 06:44:43Z, taxi 06:53:01Z` and counts as a route report.
 The newest one is shown on the watch (`VHHH → YSSY (REP081 12m ago)`) and in the plane's
 hover, for tail and hex watches as well as flights. REP081 goes out about every 20
 minutes in flight, so a report older than 90 minutes is shown greyed with "may be out
@@ -249,7 +255,8 @@ with the HTTP status.
 
 `/airframes.html` lists every aircraft we know of (searchable, sortable, filterable to those with notes):
 its current registration and any earlier ones, hex, type, when first and last heard from, whether it is on a
-watch, and a preview of its newest note. An aircraft known only from a watch or a note is listed too.
+watch, its **last flight** (`SQ23 KJFK → WSSS`, with when it left, or when it was last heard on that flight; hover for the
+callsign and airport names), and a preview of its newest note. An aircraft known only from a watch or a note is listed too.
 
 You can write any number of **notes** about an airframe (`This was the plane Yen took from SEA to HKG on
 2026-10-27`), each with its own date, and edit or delete them later. They attach to the hex, the aircraft,
@@ -292,6 +299,15 @@ Stray one-off numbers are folded away. Positions attach to the flight they fall 
 of. Positions that name no flight but cluster are shown as an *unidentified* flight rather than lost,
 and pieces of one flight that report the same REP081 route are joined (a flight whose number was only
 logged for its last hours is still one flight).
+
+A flight's **route** is the origin and destination the aircraft reported most often during it (REP081 and the other
+A350 reports, ACMF and airline position reports, `*POS` at the top of descent, Delta's departure report, a filed
+plan), and **when it left** is the best evidence there is: a takeoff report's takeoff time, else ADS-B seeing it leave
+the ground, else a gate time from a departure report. Both are worked out afresh each time, so a flight that has
+only its number at first gains its route and departure time as the reports come in. The flag at the start of a flight
+on the map reads `SQ23 KJFK → WSSS · 31 Oct · dep 15:56Z` (`out 06:44Z` where only the gate time is known), and
+its hover gives the airport names and how the departure is known. The aircraft's own hover names its flight, route
+and departure the same way.
 
 The **Flights** selector under the watch list chooses what the map and message list show: the **most
 recent flight** (the default), **all flights**, or any one. In the all-flights view each flight is

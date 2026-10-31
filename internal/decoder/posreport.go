@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+
+	"github.com/avanha/fullflight/internal/airports"
 )
 
 // The airline position report that starts "*POS" (label H1; seen from UPS 747s), about every ten minutes:
@@ -16,7 +18,13 @@ import (
 // thousandths, temperature (M minus, P plus, whole degrees), one digit we cannot explain, and a four digit
 // number that falls steadily through a flight (fuel on board, in hundreds of pounds, to judge by the rate).
 // Read from samples, not a specification: messages sent on time match their own clocks to the minute.
-var posRptRe = regexp.MustCompile(`^\*POS\s+(\d{2})(\d{2})(\d{2})(\d{2})([NS])(\d{2})(\d{2})([EW])(\d{3})(\d{2})(\d{3})(\d{3})(\d{3})(\d{3})([MP])(\d{2})(\d)(\d{4})\s*$`)
+//
+// At the top of descent the same report is sent once more, with a ground address in front and the route behind (the airports
+// as IATA codes, "TODHKGANC" being from HKG to ANC):
+//
+//	/SDFAD5X.*POS
+//	10312124N6044W15241209154017664M3900367TODHKGANC
+var posRptRe = regexp.MustCompile(`^(?:/[A-Z0-9]{7}\.)?\*POS\s+(\d{2})(\d{2})(\d{2})(\d{2})([NS])(\d{2})(\d{2})([EW])(\d{3})(\d{2})(\d{3})(\d{3})(\d{3})(\d{3})([MP])(\d{2})(\d)(\d{4})(?:TOD([A-Z]{6}|[A-Z]{8}))?\s*$`)
 
 func parsePosRpt(body string, r *Result) {
 	m := posRptRe.FindStringSubmatch(body)
@@ -50,6 +58,19 @@ func parsePosRpt(body string, r *Result) {
 	r.Fields["mach"] = float64(atoi(m[14])) / 1000
 	r.Fields["extra"] = atoi(m[17]) // unexplained
 	r.Fields["value"] = atoi(m[18]) // falls through the flight: fuel on board, probably
+	if m[19] != "" {
+		half := len(m[19]) / 2
+		r.Fields["top_of_descent"] = true
+		r.Fields["origin"], r.Fields["dest"] = routeCode(m[19][:half]), routeCode(m[19][half:])
+	}
+}
+
+// routeCode gives an airport as its ICAO code where we know it, which is how the other route reports write it.
+func routeCode(code string) string {
+	if a, ok := airports.Lookup(code); ok && a.ICAO != "" {
+		return a.ICAO
+	}
+	return code
 }
 
 func posRptSummary(r Result) string {
@@ -62,6 +83,9 @@ func posRptSummary(r Result) string {
 	}
 	if mach, ok := r.Fields["mach"].(float64); ok && mach > 0.4 {
 		s += fmt.Sprintf(", M%.3f", mach)
+	}
+	if r.Fields["top_of_descent"] == true {
+		s += fmt.Sprintf(", top of descent %v→%v", r.Fields["origin"], r.Fields["dest"])
 	}
 	return s
 }

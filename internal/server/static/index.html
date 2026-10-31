@@ -81,6 +81,8 @@
   .kindchip { font-weight: normal; font-size: 10px; margin-left: 5px; padding: 0 4px; border-radius: 3px; background: #e8eefc; color: #345; }
   .fhead { margin: 8px 0 2px; padding: 3px 5px; background: #eef2f7; border-left: 3px solid #1d3557; font-size: 12px; cursor: pointer; }
   .fhead.none { background: none; border-left-color: #bbb; color: #888; cursor: default; }
+  /* Leaflet keeps a tooltip on one line; a long line (where a landed aircraft says how it was inferred) wraps instead */
+  .leaflet-tooltip { white-space: normal; max-width: 340px; overflow-wrap: anywhere; }
   .fflag-wrap { background: none; border: none; }
   .fflag { position: absolute; transform: translate(6px, -50%); background: #1d3557; color: #fff; font: 11px system-ui, sans-serif; padding: 1px 5px; border-radius: 3px; white-space: nowrap; cursor: pointer; }
   .fflag.latest { background: #c00; }
@@ -670,14 +672,21 @@ function trend(pts) {
   return fpm > 0 ? `↑ climbing ${num(fpm)} ft/min` : `↓ descending ${num(-fpm)} ft/min`;
 }
 
+// The flight the aircraft is on, for its hover: the newest flight we have worked out ("SQ23 KJFK \u2192 WSSS") and when it left;
+// else just the route it last reported.
+function flightLines(w) {
+  const sg = flightSegs.length && flightSegs[flightSegs.length - 1].latest ? flightSegs[flightSegs.length - 1] : null;
+  const route = sg && (sg.from || sg.to) ? routeText(sg) : w.route && !w.route.stale ? `${w.route.from ? w.route.from + ' \u2192 ' : '\u2192 '}${w.route.to}` : '';
+  return [[sg && sg.flight, route].filter(Boolean).join(' '), sg ? departLong(sg) : ''];
+}
+
 // What to show when hovering the aircraft: callsign, altitude and trend, speed and track, time and source.
 function aircraftTip(w, pts, fixMs) {
   const p = pts[pts.length - 1];
   const alt = p.on_ground ? 'on the ground' : p.alt_ft != null ? `${num(p.alt_ft)} ft` : 'altitude unknown';
   const t = p.on_ground ? '' : trend(pts);
   const motion = [p.gs != null ? `${num(p.gs)} kt` : '', p.track != null ? `track ${Math.round(p.track)}°` : ''].filter(Boolean).join(' · ');
-  const dest = w.route && !w.route.stale ? `${w.route.from ? w.route.from + ' → ' : '→ '}${w.route.to}` : '';
-  return tip(aircraftName(w, p.callsign), dest, [alt, t].filter(Boolean).join('  '), motion, `${fmtAgo(p.t)} (${p.source})`, fixNote(w, Date.now() - (fixMs ?? Date.parse(p.t))));
+  return tip(aircraftName(w, p.callsign), ...flightLines(w), [alt, t].filter(Boolean).join('  '), motion, `${fmtAgo(p.t)} (${p.source})`, fixNote(w, Date.now() - (fixMs ?? Date.parse(p.t))));
 }
 
 // An aeroplane silhouette (Material "airplanemode_active", nose up), turned to the track.
@@ -1196,6 +1205,17 @@ let flightSegs = [], flightChoice = 'recent';   // 'recent', 'all', or a flight'
 try { const v = localStorage.getItem('flightChoice'); if (v === 'all' || v === 'recent') flightChoice = v; } catch (e) { /* default */ }
 const dayLabel = ms => new Date(ms).toUTCString().slice(5, 11);   // "30 Oct"
 const segLabel = s => `${s.flight || 'unidentified'} \u00b7 ${dayLabel(s.startMs)}${s.from || s.to ? ` \u00b7 ${s.from || '?'}\u2192${s.to || '?'}` : ''}`;
+// How a flight is written where space is short (the flag on the map, the aircraft's hover): "SQ23 KJFK \u2192 WSSS", then
+// when it left if we know ("dep 15:56Z" for a takeoff, "out 06:44Z" for leaving the gate).
+const routeText = s => (s.from || s.to ? `${s.from || '?'} \u2192 ${s.to || '?'}` : '');
+const flightText = s => [s.flight || 'unidentified', routeText(s)].filter(Boolean).join(' ');
+const hhmmZ = ms => new Date(ms).toISOString().slice(11, 16) + 'Z';
+const departShort = s => (s.departed ? `${s.departed_how === 'pushback' || s.departed_how === 'taxi' ? 'out' : 'dep'} ${hhmmZ(Date.parse(s.departed))}` : '');
+const departLong = s => {
+  if (!s.departed) return '';
+  const how = {takeoff: 'took off (takeoff report)', adsb: 'took off (seen leaving the ground)', pushback: 'left the gate (departure report)', taxi: 'began to taxi (departure report)'}[s.departed_how] || 'departed';
+  return `${how} ${fmt(Date.parse(s.departed))}`;
+};
 // null means everything. A choice that no longer exists falls back to the most recent flight.
 function chosenFlight() {
   if (!flightSegs.length || flightChoice === 'all') return null;
@@ -1241,9 +1261,9 @@ function drawFlightFlags(pts, msgs, chosen) {
     if (chosen && sg !== chosen) continue;
     const el = document.createElement('div');
     el.className = 'fflag' + (sg.latest ? ' latest' : '');
-    el.textContent = `${sg.flight || 'unidentified'} \u00b7 ${dayLabel(sg.startMs)}`;
+    el.textContent = [flightText(sg), dayLabel(sg.startMs), departShort(sg)].filter(Boolean).join(' \u00b7 ');
     L.marker(ll(f.lat, f.lon), {icon: L.divIcon({className: 'fflag-wrap', iconSize: [0, 0], html: el}), zIndexOffset: 400}).addTo(layer)
-      .bindTooltip(tip(segLabel(sg), `${fmt(sg.start)} to ${fmt(sg.end)}`, [sg.from_name, sg.to_name].filter(Boolean).join(' \u2192 '),
+      .bindTooltip(tip(segLabel(sg), `${fmt(sg.start)} to ${fmt(sg.end)}`, [sg.from_name, sg.to_name].filter(Boolean).join(' \u2192 '), departLong(sg),
         `${sg.messages} messages, ${sg.positions} positions`, chosen ? '' : 'click to show only this flight'))
       .on('click', () => chooseFlight(sg.id));
   }
@@ -1365,7 +1385,7 @@ async function showTrack(w, focus) {
   } else if (cur) {
     const m = cur.ref;
     placePlane(m.lat, m.lon, m.trk, cur.t, !!w.landing)
-      .bindTooltip(tip(`${aircraftName(w, null, false)}: last report`, ...hoverSummary(m).lines, fmtAgo(m.pos_t || m.t), motionLine(m), hoverSummary(m).hasWx ? '' : wxLine(m), 'no newer ADS-B', fixNote(w, Date.now() - cur.t)))
+      .bindTooltip(tip(`${aircraftName(w, null, false)}: last report`, ...flightLines(w), ...hoverSummary(m).lines, fmtAgo(m.pos_t || m.t), motionLine(m), hoverSummary(m).hasWx ? '' : wxLine(m), 'no newer ADS-B', fixNote(w, Date.now() - cur.t)))
       .on('click', () => pickMessage(m.id));
   }
 

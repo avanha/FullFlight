@@ -136,6 +136,39 @@ func TestAirframesEndpoint(t *testing.T) {
 	}
 }
 
+// The airframes page shows each aircraft's last flight: the number and callsign, the route and when it left.
+func TestAirframesLastFlight(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 31, 22, 0, 0, 0, time.UTC)
+	st.RecordAirframe(store.Airframe{Hex: "A762CC", Tail: "N575UP", Type: "B744", Source: "airframes.io", LastSeen: now.Add(-time.Hour)})
+	st.RecordAirframe(store.Airframe{Hex: "780AB8", Tail: "B-LRM", Type: "A359", Source: "airframes.io", LastSeen: now.Add(-time.Hour)})
+	for i := 0; i < 4; i++ { // ADS-B with the callsign, leaving the ground at 18:02
+		st.AddPosition(store.Position{Hex: "A762CC", T: now.Add(-4*time.Hour + time.Duration(i)*2*time.Minute), Lat: 61 + float64(i)/10, Lon: -150, OnGround: i == 0, Callsign: "UPS65", Source: "adsb.lol"})
+	}
+	pt := now.Add(-4*time.Hour + 3*time.Minute)
+	st.AddMessage(store.Message{ID: 1, Hex: "A762CC", T: pt, PosT: &pt, Kind: "miam", Label: "MA", Text: "x", Decoded: `{"fields":{"a350":{"Origin":"VHHH","Dest":"PANC"}}}`})
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	_, body := do(t, "GET", ts.URL+"/api/airframes", "")
+	var got []airframeJSON
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatal(err, body)
+	}
+	by := map[string]airframeJSON{}
+	for _, a := range got {
+		by[a.Hex] = a
+	}
+	lf := by["A762CC"].LastFlight
+	if lf == nil || lf.Flight != "5X65" || lf.Callsign != "UPS65" || lf.From != "VHHH" || lf.To != "PANC" || lf.DepartedHow != "adsb" ||
+		!lf.Departed.Equal(now.Add(-4*time.Hour+2*time.Minute)) || lf.ToName == "" {
+		t.Errorf("last flight = %+v", lf)
+	}
+	if by["780AB8"].LastFlight != nil {
+		t.Errorf("an aircraft with no flight shows none: %+v", by["780AB8"].LastFlight)
+	}
+}
+
 func TestAuth(t *testing.T) {
 	ts := setup(t, "secret")
 	if code, _ := do(t, "GET", ts.URL+"/api/watches", ""); code != 401 {

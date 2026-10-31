@@ -1066,3 +1066,60 @@ func TestA350Reports(t *testing.T) {
 		t.Errorf("block: kind %v tree %v summary %q flight %q", r.Kind, r.Tree != nil, r.Summary, r.Identity.Flight)
 	}
 }
+
+// Delta's gate departure report, plain (label 4M) and inside a compressed MIAM message.
+func TestDeltaDepartureReport(t *testing.T) {
+	_, r := load(t, "real_delta_departure_plain")
+	d, ok := r.Fields["departure"].(DepartureReport)
+	if r.Kind != KindDeparture || !ok || d.Origin != "KPDX" || d.Dest != "KLAX" || d.Flight != "2459" {
+		t.Fatalf("kind %v departure %+v", r.Kind, d)
+	}
+	if d.Heading["taxi"] != 289 || d.Heading["out"] != 35 || d.Events["taxi"]["MOVEMENT"] != "025133" || d.Events["out"]["OUT EVENT"] != "024658" {
+		t.Errorf("departure = %+v", d)
+	}
+	if _, there := d.Events["out"]["GALLY CLSD"]; there {
+		t.Errorf("an event that did not happen (------) is listed: %+v", d.Events["out"])
+	}
+	if want := "Departure report flight 2459 KPDX→KLAX: out 02:46:58Z, taxi 02:51:33Z"; r.Summary != want {
+		t.Errorf("summary = %q, want %q", r.Summary, want)
+	}
+
+	_, r = load(t, "real_delta_departure_miam")
+	d, ok = r.Fields["departure"].(DepartureReport)
+	if r.Kind != KindMIAM || !ok || d.Origin != "KLAX" || d.Dest != "VHHH" || d.Flight != "87" || d.Events["out"]["CARGO CLSD"] != "063720" {
+		t.Fatalf("kind %v departure %+v", r.Kind, d)
+	}
+	if want := "Departure report flight 87 KLAX→VHHH: out 06:44:43Z, taxi 06:53:01Z"; r.Summary != want {
+		t.Errorf("summary = %q, want %q", r.Summary, want)
+	}
+}
+
+// The UPS 747 position report sent at the top of descent: the usual *POS with a ground address in front and the route behind.
+func TestUPSTopOfDescent(t *testing.T) {
+	f, r := load(t, "real_ups_tod_hkg_anc")
+	if r.Kind != KindPOS || r.Pos == nil || r.Fields["top_of_descent"] != true {
+		t.Fatalf("kind %v pos %+v fields %v", r.Kind, r.Pos, r.Fields)
+	}
+	near(t, "lat", r.Pos.Lat, 60+44.0/60, 1e-6)
+	near(t, "lon", r.Pos.Lon, -(152 + 41.0/60), 1e-6)
+	if *r.Pos.AltFt != 20900 || r.Fields["mach"] != 0.664 || *r.Wx.TempC != -39 || *r.Wx.WindDirDeg != 154 || *r.Wx.WindKt != 17 {
+		t.Errorf("alt %v fields %v wx %+v", *r.Pos.AltFt, r.Fields, r.Wx)
+	}
+	if r.Fields["origin"] != "VHHH" || r.Fields["dest"] != "PANC" {
+		t.Errorf("route = %v → %v", r.Fields["origin"], r.Fields["dest"])
+	}
+	if want := time.Date(2026, 10, 31, 21, 24, 0, 0, time.UTC); !r.Pos.At(f.Received).Equal(want) {
+		t.Errorf("time = %v, want %v", r.Pos.At(f.Received), want)
+	}
+	if want := "Position report 60.733N 152.683W FL209, M0.664, top of descent VHHH→PANC"; r.Summary != want {
+		t.Errorf("summary = %q, want %q", r.Summary, want)
+	}
+	// the other airports are written the same way
+	if _, r = load(t, "real_ups_tod_anc_ont"); r.Fields["origin"] != "PANC" || r.Fields["dest"] != "KONT" {
+		t.Errorf("route = %v → %v", r.Fields["origin"], r.Fields["dest"])
+	}
+	// the ordinary report has no route and is no top of descent
+	if _, r = load(t, "pos_ontime"); r.Fields["top_of_descent"] != nil || r.Fields["dest"] != nil {
+		t.Errorf("ordinary report: %v", r.Fields)
+	}
+}

@@ -42,7 +42,7 @@
 </header>
 <main>
   <table>
-    <thead><tr><th>Registration</th><th>Hex</th><th>Type</th><th>Last seen</th><th>First seen</th><th></th><th>Notes</th></tr></thead>
+    <thead><tr><th>Registration</th><th>Hex</th><th>Type</th><th>Last flight</th><th>Last seen</th><th>First seen</th><th></th><th>Notes</th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
   <div id="empty" hidden></div>
@@ -77,7 +77,7 @@ async function load() {
 function visible() {
   const q = $('#q').value.trim().toLowerCase();
   const onlyNotes = $('#onlynotes').checked;
-  const hay = a => [a.hex, a.type, a.last_note, ...(a.tails || []).map(t => t.tail)].filter(Boolean).join(' ').toLowerCase();
+  const hay = a => [a.hex, a.type, a.last_note, ...(a.tails || []).map(t => t.tail), ...(a.last_flight ? [a.last_flight.flight, a.last_flight.callsign, a.last_flight.from, a.last_flight.to] : [])].filter(Boolean).join(' ').toLowerCase();
   const list = all.filter(a => (!onlyNotes || a.notes > 0) && (!q || hay(a).includes(q)));
   const seen = a => (a.last_seen ? Date.parse(a.last_seen) : 0);
   const order = {
@@ -86,6 +86,20 @@ function visible() {
     notes: (a, b) => b.notes - a.notes || seen(b) - seen(a),
   }[$('#sort').value];
   return list.sort(order);
+}
+
+// The aircraft's last flight: "SQ23 KJFK \u2192 WSSS", and under it when it left (or, failing that, when it was last heard on it).
+function flightCell(a) {
+  const td = el('td', 'flight');
+  const f = a.last_flight;
+  if (!f) return td;
+  const route = f.from || f.to ? `${f.from || '?'} \u2192 ${f.to || '?'}` : '';
+  td.append(document.createTextNode([f.flight || 'unidentified', route].filter(Boolean).join(' ')));
+  const how = {takeoff: 'took off', adsb: 'took off', pushback: 'left the gate', taxi: 'began to taxi'}[f.departed_how];
+  td.append(el('small', '', f.departed ? `${how || 'departed'} ${fmt(f.departed)}` : `last heard ${ago(f.end)}`));
+  td.title = [f.callsign && `Callsign ${f.callsign}`, [f.from_name, f.to_name].filter(Boolean).join(' \u2192 '),
+    `Flight from ${fmt(f.start)} to ${fmt(f.end)}`].filter(Boolean).join('\n');
+  return td;
 }
 
 function noteCell(a) {
@@ -111,7 +125,7 @@ function row(a) {
   }
   const first = el('td', '', a.first_seen ? fmt(a.first_seen).slice(0, 10) : '—');
   const watching = el('td', a.watched ? 'watching' : 'gone', a.watched ? 'watching' : '');
-  tr.append(reg, el('td', 'hex', a.hex), el('td', '', a.type || ''), seen, first, watching, noteCell(a));
+  tr.append(reg, el('td', 'hex', a.hex), el('td', '', a.type || ''), flightCell(a), seen, first, watching, noteCell(a));
   return tr;
 }
 

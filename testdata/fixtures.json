@@ -432,5 +432,29 @@
   "label": "MA",
   "received": "2026-10-31T18:51:31Z",
   "text": "U40BSQ0023aNIIkZF8Cf8TqgB3^b7D?bA_jRK(MN&ephgh\\`5pC,&4`cb%_Ro$CF?+_#0f5(lg[pVTY:7SLQgkCW87TUpLb*2)+/$k6Q2.C*p@Ob?lAV*l3eC-&N"
+ },
+ {
+  "name": "real_delta_departure_plain",
+  "label": "4M",
+  "received": "2026-10-26T02:51:34Z",
+  "text": "25024M KPDX KLAX7\r\n/FN 2459\r\nTAXI/HEADING 289\r\n    /BRAKE SET  024842/BRAKE RLSD 025125\r\n    /MOVEMENT   025133/ENGINE RUN 025015\r\nOUT /HEADING 035\r\n    /OUT EVENT  024658/MOVE EVENT 024711\r\n    /BRAKE RLSD 024658/CABIN CLSD 024344\r\n    /GALLY CLSD ------/CARGO CLSD 023949"
+ },
+ {
+  "name": "real_delta_departure_miam",
+  "label": "MA",
+  "received": "2026-10-29T06:53:23Z",
+  "text": "T30!<<,-/l\"8X0gnc1!'iA8k#e/,|<K:8nKHL[ls%V99G5rCXIMl^ILc+];BE&p=lCc8kX#W2L[qK<I7i7CP?k4EfAKfn5;B\"CmHUJI9m3?n<7[4/HLt?GJ#E)de3,C(0adeZg8WD8;NmmDc7kC6:a\\\"P`O]^H'b%bg^[M>AL`&i<T[pNQ%[8tneN0r,Kr;Di6fgO6@=![!Y6o@SLe(^*NRHqFM_rg<`a)\"V%!<<*\""
+ },
+ {
+  "name": "real_ups_tod_hkg_anc",
+  "label": "H1",
+  "received": "2026-10-31T21:24:27Z",
+  "text": "/SDFAD5X.*POS\r\n10312124N6044W15241209154017664M3900367TODHKGANC"
+ },
+ {
+  "name": "real_ups_tod_anc_ont",
+  "label": "H1",
+  "received": "2026-10-30T04:04:57Z",
+  "text": "/SDFAD5X.*POS\r\n10300404N3437W11802209195032613M2150374TODANCONT"
  }
 ]

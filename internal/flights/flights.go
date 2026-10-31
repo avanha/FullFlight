@@ -44,20 +44,25 @@ const (
 	// An unnumbered piece right next to a numbered flight that has no route to compare is that
 	// flight's missing start or end, if it is within AdoptWithin.
 	AdoptWithin = 2 * time.Hour
+	// A departure up to DepartureSlack before a flight's first sighting is that flight's: the aircraft may be
+	// first heard some time after it left.
+	DepartureSlack = 2 * time.Hour
 )
 
 type Segment struct {
-	ID         string    `json:"id"`
-	Flight     string    `json:"flight,omitempty"`   // IATA form where we know the airline, e.g. CX113
-	Callsign   string    `json:"callsign,omitempty"` // ICAO form, e.g. CPA113
-	Start      time.Time `json:"start"`
-	End        time.Time `json:"end"`
-	Messages   int       `json:"messages"`
-	Positions  int       `json:"positions"`
-	From       string    `json:"from,omitempty"` // from REP081, where the aircraft sends one
-	To         string    `json:"to,omitempty"`
-	Identified bool      `json:"identified"` // false: a flight whose number we never saw
-	Latest     bool      `json:"latest"`     // the most recent flight
+	ID          string    `json:"id"`
+	Flight      string    `json:"flight,omitempty"`   // IATA form where we know the airline, e.g. CX113
+	Callsign    string    `json:"callsign,omitempty"` // ICAO form, e.g. CPA113
+	Start       time.Time `json:"start"`
+	End         time.Time `json:"end"`
+	Messages    int       `json:"messages"`
+	Positions   int       `json:"positions"`
+	From        string    `json:"from,omitempty"` // from REP081, where the aircraft sends one
+	To          string    `json:"to,omitempty"`
+	Departed    time.Time `json:"departed,omitzero"`      // when it left, if we know
+	DepartedHow string    `json:"departed_how,omitempty"` // "takeoff", "adsb", "pushback" or "taxi": see store.Departure
+	Identified  bool      `json:"identified"`             // false: a flight whose number we never saw
+	Latest      bool      `json:"latest"`                 // the most recent flight
 }
 
 type ident struct {
@@ -266,6 +271,14 @@ func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 			}
 		}
 	}
+	// 7. when each flight left, from the best evidence there is
+	deps, err := st.Departures(hexAddr, since.Add(-DepartureSlack), until)
+	if err != nil {
+		return nil, err
+	}
+	for i := range segs {
+		segs[i].Departed, segs[i].DepartedHow = departureOf(segs[i], deps)
+	}
 	for i := range segs {
 		segs[i].Messages = st.CountMessages(hexAddr, segs[i].Start, segs[i].End)
 		segs[i].ID = segID(segs[i])
@@ -274,6 +287,26 @@ func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 		segs[n-1].Latest = true
 	}
 	return segs, nil
+}
+
+// departureOf picks the departure that belongs to a flight: the best kind of evidence in its span (a takeoff report
+// before ADS-B seeing it leave the ground before a gate time), the earliest of that kind.
+func departureOf(sg Segment, deps []store.Departure) (time.Time, string) {
+	rank := map[string]int{"takeoff": 0, "adsb": 1, "pushback": 2, "taxi": 3}
+	var best store.Departure
+	bestRank := len(rank)
+	for _, d := range deps {
+		if d.T.Before(sg.Start.Add(-DepartureSlack)) || d.T.After(sg.End) {
+			continue
+		}
+		if r, ok := rank[d.How]; ok && r < bestRank {
+			best, bestRank = d, r
+		}
+	}
+	if bestRank == len(rank) {
+		return time.Time{}, ""
+	}
+	return best.T, best.How
 }
 
 // modalRoute is the origin/destination reported most often in [from, to], the latest on a tie.

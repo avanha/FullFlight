@@ -324,3 +324,37 @@ func TestUnnumberedPieceAdoptedOnlyWhenClose(t *testing.T) {
 		t.Errorf("3 hours: %+v", got)
 	}
 }
+
+// When a flight left comes from the best evidence there is: a takeoff report, else ADS-B seeing it leave the ground, else
+// a time at the gate.
+func TestDeparture(t *testing.T) {
+	r := newRig(t)
+	// day 0: a takeoff report at 02:30 for 02:26, and an ADS-B takeoff at 02:50 that the report outranks
+	spread(at(0, 2, 30), 4*time.Hour, 30*time.Minute, func(x time.Time) { r.said(x, "CX110"); r.fix(x) })
+	r.msg(store.Message{T: at(0, 2, 30), Kind: "miam", Decoded: `{"fields":{"takeoff":{"Origin":"VHHH","Dest":"EDDM","Off":"0226"}}}`})
+	r.st.AddPosition(store.Position{Hex: hex, T: at(0, 2, 45), Lat: 22.3, Lon: 113.9, OnGround: true, Source: "x"})
+	r.st.AddPosition(store.Position{Hex: hex, T: at(0, 2, 50), Lat: 22.4, Lon: 113.9, Source: "x"})
+	// day 1: ADS-B alone
+	spread(at(1, 2, 0), 4*time.Hour, 30*time.Minute, func(x time.Time) { r.said(x, "CX111"); r.fix(x) })
+	r.st.AddPosition(store.Position{Hex: hex, T: at(1, 2, 20), Lat: 22.3, Lon: 113.9, OnGround: true, Source: "x"})
+	r.st.AddPosition(store.Position{Hex: hex, T: at(1, 2, 24), Lat: 22.4, Lon: 113.9, Source: "x"})
+	// day 2: only a departure report from the gate, sent just after midnight about a push back just before it
+	spread(at(2, 0, 10), 4*time.Hour, 30*time.Minute, func(x time.Time) { r.said(x, "CX112"); r.fix(x) })
+	r.msg(store.Message{T: at(2, 0, 3), Kind: "departure_report", Decoded: `{"fields":{"departure":{"Events":{"out":{"OUT EVENT":"235800"},"taxi":{"MOVEMENT":"000100"}}}}}`})
+	// day 3: nothing
+	spread(at(3, 2, 0), 4*time.Hour, 30*time.Minute, func(x time.Time) { r.said(x, "CX113"); r.fix(x) })
+
+	segs := r.segments()
+	if len(segs) != 4 {
+		t.Fatalf("segments = %s", names(segs))
+	}
+	want := []struct {
+		t   time.Time
+		how string
+	}{{at(0, 2, 26), "takeoff"}, {at(1, 2, 24), "adsb"}, {at(1, 23, 58), "pushback"}, {time.Time{}, ""}}
+	for i, w := range want {
+		if !segs[i].Departed.Equal(w.t) || segs[i].DepartedHow != w.how {
+			t.Errorf("%s departed %v (%s), want %v (%s)", segs[i].Flight, segs[i].Departed, segs[i].DepartedHow, w.t, w.how)
+		}
+	}
+}

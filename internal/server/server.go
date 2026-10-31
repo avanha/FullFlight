@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/avanha/fullflight/internal/airlines"
@@ -33,6 +34,9 @@ type Server struct {
 	Username string
 	Password string // empty disables auth (config only allows that on loopback)
 	Now      func() time.Time
+
+	flightMu    sync.Mutex
+	flightCache map[string]cachedFlight // hex -> the aircraft's last flight, for the airframes page
 }
 
 func (s *Server) Handler() http.Handler {
@@ -456,20 +460,76 @@ func (s *Server) track(w http.ResponseWriter, r *http.Request) {
 
 // airframeJSON is one aircraft as the airframes page shows it.
 type airframeJSON struct {
-	Hex          string         `json:"hex"`
-	Tail         string         `json:"tail,omitempty"` // the registration it was last seen with
-	Tails        []tailSeenJSON `json:"tails,omitempty"`
-	Type         string         `json:"type,omitempty"`
-	FirstSeen    time.Time      `json:"first_seen,omitzero"`
-	LastSeen     time.Time      `json:"last_seen,omitzero"` // the newest ADS-B position or datalink message
-	LastADSB     time.Time      `json:"last_adsb,omitzero"`
-	LastDatalink time.Time      `json:"last_datalink,omitzero"`
-	Watched      bool           `json:"watched,omitempty"`
-	Notes        int            `json:"notes"`
-	LastNote     string         `json:"last_note,omitempty"`
-	Messages     int            `json:"messages"`
-	Positions    int            `json:"positions"`
+	Hex          string          `json:"hex"`
+	Tail         string          `json:"tail,omitempty"` // the registration it was last seen with
+	Tails        []tailSeenJSON  `json:"tails,omitempty"`
+	Type         string          `json:"type,omitempty"`
+	FirstSeen    time.Time       `json:"first_seen,omitzero"`
+	LastSeen     time.Time       `json:"last_seen,omitzero"` // the newest ADS-B position or datalink message
+	LastADSB     time.Time       `json:"last_adsb,omitzero"`
+	LastDatalink time.Time       `json:"last_datalink,omitzero"`
+	Watched      bool            `json:"watched,omitempty"`
+	Notes        int             `json:"notes"`
+	LastNote     string          `json:"last_note,omitempty"`
+	Messages     int             `json:"messages"`
+	Positions    int             `json:"positions"`
+	LastFlight   *lastFlightJSON `json:"last_flight,omitempty"`
 }
+
+// lastFlightJSON is the newest flight we have worked out for an aircraft: its callsign and flight number, and the
+// route and departure time where we know them.
+type lastFlightJSON struct {
+	Flight      string    `json:"flight,omitempty"`
+	Callsign    string    `json:"callsign,omitempty"`
+	From        string    `json:"from,omitempty"`
+	To          string    `json:"to,omitempty"`
+	FromName    string    `json:"from_name,omitempty"`
+	ToName      string    `json:"to_name,omitempty"`
+	Departed    time.Time `json:"departed,omitzero"`
+	DepartedHow string    `json:"departed_how,omitempty"`
+	Start       time.Time `json:"start"`
+	End         time.Time `json:"end"` // the last we heard of it on that flight
+}
+
+type cachedFlight struct {
+	at time.Time
+	v  *lastFlightJSON
+}
+
+// lastFlightFor is the aircraft's newest identified flight in the last few days (else its newest flight of any kind), or
+// nil. Worked out the way the map's flights are, and kept for a minute because the airframes page asks every 30 seconds.
+func (s *Server) lastFlightFor(hex string, now time.Time) *lastFlightJSON {
+	s.flightMu.Lock()
+	defer s.flightMu.Unlock()
+	if c, ok := s.flightCache[hex]; ok && now.Sub(c.at) < time.Minute {
+		return c.v
+	}
+	var out *lastFlightJSON
+	if segs, err := flights.Segments(s.Store, hex, now.Add(-lastFlightWindow), now.Add(time.Minute)); err == nil && len(segs) > 0 {
+		sg := segs[len(segs)-1]
+		for i := len(segs) - 1; i >= 0; i-- {
+			if segs[i].Identified {
+				sg = segs[i]
+				break
+			}
+		}
+		out = &lastFlightJSON{Flight: sg.Flight, Callsign: sg.Callsign, From: sg.From, To: sg.To, Departed: sg.Departed, DepartedHow: sg.DepartedHow, Start: sg.Start, End: sg.End}
+		if a, ok := airports.Lookup(sg.From); ok {
+			out.FromName = a.Name
+		}
+		if a, ok := airports.Lookup(sg.To); ok {
+			out.ToName = a.Name
+		}
+	}
+	if s.flightCache == nil {
+		s.flightCache = map[string]cachedFlight{}
+	}
+	s.flightCache[hex] = cachedFlight{now, out}
+	return out
+}
+
+// lastFlightWindow is how far back the airframes page looks for an aircraft's last flight.
+const lastFlightWindow = 7 * 24 * time.Hour
 
 type tailSeenJSON struct {
 	Tail      string    `json:"tail"`
@@ -491,6 +551,9 @@ func (s *Server) airframes(w http.ResponseWriter, r *http.Request) {
 			Notes: a.Notes, LastNote: preview(a.LastNote), Messages: a.Messages, Positions: a.Positions}
 		for _, t := range a.Tails {
 			j.Tails = append(j.Tails, tailSeenJSON{t.Tail, t.Type, t.FirstSeen, t.LastSeen})
+		}
+		if now := s.now(); now.Sub(a.LastSeen) < lastFlightWindow {
+			j.LastFlight = s.lastFlightFor(a.Hex, now)
 		}
 		if len(a.Tails) > 0 {
 			j.Tail = a.Tails[0].Tail

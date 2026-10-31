@@ -10,22 +10,23 @@ import (
 type Kind string
 
 const (
-	KindADSC     Kind = "adsc"
-	KindCPDLC    Kind = "cpdlc"
-	KindAFN      Kind = "afn"
-	KindMIAM     Kind = "miam"
-	KindMedia    Kind = "media_advisory"
-	KindDATIS    Kind = "datis_request"
-	KindFMS      Kind = "fms_position"
-	KindPlan     Kind = "flight_plan"
-	KindProgress Kind = "progress"
-	KindACMF     Kind = "acmf_report"
-	KindAOC      Kind = "aoc_position"
-	KindPOS      Kind = "pos_report"
-	KindPOSRPT   Kind = "posrpt"
-	KindPOSA1    Kind = "posa1"
-	KindSBPOS    Kind = "sbpos"
-	KindUnknown  Kind = "unknown"
+	KindADSC      Kind = "adsc"
+	KindCPDLC     Kind = "cpdlc"
+	KindAFN       Kind = "afn"
+	KindMIAM      Kind = "miam"
+	KindMedia     Kind = "media_advisory"
+	KindDATIS     Kind = "datis_request"
+	KindFMS       Kind = "fms_position"
+	KindPlan      Kind = "flight_plan"
+	KindProgress  Kind = "progress"
+	KindACMF      Kind = "acmf_report"
+	KindAOC       Kind = "aoc_position"
+	KindDeparture Kind = "departure_report"
+	KindPOS       Kind = "pos_report"
+	KindPOSRPT    Kind = "posrpt"
+	KindPOSA1     Kind = "posa1"
+	KindSBPOS     Kind = "sbpos"
+	KindUnknown   Kind = "unknown"
 )
 
 // Message is the raw input. Label and Dir may be empty/Unknown, in which case
@@ -122,6 +123,8 @@ func classify(label, body string) (Kind, string, Direction) {
 	}
 	switch {
 	case k != "":
+	case departureHead.MatchString(body):
+		k, defLabel = KindDeparture, "4M"
 	case posa1Re.MatchString(body):
 		k, defLabel = KindPOSA1, "16"
 	case sbPosRe.MatchString(body):
@@ -268,6 +271,10 @@ func Decode(m Message) (Result, error) {
 						}
 						break
 					}
+					if x, ok := ParseDeparture(txt); ok {
+						r.Fields["departure"] = x
+						break
+					}
 					if x, ok := ParseTakeoff(txt); ok {
 						r.Fields["takeoff"] = x
 						if r.Identity.Tail == "" {
@@ -295,6 +302,10 @@ func Decode(m Message) (Result, error) {
 		parseACMF(body, &r)
 	case KindAOC:
 		parseAOC(body, &r)
+	case KindDeparture:
+		if d, ok := ParseDeparture(body); ok {
+			r.Fields["departure"] = d
+		}
 	case KindPOS:
 		parsePosRpt(body, &r)
 	case KindPOSRPT:

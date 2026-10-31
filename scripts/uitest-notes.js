@@ -155,7 +155,7 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   w = newWorld();
   const iso = h => new Date(w.clock - h * 3600e3).toISOString();
   w.airframes = [
-    {hex: '780AB8', tail: 'B-LRM', tails: [{tail: 'B-LRM'}, {tail: 'B-OLD'}], type: 'A359', last_seen: iso(2), last_adsb: iso(2), last_datalink: iso(40), first_seen: iso(500), watched: true, notes: 2, last_note: 'Second note about the bird strike', messages: 400, positions: 100},
+    {hex: '780AB8', tail: 'B-LRM', tails: [{tail: 'B-LRM'}, {tail: 'B-OLD'}], type: 'A359', last_flight: {flight: 'CX840', callsign: 'CPA840', from: 'VHHH', to: 'KJFK', from_name: 'Hong Kong Intl', to_name: 'John F Kennedy Intl', departed: '2026-10-30T09:12:00Z', departed_how: 'takeoff', start: '2026-10-30T09:00:00Z', end: '2026-10-30T10:00:00Z'}, last_seen: iso(2), last_adsb: iso(2), last_datalink: iso(40), first_seen: iso(500), watched: true, notes: 2, last_note: 'Second note about the bird strike', messages: 400, positions: 100},
     {hex: '780AA4', tail: 'B-LRD', tails: [{tail: 'B-LRD'}], type: 'A359', last_seen: iso(30), first_seen: iso(400), notes: 0, messages: 500, positions: 50},
     {hex: 'ABB601', notes: 1, last_note: 'Seen once at Denver', messages: 0, positions: 0},    // known only from a note: no tail, never seen
   ];
@@ -174,18 +174,21 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   let r0 = rows()[0];
   assert.strictEqual(text(cell(r0, 0)), 'B-LRMalso B-OLD', 'current registration, and the others it has had');
   assert.strictEqual(cell(r0, 2).textContent, 'A359');
-  assert.strictEqual(cell(r0, 3).textContent, '2h ago');
-  assert.strictEqual(cell(r0, 3).title, 'Last heard 2026-10-30 10:00Z\nADS-B: 2026-10-30 10:00Z\nDatalink: 2026-10-28 20:00Z', 'ADS-B and datalink times in the tooltip');
-  assert.strictEqual(cell(rows()[2], 3).textContent, 'never heard');
-  assert.strictEqual(cell(r0, 5).textContent, 'watching');
-  assert.strictEqual(cell(r0, 6).children[0].textContent, '\u{1F4DD} 2 notes');
-  assert.strictEqual(cell(r0, 6).children[1].textContent, 'Second note about the bird strike', 'a preview of the newest note');
-  assert.strictEqual(text(cell(rows()[1], 6).children[0]), '\u{1F4DD} add a note');
-  assert.ok(cell(rows()[1], 6).children[0].className.includes('empty'));
-  assert.strictEqual(cell(rows()[1], 5).textContent, '', 'not watching');
+  assert.strictEqual(text(cell(r0, 3)), 'CX840 VHHH \u2192 KJFKtook off 2026-10-30 09:12Z', 'the last flight, and when it left');
+  assert.strictEqual(cell(r0, 3).title, 'Callsign CPA840\nHong Kong Intl \u2192 John F Kennedy Intl\nFlight from 2026-10-30 09:00Z to 2026-10-30 10:00Z');
+  assert.strictEqual(cell(rows()[1], 3).textContent, '', 'no flight known');
+  assert.strictEqual(cell(r0, 4).textContent, '2h ago');
+  assert.strictEqual(cell(r0, 4).title, 'Last heard 2026-10-30 10:00Z\nADS-B: 2026-10-30 10:00Z\nDatalink: 2026-10-28 20:00Z', 'ADS-B and datalink times in the tooltip');
+  assert.strictEqual(cell(rows()[2], 4).textContent, 'never heard');
+  assert.strictEqual(cell(r0, 6).textContent, 'watching');
+  assert.strictEqual(cell(r0, 7).children[0].textContent, '\u{1F4DD} 2 notes');
+  assert.strictEqual(cell(r0, 7).children[1].textContent, 'Second note about the bird strike', 'a preview of the newest note');
+  assert.strictEqual(text(cell(rows()[1], 7).children[0]), '\u{1F4DD} add a note');
+  assert.ok(cell(rows()[1], 7).children[0].className.includes('empty'));
+  assert.strictEqual(cell(rows()[1], 6).textContent, '', 'not watching');
   assert.strictEqual(text(cell(rows()[2], 0)), '—', 'no registration known');
-  assert.strictEqual(cell(rows()[2], 3).textContent, 'never heard');
-  assert.strictEqual(cell(rows()[2], 6).children[0].textContent, '\u{1F4DD} 1 note', 'singular');
+  assert.strictEqual(cell(rows()[2], 4).textContent, 'never heard');
+  assert.strictEqual(cell(rows()[2], 7).children[0].textContent, '\u{1F4DD} 1 note', 'singular');
 
   // search: registration (any it has had), hex, type, note text
   const search = async s => { q('#q').value = s; q('#q').oninput(); return rows().map(r => cell(r, 1).textContent); };
@@ -212,7 +215,7 @@ const tick = () => new Promise(r => setTimeout(r, 5));
 
   // opening an airframe's notes: the panel, the component, and the table following changes
   assert.strictEqual(q('#notespanel').hidden, true);
-  cell(rows()[1], 6).children[0].onclick();               // B-LRD, which has none
+  cell(rows()[1], 7).children[0].onclick();               // B-LRD, which has none
   await tick();
   assert.strictEqual(q('#notespanel').hidden, false);
   assert.strictEqual(q('#notestitle').textContent, 'Notes · B-LRD · A359');
@@ -228,8 +231,8 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   await withClass(body, 'notebtn2')[0].onclick(); await tick(); await tick();
   assert.ok(listCalls() > l0, 'the table reloads after a change');
   assert.strictEqual(q('#count').textContent, '3 of 3 airframes · 3 with notes');
-  assert.strictEqual(cell(rows()[1], 6).children[0].textContent, '\u{1F4DD} 1 note');
-  assert.strictEqual(cell(rows()[1], 6).children[1].textContent, 'Flown by the trainee crew');
+  assert.strictEqual(cell(rows()[1], 7).children[0].textContent, '\u{1F4DD} 1 note');
+  assert.strictEqual(cell(rows()[1], 7).children[1].textContent, 'Flown by the trainee crew');
   // closing
   q('#notesclose').onclick();
   assert.strictEqual(q('#notespanel').hidden, true);

@@ -966,3 +966,25 @@ func TestRouteAndFlightFromA350Reports(t *testing.T) {
 		t.Errorf("rtr route = %+v %v", r, ok)
 	}
 }
+
+// A departure report names the flight's route too.
+func TestRouteFromDepartureReport(t *testing.T) {
+	st := newStore(t)
+	if _, err := Ingest(st, "A63DFF", msg(1, fixture(t, "real_delta_departure_miam"))); err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := st.LastRoute("A63DFF"); !ok || r.From != "KLAX" || r.To != "VHHH" || r.Source != "airline report" {
+		t.Errorf("route = %+v %v", r, ok)
+	}
+}
+
+// The top of descent report names the route: the airports as IATA codes, kept as ICAO like the other route reports.
+func TestRouteFromTopOfDescent(t *testing.T) {
+	st := newStore(t)
+	if _, err := Ingest(st, "A762CC", msg(1, fixture(t, "real_ups_tod_hkg_anc"))); err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := st.LastRoute("A762CC"); !ok || r.From != "VHHH" || r.To != "PANC" || r.Source != "airline report" {
+		t.Errorf("route = %+v %v", r, ok)
+	}
+}
