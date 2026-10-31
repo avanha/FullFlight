@@ -153,6 +153,14 @@ func classify(label, body string) (Kind, string, Direction) {
 // it applies, and runs our own parsers for the rest. Identity is always derived
 // from the raw text, never from airframes.io metadata.
 func Decode(m Message) (Result, error) {
+	var wrapped Identity // the message number and flight in a satellite header, if there was one
+	if inner, label, prefix, ok := unwrapSatcom(m.Text); ok {
+		m.Text = inner
+		if label != "" {
+			m.Label = label
+		}
+		wrapped = parsePrefix(prefix)
+	}
 	if r, ok := decodePlan(m); ok {
 		return r, nil
 	}
@@ -162,6 +170,9 @@ func Decode(m Message) (Result, error) {
 		body = "/" + body
 	}
 	r := Result{Prefix: prefix, Body: body, Identity: parsePrefix(prefix), Fields: map[string]any{}}
+	if r.Identity.FlightID == "" && wrapped.FlightID != "" {
+		r.Identity.MsgNum, r.Identity.FlightID, r.Identity.Flight = wrapped.MsgNum, wrapped.FlightID, wrapped.Flight
+	}
 
 	var dir Direction
 	r.Kind, r.Label, dir = classify(m.Label, body)

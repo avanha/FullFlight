@@ -16,7 +16,7 @@ import (
 // thousandths, temperature (M minus, P plus, whole degrees), one digit we cannot explain, and a four digit
 // number that falls steadily through a flight (fuel on board, in hundreds of pounds, to judge by the rate).
 // Read from samples, not a specification: messages sent on time match their own clocks to the minute.
-var posRptRe = regexp.MustCompile(`^\*POS\r?\n(\d{2})(\d{2})(\d{2})(\d{2})([NS])(\d{2})(\d{2})([EW])(\d{3})(\d{2})(\d{3})(\d{3})(\d{3})(\d{3})([MP])(\d{2})(\d)(\d{4})\s*$`)
+var posRptRe = regexp.MustCompile(`^\*POS\s+(\d{2})(\d{2})(\d{2})(\d{2})([NS])(\d{2})(\d{2})([EW])(\d{3})(\d{2})(\d{3})(\d{3})(\d{3})(\d{3})([MP])(\d{2})(\d)(\d{4})\s*$`)
 
 func parsePosRpt(body string, r *Result) {
 	m := posRptRe.FindStringSubmatch(body)

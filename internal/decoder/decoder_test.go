@@ -819,3 +819,62 @@ func TestResolveDayTime(t *testing.T) {
 		}
 	}
 }
+
+// UPS's satellite header in front of ADS-C, CPDLC and *POS: the message is what it would have been without it.
+func TestUPSSatcomWrapper(t *testing.T) {
+	// A downlink ADS-C report from the Pacific, flight UPS6059.
+	f, r := load(t, "ups_adsc_down")
+	if r.Kind != KindADSC || r.Label != "B6" || r.Dir != Downlink || r.Tree == nil {
+		t.Fatalf("adsc downlink: %v %q %v tree %v", r.Kind, r.Label, r.Dir, r.Tree != nil)
+	}
+	if r.Identity.Tail != "N575UP" || r.Identity.FlightID != "UP6059" || r.Identity.Flight != "UP6059" || r.Identity.MsgNum != "F78A" {
+		t.Errorf("identity = %+v", r.Identity)
+	}
+	if r.Pos == nil {
+		t.Fatalf("no position in the report: %+v", r.Fields)
+	}
+	if got := r.Pos.At(f.Received); got.Sub(f.Received).Abs() > 20*time.Minute {
+		t.Errorf("placed at %v, received %v", got, f.Received)
+	}
+	if !strings.HasPrefix(r.Summary, "ADS-C report ") {
+		t.Errorf("summary = %q", r.Summary)
+	}
+
+	// CPDLC downlink.
+	_, r = load(t, "ups_cpdlc_down")
+	if r.Kind != KindCPDLC || r.Label != "BA" || r.Dir != Downlink || r.Tree == nil || r.Identity.Tail != "N575UP" || r.Identity.FlightID != "UP6059" {
+		t.Errorf("cpdlc downlink: %v %q %v %+v", r.Kind, r.Label, r.Dir, r.Identity)
+	}
+
+	// The *POS report behind "#DFB": a tab after the line break, and the flight from the header.
+	f, r = load(t, "ups_pos_down")
+	if r.Kind != KindPOS || r.Pos == nil || r.Identity.FlightID != "UP6059" {
+		t.Fatalf("pos: %v %+v %+v", r.Kind, r.Pos, r.Identity)
+	}
+	near(t, "lat", r.Pos.Lat, 54+16.0/60, 1e-9)
+	near(t, "lon", r.Pos.Lon, 175+32.0/60, 1e-9)
+	if want := time.Date(2026, 10, 25, 15, 52, 0, 0, time.UTC); !r.Pos.At(f.Received).Equal(want) {
+		t.Errorf("pos time = %v, want %v", r.Pos.At(f.Received), want)
+	}
+
+	// Uplinks, behind "- #MD": a periodic ADS-C contract request, and a CPDLC message.
+	_, r = load(t, "ups_adsc_up")
+	if r.Kind != KindADSC || r.Label != "A6" || r.Dir != Uplink || !strings.Contains(r.Text, "contract request") {
+		t.Errorf("adsc uplink: %v %q %v %q", r.Kind, r.Label, r.Dir, r.Text)
+	}
+	_, r = load(t, "ups_adsc_up_fuk")
+	if r.Kind != KindADSC || !strings.Contains(r.Text, "Reporting interval: 704") {
+		t.Errorf("fukuoka contract: %v %q", r.Kind, r.Text)
+	}
+	_, r = load(t, "ups_cpdlc_up")
+	if r.Kind != KindCPDLC || r.Label != "AA" || r.Dir != Uplink || !strings.Contains(r.Text, "CPDLC Uplink") || r.Identity.Tail != "N575UP" {
+		t.Errorf("cpdlc uplink: %v %q %v %q %+v", r.Kind, r.Label, r.Dir, r.Text, r.Identity)
+	}
+
+	// An unwrapped message is unaffected, and something that only looks a little like a wrapper is left alone.
+	for _, s := range []string{"- #MDPWI/WD370,N25000W180000,028055,370M47.", "- #MDREQPER9CB5", "plain text #M1B/ not a label"} {
+		if r, _ := Decode(Message{Label: "H1", Text: s}); r.Kind != KindUnknown {
+			t.Errorf("%q decoded as %v", s, r.Kind)
+		}
+	}
+}

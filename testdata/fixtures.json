@@ -254,5 +254,53 @@
   "received": "2026-10-25T16:08:25Z",
   "text": "M76ADL02803N01 POSRPT 0280/25 ZSPD/KSEA .N501DN\n\t/POS N48280W166266/ALT 390/MCH 847/FOB 0698\n\t/TME 1611/WND 261 041/OAT -056/TAS 0486/ETA     ",
   "name": "posrpt_eta_blank"
+ },
+ {
+  "name": "ups_adsc_down",
+  "label": "H1",
+  "received": "2026-10-25T15:52:09Z",
+  "text": "F78AUP6059#M1B/B6 ANCATYA.ADS.N575UP0726BE93EA28484D33D01D0D275753F8C2084D027928685C176F884D000E151921FFF80F14C1A23FF826E5",
+  "fromHex": "A762CC",
+  "toHex": "50"
+ },
+ {
+  "name": "ups_cpdlc_down",
+  "label": "H1",
+  "received": "2026-10-25T16:21:14Z",
+  "text": "F88AUP6059#M1B/BA ANCXFXA.CC1.N575UP678305E849101A2A",
+  "fromHex": "A762CC",
+  "toHex": "50"
+ },
+ {
+  "name": "ups_pos_down",
+  "label": "H1",
+  "received": "2026-10-25T15:49:44Z",
+  "text": "D74AUP6059#DFB*POS\n\t10251552N5416E17532340246085837M4421063",
+  "fromHex": "A762CC",
+  "toHex": "50"
+ },
+ {
+  "name": "ups_adsc_up",
+  "label": "H1",
+  "received": "2026-10-26T11:31:51Z",
+  "text": "- #MD/A6 OAKODYA.ADS.N575UP07020B000D010E010F01BB58",
+  "fromHex": "05",
+  "toHex": "A762CC"
+ },
+ {
+  "name": "ups_cpdlc_up",
+  "label": "H1",
+  "received": "2026-10-30T20:46:14Z",
+  "text": "- #MD/AA OAKODYA.AT1.N575UP215315EA4929C5A8826C1B082AD0992674B41122CC83650568332AC541527A066C1820A71618F387",
+  "fromHex": "50",
+  "toHex": "A762CC"
+ },
+ {
+  "name": "ups_adsc_up_fuk",
+  "label": "H1",
+  "received": "2026-10-27T00:48:36Z",
+  "text": "- #MD/A6 FUKJJYA.ADS.N575UP07000BCA0D010E010F01150125511B",
+  "fromHex": "50",
+  "toHex": "A762CC"
  }
 ]

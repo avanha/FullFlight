@@ -116,6 +116,18 @@ the link is the aircraft (`fromHex`/`toHex`), else tried both ways.
 After improving the decoder, run `bin/fullflight -config config.yaml -redecode` to
 re-decode every stored message from its raw text (idempotent).
 
+### Satellite headers (UPS, Delta)
+
+Over satellite some aircraft put a header of their own in front of the message, so the ADS-C, CPDLC or position
+report sits behind text that is not a message number and flight: UPS 747s send downlinks as `F21AUP0081#M1B/B6
+ANCATYA.ADS.N575UP...` (`B6` ADS-C, `BA` CPDLC, `B0` AFN), position reports as `D67AUP0081#DFB*POS` and uplinks as `- #MD/A6
+OAKODYA.ADS.N575UP...` (`A6`, `AA`, `A0`); Delta's CPDLC downlinks use `#M1B/BA`. The header is taken off, the label inside it
+(which says which way the message went) is used, and the message number and flight in front become the message's
+flight (UP0081). The result is read as if it had arrived plain, so N575UP's ground-to-aircraft side, the ADS-C contract
+requests (Oakland's, then Fukuoka's every 704 s), the CPDLC clearances and handoffs, can be read in the message list,
+and its ADS-C and `*POS` reports are on the map: 62 ADS-C, 130 CPDLC and 17 `*POS` messages that were "Undecoded".
+A `DIS` message type (ADS-C disconnect?) is not recognised yet. `fullflight -redecode` applies it to stored messages.
+
 ### Messages delivered days late
 
 A station can deliver a backlog long after the fact, and the app dates most messages by when they arrive. An ADS-C
