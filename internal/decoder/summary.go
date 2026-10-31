@@ -11,6 +11,7 @@ const (
 	BasisHour    = "hour"    // seconds past the hour (ADS-C)
 	BasisMonth   = "month"   // seconds since 00:00 UTC on the 1st (REP081)
 	BasisDay     = "day"     // seconds since 00:00 UTC (CPDLC position report)
+	BasisDate    = "date"    // month, day, hour and minute (*POS report): Secs is the number MMDDHHMM
 	BasisReceipt = "receipt" // no usable embedded time: placed at when it was received
 )
 
@@ -32,6 +33,8 @@ func (p Pos) At(recv time.Time) time.Time {
 		return ResolveMonthSeconds(int64(p.Secs), recv)
 	case BasisDay:
 		return ResolveSecondsOfDay(p.Secs, recv)
+	case BasisDate:
+		return ResolveMonthDay(int(p.Secs), recv)
 	}
 	return ResolveSecondsPastHour(p.Secs, recv)
 }
@@ -242,6 +245,8 @@ func summarize(r Result) string {
 		return acmfSummary(r)
 	case KindAOC:
 		return aocSummary(r)
+	case KindPOS:
+		return posRptSummary(r)
 	case KindFMS:
 		if r.Pos == nil {
 			return "FMS position report"

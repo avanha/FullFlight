@@ -331,7 +331,7 @@ func (s *Store) LastFlight(hexAddr string) (FlightID, bool) {
 	var f FlightID
 	var t int64
 	err := s.db.QueryRow(`SELECT ts, flight, callsign FROM message
-		WHERE hex=? AND (flight != '' OR callsign != '') AND mismatch NOT LIKE '%which is hex%'
+		WHERE hex=? AND (flight != '' OR callsign != '') AND mismatch NOT LIKE '%which is hex%' AND time_flag=0
 		ORDER BY ts DESC, id DESC LIMIT 1`, hexAddr).Scan(&t, &f.Flight, &f.Callsign)
 	if err != nil {
 		return FlightID{}, false
@@ -487,7 +487,7 @@ type Evidence struct {
 func (s *Store) FlightEvidence(hexAddr string, since, until time.Time) ([]Evidence, error) {
 	rows, err := s.db.Query(`
 		SELECT ts, CASE WHEN flight != '' THEN flight ELSE callsign END FROM message
-		  WHERE hex=?1 AND ts BETWEEN ?2 AND ?3 AND (flight != '' OR callsign != '') AND mismatch NOT LIKE '%which is hex%'
+		  WHERE hex=?1 AND ts BETWEEN ?2 AND ?3 AND (flight != '' OR callsign != '') AND mismatch NOT LIKE '%which is hex%' AND time_flag=0
 		UNION ALL
 		SELECT ts, callsign FROM position WHERE hex=?1 AND ts BETWEEN ?2 AND ?3 AND callsign != ''
 		ORDER BY 1`, hexAddr, ts(since), ts(until))
@@ -514,7 +514,7 @@ func (s *Store) PositionTimes(hexAddr string, since, until time.Time) ([]time.Ti
 	rows, err := s.db.Query(`
 		SELECT ts FROM position WHERE hex=?1 AND ts BETWEEN ?2 AND ?3
 		UNION ALL
-		SELECT pos_ts FROM message WHERE hex=?1 AND pos_ts BETWEEN ?2 AND ?3 AND lat IS NOT NULL AND suspect = ''
+		SELECT pos_ts FROM message WHERE hex=?1 AND pos_ts BETWEEN ?2 AND ?3 AND lat IS NOT NULL AND suspect = '' AND time_flag = 0
 		ORDER BY 1`, hexAddr, ts(since), ts(until))
 	if err != nil {
 		return nil, err
@@ -537,16 +537,16 @@ func (s *Store) PositionTimes(hexAddr string, since, until time.Time) ([]time.Ti
 const routeReportsSQL = `
 	SELECT COALESCE(pos_ts, ts) AS t, COALESCE(json_extract(decoded, '$.fields.rep081.Origin'), '') AS origin,
 		json_extract(decoded, '$.fields.rep081.Dest') AS dest, 'REP081' AS src
-	FROM message WHERE hex=?1 AND kind='miam' AND COALESCE(pos_ts, ts) BETWEEN ?2 AND ?3
+	FROM message WHERE hex=?1 AND kind='miam' AND COALESCE(pos_ts, ts) BETWEEN ?2 AND ?3 AND time_flag=0
 	  AND json_extract(decoded, '$.fields.rep081.Dest') IS NOT NULL AND json_extract(decoded, '$.fields.rep081.Dest') != ''
 	UNION ALL
 	SELECT COALESCE(pos_ts, ts), COALESCE(json_extract(decoded, '$.fields.origin'), ''), json_extract(decoded, '$.fields.dest'),
 		CASE kind WHEN 'acmf_report' THEN 'ACMF' ELSE 'airline report' END
-	FROM message WHERE hex=?1 AND kind IN ('acmf_report', 'aoc_position') AND COALESCE(pos_ts, ts) BETWEEN ?2 AND ?3
+	FROM message WHERE hex=?1 AND kind IN ('acmf_report', 'aoc_position') AND COALESCE(pos_ts, ts) BETWEEN ?2 AND ?3 AND time_flag=0
 	  AND json_extract(decoded, '$.fields.dest') IS NOT NULL AND json_extract(decoded, '$.fields.dest') != ''
 	UNION ALL
 	SELECT ts, COALESCE(json_extract(decoded, '$.fields.plan.from'), ''), json_extract(decoded, '$.fields.plan.to'), 'flight plan'
-	FROM message WHERE hex=?1 AND kind='flight_plan' AND ts BETWEEN ?2 AND ?3
+	FROM message WHERE hex=?1 AND kind='flight_plan' AND ts BETWEEN ?2 AND ?3 AND time_flag=0
 	  AND json_extract(decoded, '$.fields.plan.to') IS NOT NULL AND json_extract(decoded, '$.fields.plan.to') != ''`
 
 // RouteReport is one REP081 origin/destination.

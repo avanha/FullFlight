@@ -167,6 +167,12 @@ func (f *Fetcher) fetchHex(ctx context.Context, hex string, now time.Time) error
 		f.Log.Info("messages stored", "hex", hex, "new", added)
 		// Pages arrive newest first, so early verdicts were made with half the
 		// neighbours missing; settle them now.
+		// A station may deliver a backlog days late: what sits among its dated messages is as old as they are.
+		if n, err := MarkLate(f.Store, hex, since.Add(-FixWindow)); err != nil {
+			f.Log.Error("mark late messages", "hex", hex, "err", err)
+		} else if n > 0 {
+			f.Log.Info("late-delivered messages flagged", "hex", hex, "changed", n)
+		}
 		if n, err := Recheck(f.Store, hex, since.Add(-FixWindow)); err != nil {
 			f.Log.Error("recheck positions", "hex", hex, "err", err)
 		} else if n > 0 {

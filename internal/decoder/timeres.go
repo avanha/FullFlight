@@ -69,3 +69,25 @@ func ImpliedSpeedKt(a, b TimedPoint) float64 {
 
 // Plausible reports whether the move from a to b is physically reasonable.
 func Plausible(a, b TimedPoint) bool { return ImpliedSpeedKt(a, b) <= MaxPlausibleKt }
+
+// ResolveMonthDay places a month, day, hour and minute given as the number MMDDHHMM (it has no year) in the year
+// that puts it nearest ref, the receive time. Unlike a time of day it can be days, or weeks, before ref: such a
+// message was delivered late. A date that does not exist (30 February) is placed at ref.
+func ResolveMonthDay(mmddhhmm int, ref time.Time) time.Time {
+	ref = ref.UTC()
+	month, day, hh, mm := mmddhhmm/1000000, mmddhhmm/10000%100, mmddhhmm/100%100, mmddhhmm%100
+	best, ok := time.Time{}, false
+	for y := ref.Year() - 1; y <= ref.Year()+1; y++ {
+		t := time.Date(y, time.Month(month), day, hh, mm, 0, 0, time.UTC)
+		if int(t.Month()) != month || t.Day() != day {
+			continue // not a real date that year (29 February)
+		}
+		if !ok || t.Sub(ref).Abs() < best.Sub(ref).Abs() {
+			best, ok = t, true
+		}
+	}
+	if !ok {
+		return ref
+	}
+	return best
+}

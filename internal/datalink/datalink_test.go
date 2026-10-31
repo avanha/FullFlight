@@ -828,3 +828,89 @@ func TestRegistrationSearchFindsTheFlightThenThePlan(t *testing.T) {
 		t.Errorf("stored kinds %v", kinds)
 	}
 }
+
+// A *POS report carries its own date: delivered days late, it is placed where and when it was, with a note.
+func TestPosReportIsPlacedAtItsOwnTime(t *testing.T) {
+	st := newStore(t)
+	f := fixture(t, "pos_late") // received 31 Oct 05:02:58, dated 28 Oct 10:29
+	if _, err := Ingest(st, "A762CC", msg(1, f)); err != nil {
+		t.Fatal(err)
+	}
+	ms, _ := st.Messages("A762CC", f.Received.Add(-time.Hour), f.Received.Add(time.Hour), 5)
+	m := ms[0]
+	if m.Kind != "pos_report" || m.PosT == nil || !m.PosT.Equal(time.Date(2026, 10, 28, 10, 29, 0, 0, time.UTC)) {
+		t.Fatalf("kind %q posT %v", m.Kind, m.PosT)
+	}
+	if m.TimeFlag || !strings.Contains(m.TimeNote, "66h") || !strings.Contains(m.TimeNote, "2026-10-28 10:29Z") {
+		t.Errorf("flag=%v note=%q", m.TimeFlag, m.TimeNote)
+	}
+	// Placed three days ago, it is not the aircraft's newest position by any reading of the clock.
+	if p, ok := st.LastMessagePosition("A762CC"); !ok || p.T.After(f.Received.Add(-48*time.Hour)) {
+		t.Errorf("last position = %+v", p)
+	}
+	// Delivered on time it carries no note.
+	st2 := newStore(t)
+	g := fixture(t, "pos_ontime")
+	Ingest(st2, "A762CC", msg(1, g))
+	ms, _ = st2.Messages("A762CC", g.Received.Add(-time.Hour), g.Received.Add(time.Hour), 5)
+	if ms[0].TimeNote != "" || ms[0].TimeFlag || !ms[0].PosT.Equal(time.Date(2026, 10, 30, 10, 14, 0, 0, time.UTC)) {
+		t.Errorf("on time: %q %v %v", ms[0].TimeNote, ms[0].TimeFlag, ms[0].PosT)
+	}
+}
+
+func TestMarkLate(t *testing.T) {
+	st := newStore(t)
+	day := func(d, h, m, s int) time.Time { return time.Date(2026, 10, d, h, m, s, 0, time.UTC) }
+	lat, lon := 39.1, -123.17
+	add := func(id int64, at time.Time, station, kind string, own *time.Time) {
+		m := store.Message{ID: id, Hex: "A762CC", T: at, Label: "H1", Text: fmt.Sprint("m", id), Kind: kind, Station: station}
+		if own != nil {
+			m.PosT, m.Lat, m.Lon = own, &lat, &lon
+		}
+		if _, err := st.AddMessage(m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	own := func(d, h, m int) *time.Time { v := day(d, h, m, 0); return &v }
+	// A backlog from 28 Oct delivered through KSFO3 on 31 Oct, 66 hours late, with ADS-C reports in among it.
+	add(1, day(31, 4, 42, 58), "JH-KSFO3", "pos_report", own(28, 10, 20))
+	add(2, day(31, 4, 59, 37), "JH-KSFO3", "adsc", nil) // 17 minutes on: the same backlog
+	add(3, day(31, 5, 2, 58), "JH-KSFO3", "pos_report", own(28, 10, 29))
+	add(4, day(31, 4, 50, 0), "SCH-KRDD-VDLM2", "adsc", nil) // another station: judged by nobody
+	add(5, day(31, 6, 40, 0), "JH-KSFO3", "adsc", nil)       // too far from any dated message
+	add(6, day(31, 4, 55, 55), "JH-KSFO3", "afn", nil)       // any kind, not only positions
+	add(7, day(31, 4, 51, 0), "JH-KSFO3", "fms_position", nil)
+	// Live traffic: a dated message on time, and an ADS-C report beside it.
+	add(8, day(30, 10, 22, 39), "Fa-KSNA-VDL", "pos_report", own(30, 10, 22))
+	add(9, day(30, 10, 21, 47), "Fa-KSNA-VDL", "adsc", nil)
+	// The nearest dated message decides: here it is the on-time one, though a late one is also within the window.
+	add(10, day(30, 10, 20, 0), "JH-KSFO3", "pos_report", own(27, 1, 0))
+	add(11, day(30, 10, 36, 0), "JH-KSFO3", "pos_report", own(30, 10, 35))
+	add(12, day(30, 10, 34, 0), "JH-KSFO3", "adsc", nil)
+
+	n, err := MarkLate(st, "A762CC", time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[int64]store.Message{}
+	all, _ := st.Messages("A762CC", day(1, 0, 0, 0), day(31, 23, 0, 0), 100)
+	for _, m := range all {
+		got[m.ID] = m
+	}
+	flagged := func(id int64) bool { return got[id].TimeFlag }
+	for id, want := range map[int64]bool{1: false, 2: true, 3: false, 4: false, 5: false, 6: true, 7: false, 8: false, 9: false, 10: false, 11: false, 12: false} {
+		if flagged(id) != want {
+			t.Errorf("message %d flagged = %v, want %v (%q)", id, flagged(id), want, got[id].TimeNote)
+		}
+	}
+	if n != 2 {
+		t.Errorf("changed %d, want 2", n)
+	}
+	if note := got[2].TimeNote; !strings.HasPrefix(note, lateBatchPrefix) || !strings.Contains(note, "2026-10-28") || !strings.Contains(note, "JH-KSFO3") {
+		t.Errorf("note = %q", note)
+	}
+	// Again over the same messages: nothing changes.
+	if n, _ := MarkLate(st, "A762CC", time.Time{}); n != 0 {
+		t.Errorf("second pass changed %d", n)
+	}
+}

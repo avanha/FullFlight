@@ -677,3 +677,71 @@ func TestAOCPositionReport(t *testing.T) {
 		t.Errorf("tailwind = %v", r.Fields["tailwind_kt"])
 	}
 }
+
+func TestPosReport(t *testing.T) {
+	// Delivered on 31 Oct at 05:02, but dated 28 Oct 10:29: it is placed at its own time.
+	f, r := load(t, "pos_late")
+	if r.Kind != KindPOS || r.Pos == nil || r.Label != "H1" {
+		t.Fatalf("late: %v %+v", r.Kind, r.Pos)
+	}
+	near(t, "lat", r.Pos.Lat, 39+13.0/60, 1e-9)
+	near(t, "lon", r.Pos.Lon, -(123 + 15.0/60), 1e-9)
+	if r.Pos.AltFt == nil || *r.Pos.AltFt != 38000 {
+		t.Errorf("alt = %v", r.Pos.AltFt)
+	}
+	if want := time.Date(2026, 10, 28, 10, 29, 0, 0, time.UTC); !r.Pos.At(f.Received).Equal(want) {
+		t.Errorf("placed at %v, want %v", r.Pos.At(f.Received), want)
+	}
+	if r.Wx == nil || *r.Wx.WindDirDeg != 278 || *r.Wx.WindKt != 62 || *r.Wx.TempC != -60 {
+		t.Errorf("wx = %+v", r.Wx)
+	}
+	if r.Fields["mach"] != 0.848 || r.Fields["value"] != 1298 {
+		t.Errorf("fields = %v", r.Fields)
+	}
+	if want := "Position report 39.217N 123.250W FL380, M0.848"; r.Summary != want {
+		t.Errorf("summary = %q", r.Summary)
+	}
+
+	// Sent on time, it is placed at its own time too, which is the arrival time to within the minute.
+	f, r = load(t, "pos_ontime")
+	if want := time.Date(2026, 10, 30, 10, 14, 0, 0, time.UTC); !r.Pos.At(f.Received).Equal(want) {
+		t.Errorf("on time: %v", r.Pos.At(f.Received))
+	}
+	// Climbing, warm: plus and minus temperatures and low flight levels read as numbers.
+	_, r = load(t, "pos_climb")
+	if r.Pos == nil || *r.Pos.AltFt != 22200 || *r.Wx.TempC != -20 || r.Fields["mach"] != 0.727 {
+		t.Errorf("climb: %+v %+v %v", r.Pos, r.Wx, r.Fields)
+	}
+	// Southern and eastern hemispheres, and a plus temperature.
+	res, err := Decode(Message{Label: "H1", Text: "*POS\r\n01020304S3328E11846081236010372P1000368"})
+	if err != nil || res.Kind != KindPOS || res.Pos == nil || res.Pos.Lat > -33.4 || res.Pos.Lon < 118.7 || *res.Wx.TempC != 10 {
+		t.Errorf("S/E: %v %+v %+v", err, res.Pos, res.Wx)
+	}
+	// An impossible date or position is not decoded as one.
+	for _, bad := range []string{"*POS\r\n13281029N3913W12315380278062848M6021298", "*POS\r\n10321029N3913W12315380278062848M6021298",
+		"*POS\r\n10282529N3913W12315380278062848M6021298", "*POS\r\n10281029N3963W12315380278062848M6021298"} {
+		if r, _ := Decode(Message{Label: "H1", Text: bad}); r.Pos != nil {
+			t.Errorf("%q decoded to %+v", bad, r.Pos)
+		}
+	}
+}
+
+func TestResolveMonthDay(t *testing.T) {
+	at := func(y int, mo time.Month, d, h, m int) time.Time { return time.Date(y, mo, d, h, m, 0, 0, time.UTC) }
+	for _, tc := range []struct {
+		n    int
+		ref  time.Time
+		want time.Time
+	}{
+		{10281029, at(2026, 10, 31, 5, 3), at(2026, 10, 28, 10, 29)},   // three days late
+		{12312350, at(2027, 1, 1, 0, 10), at(2026, 12, 31, 23, 50)},    // over the new year
+		{1010005, at(2026, 12, 31, 23, 55), at(2027, 1, 1, 0, 5)},      // and the other way
+		{2290000, at(2028, 3, 1, 1, 0), at(2028, 2, 29, 0, 0)},         // a leap day
+		{2290000, at(2026, 3, 1, 1, 0), at(2026, 3, 1, 1, 0)},          // not in 2026: placed at the arrival
+		{10301022, at(2026, 10, 30, 10, 22), at(2026, 10, 30, 10, 22)}, // on time
+	} {
+		if got := ResolveMonthDay(tc.n, tc.ref); !got.Equal(tc.want) {
+			t.Errorf("ResolveMonthDay(%d, %v) = %v, want %v", tc.n, tc.ref, got, tc.want)
+		}
+	}
+}

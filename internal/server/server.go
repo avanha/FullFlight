@@ -250,7 +250,7 @@ func (s *Server) lastPosition(hex string) *lastPos {
 		best = &lastPos{T: p.T, Kind: "ADS-B", Lat: p.Lat, Lon: p.Lon, AltFt: p.AltFt}
 	}
 	if m, ok := s.Store.LastMessagePosition(hex); ok && (best == nil || m.T.After(best.T)) {
-		kind := map[string]string{"adsc": "ADS-C", "cpdlc": "CPDLC", "miam": "REP081", "fms_position": "FMS", "acmf_report": "ACMF"}[m.Kind]
+		kind := map[string]string{"adsc": "ADS-C", "cpdlc": "CPDLC", "miam": "REP081", "fms_position": "FMS", "acmf_report": "ACMF", "aoc_position": "AOC", "pos_report": "POS"}[m.Kind]
 		if kind == "" {
 			kind = m.Kind
 		}

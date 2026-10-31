@@ -66,6 +66,9 @@ func decodeInto(st *store.Store, m *store.Message, dir decoder.Direction) {
 	m.Summary, m.Detail, m.Decoded, m.Route, m.Suspect = "", "", "", "", ""
 	m.Lat, m.Lon, m.AltFt, m.PosT = nil, nil, nil, nil
 	m.WxDir, m.WxKt, m.WxTemp, m.GS, m.Trk, m.Fixes = nil, nil, nil, nil, nil, ""
+	if !strings.HasPrefix(m.TimeNote, lateBatchPrefix) { // that verdict is MarkLate's, not ours to forget
+		m.TimeNote, m.TimeFlag = "", false
+	}
 
 	res, err := decoder.Decode(decoder.Message{Label: m.Label, Dir: dir, Text: m.Text})
 	if err != nil {
@@ -86,6 +89,9 @@ func decodeInto(st *store.Store, m *store.Message, dir decoder.Direction) {
 			m.Lat, m.Lon, m.AltFt, m.PosT = &res.Pos.Lat, &res.Pos.Lon, res.Pos.AltFt, &t
 			if res.Kind == decoder.KindFMS {
 				m.TimeNote, m.TimeFlag = compareTimes(m.T, fmt.Sprint(res.Fields["wpt_time"]))
+			}
+			if res.Kind == decoder.KindPOS {
+				m.TimeNote, m.TimeFlag = datedLate(m.T, t)
 			}
 			// A position whose time is in doubt cannot be judged against where other fixes were at that
 			// time: it may well be a true position at some other time. It is marked unverified instead.
@@ -181,7 +187,7 @@ func Redecode(st *store.Store) (changed int, err error) {
 		// Not the stored direction: that may itself have been a guess.
 		decodeInto(st, &m, directionOf(m.AFDir, m.FromHex, m.ToHex, m.Hex))
 		if m.Kind == old.Kind && m.Summary == old.Summary && m.Decoded == old.Decoded && m.Route == old.Route &&
-			m.Suspect == old.Suspect && m.Mismatch == old.Mismatch && sameFloat(m.Lat, old.Lat) && sameFloat(m.Lon, old.Lon) &&
+			m.Suspect == old.Suspect && m.Mismatch == old.Mismatch && m.TimeNote == old.TimeNote && m.TimeFlag == old.TimeFlag && sameFloat(m.Lat, old.Lat) && sameFloat(m.Lon, old.Lon) &&
 			m.Fixes == old.Fixes && sameFloat(m.WxKt, old.WxKt) && sameFloat(m.WxTemp, old.WxTemp) && sameFloat(m.GS, old.GS) && sameFloat(m.Trk, old.Trk) {
 			continue
 		}
@@ -196,6 +202,11 @@ func Redecode(st *store.Store) (changed int, err error) {
 		hexes[m.Hex] = true
 	}
 	for h := range hexes {
+		late, err := MarkLate(st, h, time.Time{})
+		if err != nil {
+			return changed, err
+		}
+		changed += late
 		n, err := Recheck(st, h, time.Time{})
 		if err != nil {
 			return changed, err

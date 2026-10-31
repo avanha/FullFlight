@@ -116,6 +116,29 @@ the link is the aircraft (`fromHex`/`toHex`), else tried both ways.
 After improving the decoder, run `bin/fullflight -config config.yaml -redecode` to
 re-decode every stored message from its raw text (idempotent).
 
+### Messages delivered days late
+
+A station can deliver a backlog long after the fact, and the app dates most messages by when they arrive. An ADS-C
+report holds only minutes and seconds past the hour, so one from three days ago looks like it is from now: N575UP's
+HNL to HKG flight (UPS58) appeared to jump to off northern California when the VDL stations delivered ADS-C and
+ACARS from its UPS80 flight of 28 October on the 31st.
+
+- **`*POS` reports** (label H1, UPS 747s: `*POS` then `10281029N3913W12315380278062848M6021298`) carry a full date
+  and time: MMDDHHMM in UTC, latitude `DDMM`, longitude `DDDMM`, flight level, wind from (direction, knots), Mach in
+  thousandths, temperature (`M` minus, `P` plus), a digit we cannot explain, and a four digit number that falls through
+  the flight (fuel, to judge by the rate). Sent on time they match their arrival to the minute, so they are decoded
+  and placed at their own time, however late they came: the late ones show up on the 28th, where the flight was, with
+  a note saying how late they were delivered.
+- **They are also clocks.** A message that arrived at the same station within 30 minutes of a `*POS` report, nearest
+  to one that was delivered late (over 10 minutes), is taken to be from the same backlog and flagged as having an
+  unverified time, as FMS reports with a doubtful waypoint time are: drawn faint, never the plane's position, not
+  projected from, and not naming the aircraft's flight (`in a late batch: ...` in the hover). One nearest to a `*POS`
+  on time is left alone, and messages from other stations are not judged: live traffic from Honolulu arrives among a
+  California backlog. Run `fullflight -redecode` to apply it to stored messages. Progress reports and FMS waypoint
+  times are not used as clocks: their times are not UTC in the samples we have.
+- Only these `*POS` reports are used as clocks so far. Other formats that carry their own time (Delta's label 80
+  `POSRPT` has `/TME hhmm`) could be, once decoded.
+
 ## Destination from the aircraft
 
 Boeing 787 ACMF reports (label H1, header `EB0116AB_9 ,333, N24993,UAL143 , 87,301026,22:53:35,KDEN,RJAA,16591`)

@@ -916,3 +916,31 @@ func TestPausedWatchIsKeptNotPolledNotExpired(t *testing.T) {
 		t.Error("GetWatch of a missing id")
 	}
 }
+
+// A message flagged as delivered late names a flight that is not the current one: UPS80's logon from 28 October,
+// arriving on the 31st, is not what the aircraft is flying now.
+func TestLateMessagesDoNotNameTheCurrentFlight(t *testing.T) {
+	s := open(t)
+	t1, t2 := now.Add(-5*time.Hour), now.Add(-10*time.Minute)
+	s.AddMessage(Message{ID: 1, Hex: "A762CC", T: t1, Label: "H1", Text: "a", Kind: "afn", Flight: "UP58", Callsign: "UPS58"})
+	s.AddMessage(Message{ID: 2, Hex: "A762CC", T: t2, Label: "H1", Text: "b", Kind: "afn", Flight: "UP80", Callsign: "UPS80", TimeFlag: true, TimeNote: "in a late batch: x"})
+	if f, ok := s.LastFlight("A762CC"); !ok || f.Callsign != "UPS58" || !f.T.Equal(t1) {
+		t.Errorf("LastFlight = %+v %v", f, ok)
+	}
+	ev, _ := s.FlightEvidence("A762CC", now.Add(-24*time.Hour), now)
+	if len(ev) != 1 || ev[0].ID != "UP58" {
+		t.Errorf("evidence = %+v", ev)
+	}
+}
+
+func TestUnverifiedPositionsDoNotMakeAFlight(t *testing.T) {
+	s := open(t)
+	lat, lon := 39.1, -123.17
+	at := now.Add(-time.Hour)
+	s.AddMessage(Message{ID: 1, Hex: "A762CC", T: now, Label: "H1", Text: "a", Kind: "adsc", Lat: &lat, Lon: &lon, PosT: &at, TimeFlag: true})
+	s.AddMessage(Message{ID: 2, Hex: "A762CC", T: now, Label: "H1", Text: "b", Kind: "adsc", Lat: &lat, Lon: &lon, PosT: &now})
+	got, _ := s.PositionTimes("A762CC", now.Add(-3*time.Hour), now.Add(time.Hour))
+	if len(got) != 1 || !got[0].Equal(now) {
+		t.Errorf("position times = %v", got)
+	}
+}
