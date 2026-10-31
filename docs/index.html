@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FullFlight</title>
+<meta name="description" content="A self-hosted tracker that follows specific aircraft by combining live ADS-B positions with ACARS, ADS-C and CPDLC datalink messages, so a flight stays on the map over the oceans.">
+<meta property="og:title" content="FullFlight">
+<meta property="og:description" content="Follow an aircraft by ADS-B and by the datalink reports it sends where ADS-B cannot see it.">
+<meta property="og:image" content="screenshot.png">
+<style>
+  :root {
+    --bg: #f7f8fa; --fg: #1d2330; --muted: #5b6577; --card: #fff; --line: #dde1e8; --accent: #0b66d0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #12161d; --fg: #e6e9ef; --muted: #9aa4b5; --card: #1a2029; --line: #2b3340; --accent: #6aa8f5; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  a { color: var(--accent); }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+  header { padding: 40px 0 8px; }
+  h1 { font-size: 2.4rem; margin: 0 0 6px; letter-spacing: -.5px; }
+  .lede { font-size: 1.15rem; color: var(--muted); max-width: 46em; margin: 0 0 18px; }
+  .links a { display: inline-block; margin: 0 10px 8px 0; padding: 8px 14px; border: 1px solid var(--accent); border-radius: 6px; text-decoration: none; font-weight: 600; }
+  .links a.primary { background: var(--accent); color: var(--bg); }
+  .shot { margin: 22px 0 8px; }
+  .shot img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.18); }
+  .shot figcaption { color: var(--muted); font-size: .9rem; margin-top: 8px; }
+  h2 { margin: 40px 0 12px; font-size: 1.4rem; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .card h3 { margin: 0 0 4px; font-size: 1.05rem; }
+  .card p { margin: 0; color: var(--muted); font-size: .95rem; }
+  pre { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-size: .9rem; }
+  footer { margin: 44px 0 36px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: .9rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>FullFlight</h1>
+    <p class="lede">Follow a particular aircraft all the way, including the long stretches over the oceans where ADS-B goes quiet. FullFlight joins live ADS-B positions with the ACARS, ADS-C and CPDLC reports the aircraft sends by satellite and radio, and draws them as one track.</p>
+    <div class="links">
+      <a class="primary" href="https://github.com/avanha/FullFlight">Source on GitHub</a>
+      <a href="https://github.com/avanha/FullFlight#build-and-run">Build and run</a>
+    </div>
+  </header>
+
+  <figure class="shot">
+    <img src="screenshot.png" alt="FullFlight tracking an Airbus A359 over the Andaman Sea: a unified track changing from ADS-B blue to ADS-C orange and CPDLC purple, a hovered CPDLC position report, weather radar, and the legend and message list.">
+    <figcaption>Tracking a flight over the Andaman Sea. The track runs from ADS-B (blue) into ADS-C (orange) and CPDLC (purple) reports, with weather radar under it and the message that placed each dot in the list on the left.</figcaption>
+  </figure>
+
+  <h2>What it does</h2>
+  <div class="grid">
+    <div class="card"><h3>One track from every source</h3><p>ADS-B from adsb.lol and adsb.fi, plus position reports decoded from ADS-C, CPDLC, FMS, POS and other datalink messages (via airframes.io and libacars). Each source keeps its colour where the line changes hands, or switch to a line per source.</p></div>
+    <div class="card"><h3>Honest about gaps</h3><p>A long silence is bridged by a dotted estimate that follows the filed route, never by a solid line. Reports with impossible speeds or unverified times are flagged and left out of the line.</p></div>
+    <div class="card"><h3>Where is it now?</h3><p>A projection dead-reckons the aircraft from its latest trustworthy fix and shows where it should be, and where its own report says it is heading, with the waypoints it names.</p></div>
+    <div class="card"><h3>Weather</h3><p>RainViewer radar and NASA GIBS infrared satellite imagery over the map, and a wind barb on every report that gives wind direction and speed.</p></div>
+    <div class="card"><h3>Flights, not just points</h3><p>History is divided into the flights the aircraft flew, from the flight numbers in its messages and on its ADS-B callsign, with origin and destination where the aircraft reports them.</p></div>
+    <div class="card"><h3>Every message, decoded</h3><p>A timeline of everything received, decoded where possible and kept raw always. Click a dot to find its message; click a message to see its dot.</p></div>
+  </div>
+
+  <h2>Run it yourself</h2>
+  <p>FullFlight is a single Go program with a SQLite database and a web page. It runs on your own machine and watches the aircraft you ask it to.</p>
+<pre>brew install cmake pkgconf jansson   # macOS
+make libacars                        # builds libacars into third_party/
+make build                           # -> bin/fullflight
+cp config.example.yaml config.yaml   # edit; then:
+bin/fullflight -config config.yaml</pre>
+  <p>Then type a registration, hex code, or flight number and date into the page. The <a href="https://github.com/avanha/FullFlight#readme">README</a> describes the watch list, the data sources and each map layer in detail.</p>
+
+  <footer>
+    FullFlight is a personal project. Positions come from volunteer ADS-B networks and airframes.io; weather imagery from RainViewer and NASA GIBS; map tiles from OpenStreetMap. Not for navigation or operational use.
+  </footer>
+</div>
+</body>
+</html>

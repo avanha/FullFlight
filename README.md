@@ -5,6 +5,10 @@ positions (adsb.lol, adsb.fi) with ACARS/ADS-C/CPDLC datalink messages
 (airframes.io), decoded with libacars. See `HANDOFF.md` for the design and
 `docs/airframes-api.md` for API findings.
 
+[![FullFlight tracking an A359 over the Andaman Sea](docs/screenshot.png)](https://avanha.github.io/FullFlight/)
+
+**[Home page](https://avanha.github.io/FullFlight/)**
+
 ## Build and run
 
     brew install cmake pkgconf jansson   # macOS; libxml2/zlib come with the SDK
