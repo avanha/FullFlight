@@ -82,6 +82,7 @@ func parse(id string) (ident, bool) {
 	if m == nil || strings.Trim(m[2], "0") == "" {
 		return ident{}, false
 	}
+	m[1] = airlines.Canonical(m[1]) // UPS writes UP65 for the flight whose callsign is UPS65
 	x := ident{airline: m[1], num: m[2]}
 	x.icao, x.iata = airlines.Forms(m[1] + m[2])
 	x.display = m[1] + m[2]

@@ -27,6 +27,20 @@ var icaoByIATA = map[string]string{
 	"PO": "PAC", "K4": "CKS", "QY": "BCS",
 }
 
+// acarsAlias maps the two-letter prefix some operators put in front of the flight number in their ACARS messages
+// ("UP65" for UPS flight 65, whose IATA designator is 5X) to the designator in icaoByIATA. The prefix is not
+// a designator that is valid for them (UP is Bahamasair's), so it is only read this way where one aircraft's own
+// messages are being compared.
+var acarsAlias = map[string]string{"UP": "5X"}
+
+// Canonical returns the designator in icaoByIATA that an ACARS flight prefix stands for, or code unchanged.
+func Canonical(code string) string {
+	if c, ok := acarsAlias[strings.ToUpper(code)]; ok {
+		return c
+	}
+	return code
+}
+
 var icaoSet = func() map[string]bool {
 	m := make(map[string]bool, len(icaoByIATA))
 	for _, v := range icaoByIATA {

@@ -101,6 +101,14 @@ func TestParseAndSame(t *testing.T) {
 	if a.iata != "CX113" || a.icao != "CPA113" || a.display != "CX113" {
 		t.Errorf("forms = %+v", a)
 	}
+	// UPS flight 65 is "UP65" in its messages, "UPS65" as a callsign and 5X65 in the schedule: one flight
+	up1, _ := parse("UP65")
+	up2, _ := parse("UPS0065")
+	up3, _ := parse("5X65")
+	up4, _ := parse("UP66")
+	if !same(up1, up2) || !same(up2, up3) || same(up1, up4) || up1.display != "5X65" {
+		t.Errorf("UP65 / UPS0065 / 5X65: %v %v %v display %q", same(up1, up2), same(up2, up3), same(up1, up4), up1.display)
+	}
 	// an airline we have no table entry for: the 3- and 2-letter codes with one initial are taken as one
 	u1, _ := parse("ABC123")
 	u2, _ := parse("AB123")
