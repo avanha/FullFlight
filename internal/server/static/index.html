@@ -336,6 +336,12 @@ function openNotes(w) {
 $('#notesclose').onclick = () => { $('#notespanel').hidden = true; };
 
 // Tooltip content as DOM nodes: message text comes off the radio and must never be parsed as HTML.
+// A REP081 summary already carries the weather ("REP081 VHHH\u2192YSSY 12.345N 150.000E FL380, OAT -52.0\u00b0C, wind
+// 270\u00b0/80kt"): in a hover it is broken at the OAT, and the weather line is not repeated underneath.
+function hoverSummary(m) {
+  const i = m.summary.indexOf(', OAT ');
+  return i < 0 ? {lines: [m.summary], hasWx: false} : {lines: [m.summary.slice(0, i), m.summary.slice(i + 2)], hasWx: true};
+}
 function wxLine(m) {
   const w = m.wx;
   if (!w) return '';
@@ -994,7 +1000,8 @@ async function showTrack(w, focus) {
       opacity: isOlder(Date.parse(reportTime(m))) ? .4 : 1,
       fillOpacity: m.time_unverified ? .2 : isOlder(Date.parse(reportTime(m))) ? .3 : .8, dashArray: m.time_unverified ? '2 2' : null,
     }).addTo(src ? src.group : layer);
-    mk.bindTooltip(tip(m.summary, fmtAgo(m.pos_t || m.t), motionLine(m), wxLine(m), m.suspect ? '⚠ ' + m.suspect : '', m.time_unverified ? '⏱ time unverified' : ''));
+    const hs = hoverSummary(m);
+    mk.bindTooltip(tip(...hs.lines, fmtAgo(m.pos_t || m.t), motionLine(m), hs.hasWx ? '' : wxLine(m), m.suspect ? '⚠ ' + m.suspect : '', m.time_unverified ? '⏱ time unverified' : ''));
     mk.on('click', () => pickMessage(m.id));   // clicking a dot selects its message in the list
     if (!m.suspect) drawWindBarb(m, src ? src.color : '#e8590c', isOlder(Date.parse(reportTime(m))));
     markers.set(m.id, mk);
@@ -1013,7 +1020,7 @@ async function showTrack(w, focus) {
   } else if (cur) {
     const m = cur.ref;
     placePlane(m.lat, m.lon, m.trk, cur.t, !!w.landing)
-      .bindTooltip(tip(`${aircraftName(w, null, false)}: last report`, m.summary, fmtAgo(m.pos_t || m.t), motionLine(m), wxLine(m), 'no newer ADS-B', fixNote(w, Date.now() - cur.t)))
+      .bindTooltip(tip(`${aircraftName(w, null, false)}: last report`, ...hoverSummary(m).lines, fmtAgo(m.pos_t || m.t), motionLine(m), hoverSummary(m).hasWx ? '' : wxLine(m), 'no newer ADS-B', fixNote(w, Date.now() - cur.t)))
       .on('click', () => pickMessage(m.id));
   }
 
