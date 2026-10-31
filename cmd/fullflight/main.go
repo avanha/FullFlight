@@ -126,6 +126,7 @@ func main() {
 
 	afClient := airframes.NewClient()
 	adsbClient := adsb.NewClient(sources...)
+	adsbClient.Spread = *cfg.ADSB.Spread
 	adsbClient.OnPause = func(source string, status int, until time.Time) {
 		log.Warn("adsb source refused us; leaving it alone", "source", source, "http", status, "until", until.UTC().Format("15:04:05Z"))
 	}

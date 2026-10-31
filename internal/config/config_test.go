@@ -34,3 +34,13 @@ func TestDurations(t *testing.T) {
 		t.Fatalf("%+v %v", c, err)
 	}
 }
+
+func TestSpreadDefaultsOn(t *testing.T) {
+	c, err := load(t, "{}")
+	if err != nil || c.ADSB.Spread == nil || !*c.ADSB.Spread {
+		t.Fatalf("default: %v %v", c.ADSB.Spread, err)
+	}
+	if c, err = load(t, "adsb: {sources: [adsb.lol], spread: false}"); err != nil || *c.ADSB.Spread {
+		t.Errorf("spread: false not honoured: %v %v", c.ADSB.Spread, err)
+	}
+}

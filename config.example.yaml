@@ -8,6 +8,8 @@ auth:                          # HTTP basic auth; leave empty only on loopback
 
 adsb:
   sources: [adsb.lol, adsb.fi] # tried in order; first to answer wins
+  spread: true                 # take turns at being asked first, so each source carries a share of the load
+                               # (false: always the first in the list; airplanes.live is always last)
   # airplanes.live can be added at the end once its operators have given you access (api.airplanes.live
   # answers 403 until then; a source that refuses us is left alone for an hour).
 

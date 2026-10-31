@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -19,6 +20,8 @@ type Source struct {
 	Name    string
 	BaseURL string // e.g. https://api.adsb.lol/v2
 	RegPath string // "reg" (adsb.lol) or "registration" (adsb.fi)
+	// FallbackOnly keeps a source out of the rotation (see Client.Spread): it is only asked after the others.
+	FallbackOnly bool
 }
 
 var (
@@ -27,7 +30,7 @@ var (
 	// AirplanesLive answers the same queries (GET /v2/hex/{hex}, /callsign/{cs}, /reg/{reg}, /point/...). Its
 	// operators have asked to be contacted for access (it has answered 403 to requests without it), so it is
 	// only used when named in the configuration.
-	AirplanesLive = Source{Name: "airplanes.live", BaseURL: "https://api.airplanes.live/v2", RegPath: "reg"}
+	AirplanesLive = Source{Name: "airplanes.live", BaseURL: "https://api.airplanes.live/v2", RegPath: "reg", FallbackOnly: true}
 )
 
 // A source that refuses us is left alone for a while rather than asked again with every poll.
@@ -108,11 +111,16 @@ type Client struct {
 	HTTP       *http.Client
 	MinSpacing time.Duration // between requests to the same source; default 1.1s
 	UserAgent  string
+	// Spread rotates which source is asked first, one query after another, instead of always starting with the
+	// first in the list: each carries a share of the load, and the others still back it up. Sources marked
+	// FallbackOnly stay at the end.
+	Spread bool
 
 	Now func() time.Time // for tests; default time.Now
 	// OnPause, if set, is told when a source is paused: which, the HTTP status that caused it, and until when.
 	OnPause func(source string, status int, until time.Time)
 
+	turn    atomic.Uint32 // counts queries, to rotate the first source
 	mu      sync.Mutex
 	next    map[string]time.Time
 	blocked map[string]pause // source name -> why and until when
@@ -165,11 +173,31 @@ func (c *Client) Reg(ctx context.Context, reg string) ([]Aircraft, error) {
 	return c.query(ctx, func(s Source) string { return "/" + s.RegPath + "/" + url.PathEscape(strings.ToUpper(reg)) })
 }
 
+// order is the sources in the order to ask them for one query.
+func (c *Client) order() []Source {
+	if !c.Spread || len(c.Sources) < 2 {
+		return c.Sources
+	}
+	var front, back []Source
+	for _, s := range c.Sources {
+		if s.FallbackOnly {
+			back = append(back, s)
+		} else {
+			front = append(front, s)
+		}
+	}
+	if len(front) > 1 {
+		k := int(c.turn.Add(1)-1) % len(front)
+		front = append(append([]Source{}, front[k:]...), front[:k]...)
+	}
+	return append(front, back...)
+}
+
 func (c *Client) query(ctx context.Context, path func(Source) string) ([]Aircraft, error) {
 	var errs []error
 	var merged []Aircraft
 	answered := false
-	for _, s := range c.Sources {
+	for _, s := range c.order() {
 		ac, err := c.get(ctx, s, path(s))
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", s.Name, err))

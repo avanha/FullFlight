@@ -287,3 +287,54 @@ func TestAirplanesLiveSource(t *testing.T) {
 		t.Errorf("%+v", AirplanesLive) // GET https://api.airplanes.live/v2/reg/{reg}, per its API reference
 	}
 }
+
+// With Spread the sources take turns at being asked first, so each carries a share of the load; a source that
+// is FallbackOnly (airplanes.live) is only asked when the others could not give a complete answer.
+func TestSpreadRotatesTheFirstSource(t *testing.T) {
+	complete := `{"ac":[{"hex":"86d646","flight":"TZP1","lat":35,"lon":140,"seen_pos":1}],"msg":"No error"}`
+	empty := `{"ac":[],"msg":"No error"}`
+	hits := map[string]int{}
+	srv := func(name, body string) Source {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits[name]++
+			w.Write([]byte(body))
+		}))
+		t.Cleanup(s.Close)
+		return Source{Name: name, BaseURL: s.URL, RegPath: "reg"}
+	}
+	a, b, fb := srv("a", complete), srv("b", complete), srv("fallback", complete)
+	fb.FallbackOnly = true
+	c := NewClient(fb, a, b) // the fallback is listed first, and still goes last
+	c.MinSpacing = time.Millisecond
+	c.Spread = true
+	for i := 0; i < 10; i++ {
+		if ac, err := c.Hex(context.Background(), "86d646"); err != nil || len(ac) != 1 {
+			t.Fatalf("%v %v", ac, err)
+		}
+	}
+	if hits["a"] != 5 || hits["b"] != 5 || hits["fallback"] != 0 {
+		t.Errorf("hits = %v, want 5 and 5 and none for the fallback", hits)
+	}
+
+	// When neither can give a complete answer the fallback is asked too, and the answers are merged.
+	hits = map[string]int{}
+	a2, b2 := srv("a2", empty), srv("b2", empty)
+	c = NewClient(a2, b2, fb)
+	c.MinSpacing = time.Millisecond
+	c.Spread = true
+	ac, err := c.Hex(context.Background(), "86d646")
+	if err != nil || len(ac) != 1 || ac[0].Source != "fallback" || hits["a2"] != 1 || hits["b2"] != 1 || hits["fallback"] != 1 {
+		t.Errorf("%v %v hits %v", ac, err, hits)
+	}
+
+	// Without Spread the list is followed in order, as before.
+	hits = map[string]int{}
+	c = NewClient(a, b)
+	c.MinSpacing = time.Millisecond
+	for i := 0; i < 4; i++ {
+		c.Hex(context.Background(), "86d646")
+	}
+	if hits["a"] != 4 || hits["b"] != 0 {
+		t.Errorf("no spread: %v", hits)
+	}
+}

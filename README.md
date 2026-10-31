@@ -146,12 +146,19 @@ followed by callsign can be re-added by registration.
 
 ## ADS-B sources
 
-The configured sources are asked in order, but an empty answer is not final: sources hear
-different parts of the sky, so the next one is asked, and the results are merged (fresher
-position wins; a missing callsign, registration or type is filled in from the other). A
-complete answer (a position under 20 s old and a callsign) stops the search, so the second
-source costs nothing while the first has the aircraft. A source that errors is skipped while
-another answers.
+Each query is answered by the first source that gives a complete answer (a position under 20 s old and a
+callsign). An empty or incomplete answer is not final: sources hear different parts of the sky, so the next one is
+asked and the results are merged (fresher position wins; a missing callsign, registration or type is filled in from
+the other). A source that errors is skipped while another answers.
+
+To share the load, the sources take turns at being asked first (`adsb.spread`, on by default; off means the first
+in the list always goes first). `airplanes.live`, which needs its operators' permission, is never in the rotation: it
+is only asked after the others.
+
+The feeds rate-limit, so we go gently: at most about one request a second to each source, an aircraft that has not
+been heard from for 5 minutes is polled every 3 minutes instead of every 45 s, and a source that answers 401/403
+(not allowed) is left alone for an hour, 429 (slow down) for 30 s or its `Retry-After`. Each pause is logged once
+with the HTTP status.
 
 ## Airframes and notes
 

@@ -21,6 +21,9 @@ type Config struct {
 
 	ADSB struct {
 		Sources []string `yaml:"sources"` // "adsb.lol", "adsb.fi", "airplanes.live" (needs its operators' permission); tried in order
+		// Spread rotates which source is asked first so each carries a share of the load (default true). With
+		// false the first is always asked first. airplanes.live is always last either way.
+		Spread *bool `yaml:"spread"`
 	} `yaml:"adsb"`
 
 	// AeroDataBox is the optional fallback for finding a flight by number when ADS-B has lost it, such as
@@ -61,6 +64,10 @@ func Load(path string) (*Config, error) {
 	}
 	if c.Navdata.Dir == "" {
 		c.Navdata.Dir = "data/navdata"
+	}
+	if c.ADSB.Spread == nil {
+		on := true
+		c.ADSB.Spread = &on
 	}
 	if len(c.ADSB.Sources) == 0 {
 		c.ADSB.Sources = []string{"adsb.lol", "adsb.fi"}
