@@ -309,6 +309,19 @@ for an aircraft on the ground or outside 100-700 kt, and it stops at a known des
 set, else a recent REP081 one) rather than flying past it. The look-ahead past now (off, 15, 30 or 60 min)
 is the selector under the watch list. It does not know about turns or weather deviations.
 
+**The plane shows how stale its fix is**, in steps that follow what the projection does with it, with a badge giving
+the age of the fix (`7m`, `2.5h`) that keeps counting between refreshes:
+
+| age of the newest fix | plane | meaning |
+|---|---|---|
+| under 3 min | red | live; no ghost needed |
+| 3 min | red, age badge | the estimated-position ghost is drawn ahead of it |
+| 15 min | orange-red | the estimate is getting less certain |
+| 30 min | amber-brown | the estimate is a long extrapolation |
+| 60 min | grey, dashed ring | too old to project from: no ghost, no look-ahead |
+
+The plane's hover says which step it is in. (Whether the look-ahead is switched off is a separate setting.)
+
 ## Web page
 
 Choosing a watch centres the map (zoom 7) on that aircraft's newest trustworthy

@@ -65,6 +65,12 @@
   .fixpin { width: 10px; height: 10px; margin: 3px; transform: rotate(45deg); box-sizing: content-box; }
   .fixpin.learned { background: #c2255c; border: 2px solid #fff; box-shadow: 0 0 0 2px #c2255c; }
   .fixpin.db { background: #fff; border: 2px solid #6c757d; }
+  .agebadge { position: absolute; left: 50%; top: 27px; transform: translateX(-50%); font: 10px/12px system-ui, sans-serif; padding: 0 3px;
+              border-radius: 3px; background: rgba(255,255,255,.92); border: 1px solid #bbb; color: #555; white-space: nowrap; pointer-events: none; }
+  .agebadge.s2 { color: #d9480f; border-color: #d9480f; }
+  .agebadge.s3 { color: #8a5a12; border-color: #a8793a; }
+  .agebadge.s4 { color: #555; border: 1px dashed #868e96; font-style: italic; }
+  .agering { position: absolute; left: -3px; top: -3px; width: 30px; height: 30px; border: 2px dashed #868e96; border-radius: 50%; pointer-events: none; }
   .plane svg { display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
   #clock { position: fixed; top: 8px; right: 8px; z-index: 1000; padding: 3px 8px; border-radius: 4px;
            background: rgba(255,255,255,.9); border: 1px solid #aaa; font: 13px ui-monospace, monospace; }
@@ -88,7 +94,7 @@
   <p class="hint" style="margin:8px 0 0"><label>Flights: <select id="flightsel" style="max-width:100%"><option value="recent">no flights identified yet</option></select></label></p>
   <p class="hint" style="margin:8px 0 0"><label>Projection: look ahead
     <select id="ahead"><option value="0">off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></label>
-    <span title="Dead reckoning from the newest fix. Never from a fix over an hour old, never more than 90 minutes from the fix, never past a known destination.">ⓘ</span></p>
+    <span title="Dead reckoning from the newest fix. Never from a fix over an hour old, never more than 90 minutes from the fix, never past a known destination. As its newest fix ages the plane fades and shows the age of the fix; at an hour old it is ringed and no estimate is drawn.">ⓘ</span></p>
   <h4>Messages</h4>
   <div id="msgs"><div class="empty">Select a watch that has an aircraft.</div></div>
   </div>
@@ -331,23 +337,28 @@ function trend(pts) {
 }
 
 // What to show when hovering the aircraft: callsign, altitude and trend, speed and track, time and source.
-function aircraftTip(w, pts) {
+function aircraftTip(w, pts, fixMs) {
   const p = pts[pts.length - 1];
   const alt = p.on_ground ? 'on the ground' : p.alt_ft != null ? `${num(p.alt_ft)} ft` : 'altitude unknown';
   const t = p.on_ground ? '' : trend(pts);
   const motion = [p.gs != null ? `${num(p.gs)} kt` : '', p.track != null ? `track ${Math.round(p.track)}°` : ''].filter(Boolean).join(' · ');
   const dest = w.route && !w.route.stale ? `${w.route.from ? w.route.from + ' → ' : '→ '}${w.route.to}` : '';
-  return tip(aircraftName(w, p.callsign), dest, [alt, t].filter(Boolean).join('  '), motion, `${fmtAgo(p.t)} (${p.source})`);
+  return tip(aircraftName(w, p.callsign), dest, [alt, t].filter(Boolean).join('  '), motion, `${fmtAgo(p.t)} (${p.source})`, staleNote(Date.now() - (fixMs ?? Date.parse(p.t))));
 }
 
 // An aeroplane silhouette (Material "airplanemode_active", nose up), turned to the track.
 const PLANE_PATH = 'M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z';
-function planeIcon(track, {fill = '#c00', opacity = 1} = {}) {
+// ageMs: how old the fix the plane stands on is. An old one fades through AGE_STEPS and shows its age.
+function planeIcon(track, {fill = '#c00', opacity = 1, ageMs = null} = {}) {
   const deg = Number.isFinite(Number(track)) ? Number(track) : 0;
+  const step = ageMs == null ? null : ageStep(ageMs);
+  if (step) { fill = step.fill; opacity = step.op; }
   return L.divIcon({
     className: 'plane', iconSize: [30, 30], iconAnchor: [15, 15],
-    html: `<svg viewBox="0 0 24 24" width="30" height="30" style="transform: rotate(${deg}deg); opacity: ${Number(opacity)}">` +
-          `<path d="${PLANE_PATH}" fill="${fill}" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/></svg>`,
+    html: (step && step.ring ? '<span class="agering"></span>' : '') +
+          `<svg viewBox="0 0 24 24" width="30" height="30" style="transform: rotate(${deg}deg); opacity: ${Number(opacity)}">` +
+          `<path d="${PLANE_PATH}" fill="${fill}" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/></svg>` +
+          (step ? `<span class="agebadge s${step.n}">${ago(Date.now() - ageMs).replace(' ago', '')}</span>` : ''),
   });
 }
 
@@ -391,6 +402,31 @@ function drawWaypoints(msgs) {
 // live); only an older one gets the estimated-position ghost drawn ahead of it.
 const PROJ = {maxFixAgeMin: 60, maxSpanMin: 90, minGs: 100, maxGs: 700, tickMin: 10, ghostAfterSec: 180, destSlackDeg: 35,
   planSlackNM: 60, planSlackDeg: 70};   // follow the filed route only if the fix is within this of it, heading roughly along it
+// How stale the plane's newest fix is, in steps that follow what the page does with an old fix: under 3
+// minutes it is live; then a dead-reckoned ghost is drawn ahead of it; once it is an hour old there is
+// no projection at all. The plane fades towards grey and carries the fix's age as a badge.
+const AGE_STEPS = [
+  {n: 1, min: 3, fill: '#c00', op: 1, note: 'fix over 3 min old: an estimated position is drawn ahead of it'},
+  {n: 2, min: 15, fill: '#d9480f', op: .9, note: 'fix over 15 min old: the estimate is getting less certain'},
+  {n: 3, min: 30, fill: '#a8793a', op: .8, note: 'fix over 30 min old: the estimate is a long extrapolation'},
+  {n: 4, min: PROJ.maxFixAgeMin, fill: '#868e96', op: .65, ring: true, note: `fix over ${PROJ.maxFixAgeMin} min old: too old to project from, so no estimate is drawn`},
+];
+const ageStep = ageMs => AGE_STEPS.filter(s => ageMs >= s.min * 60000).pop() || null;
+const staleNote = ageMs => (ageStep(ageMs) || {}).note || '';
+let planeMark = null;   // the plane at the newest fix: {marker, track, t, html}
+// Put the plane on the map at a fix of time t (ms).
+function placePlane(lat, lon, track, t) {
+  const icon = planeIcon(track, {ageMs: Date.now() - t});
+  const marker = L.marker(ll(lat, lon), {icon, zIndexOffset: 1000}).addTo(layer);
+  planeMark = {marker, track, t, html: icon.html};
+  return marker;
+}
+// The map is redrawn every 30 s but the plane ages every second: bring its icon up to date.
+function refreshPlaneAge() {
+  if (!planeMark) return;
+  const icon = planeIcon(planeMark.track, {ageMs: Date.now() - planeMark.t});
+  if (icon.html !== planeMark.html) { planeMark.marker.setIcon(icon); planeMark.html = icon.html; }
+}
 let aheadMin = 30, lastData = null, lastTrack = {pts: [], msgs: []};
 try { const v = localStorage.getItem('aheadMin'); if (['0', '15', '30', '60'].includes(v)) aheadMin = Number(v); } catch (e) { /* no storage: keep the default */ }
 const RAD = Math.PI / 180;
@@ -639,6 +675,7 @@ function pointTip(p) {
 }
 
 function drawProjection() {
+  refreshPlaneAge();
   projGroup.clearLayers();
   if (!lastData) return;
   const p = projection(lastData.w, lastData.pts, lastData.msgs, Date.now(), aheadMin, lastData.plan);
@@ -771,6 +808,7 @@ async function showTrack(w, focus) {
   if (!w.hex) {
     // A target not yet matched to an aircraft has nothing to show, and nothing of the previous target may stay.
     ++showSeq;   // a fetch for the previous target still in flight must not draw over this
+    planeMark = null;
     layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); planGroup.clearLayers(); bridgeGroup.clearLayers(); highlight.clearLayers();
     Object.values(SOURCES).forEach(src => src.group.clearLayers());   // the report dots and each source's track
     lastData = null; lastTrack = {pts: [], msgs: []}; drawProjection(); markers.clear(); renderMessages([]);
@@ -794,6 +832,7 @@ async function showTrack(w, focus) {
   const current = !chosen || chosen.latest;   // the plane and the projection only make sense for the flight in progress
   if (focus || lonRef === null) { const f0 = latestFix(pts, msgs); lonRef = f0 ? f0.lon : (lonRef ?? 0); }
   layer.clearLayers();
+  planeMark = null;
   Object.values(SOURCES).forEach(src => src.group.clearLayers());
   wptGroup.clearLayers();
   predGroup.clearLayers();
@@ -850,12 +889,11 @@ async function showTrack(w, focus) {
   // A plane standing on a report is that report: clicking it selects the message.
   const cur = current ? latestFix(pts, msgs) : null;
   if (cur && cur.kind === 'adsb') {
-    L.marker(ll(cur.lat, cur.lon), {icon: planeIcon(cur.ref.track), zIndexOffset: 1000}).addTo(layer)
-      .bindTooltip(aircraftTip(w, pts));
+    placePlane(cur.lat, cur.lon, cur.ref.track, cur.t).bindTooltip(aircraftTip(w, pts, cur.t));
   } else if (cur) {
     const m = cur.ref;
-    L.marker(ll(m.lat, m.lon), {icon: planeIcon(m.trk), zIndexOffset: 1000}).addTo(layer)
-      .bindTooltip(tip(`${aircraftName(w, null, false)}: last report`, m.summary, fmtAgo(m.pos_t || m.t), motionLine(m), wxLine(m), 'no newer ADS-B'))
+    placePlane(m.lat, m.lon, m.trk, cur.t)
+      .bindTooltip(tip(`${aircraftName(w, null, false)}: last report`, m.summary, fmtAgo(m.pos_t || m.t), motionLine(m), wxLine(m), 'no newer ADS-B', staleNote(Date.now() - cur.t)))
       .on('click', () => pickMessage(m.id));
   }
 
