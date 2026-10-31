@@ -411,7 +411,7 @@ Where the aircraft went quiet and was next heard from, a dotted grey line joins 
 ADS-B, or a hole in ADS-B coverage. It follows the filed route when the plan covers both fixes (bending at its
 waypoints), else it is a straight line; hover for the two fixes, the time and the distance. It is drawn only for a silence of 5
 minutes to 3 hours between trustworthy fixes of one flight, never across an impossible speed, and not where the two fixes
-are already one continuous track (the same source within its usual interval). It has its own legend entry
+are already one continuous track (in the unified view, within the sparser source's usual interval; by source, the same source within its own). It has its own legend entry
 ("Estimated path").
 
 The ADS-B track has a small hoverable dot every 2.5 minutes and 6 nm or so (a point is kept only if it is at least that far in
@@ -477,11 +477,17 @@ Targets shows the target you have selected, and each header counts what is in it
 choosing a message on the map opens Messages if it is folded.
 
 Choosing a watch centres the map (zoom 7) on that aircraft's newest trustworthy
-fix, from ADS-B or a datalink message, whichever is later. Each position source has its own track
-and colour (ADS-B blue, ADS-C orange, CPDLC purple, REP081 teal, FMS green, ACMF crimson) with a
-legend to switch them on and off. A track is broken, not bridged, across a long
-silence (ADS-B 20 min, ADS-C 90, CPDLC 150, REP081 90, FMS 60, ACMF 40) or an impossible
-jump (over 700 kt), and positions flagged impossible are left out. Click a dot on the map and its message is selected in the list (and scrolled to); click a message that
+fix, from ADS-B or a datalink message, whichever is later. By default one **unified track** runs through every
+plausible position, ADS-B and datalink reports together, in time order. Each source keeps its colour (ADS-B blue, ADS-C
+orange, CPDLC purple, REP081 teal, FMS green, ACMF crimson): where the source changes, the join takes the first source's
+colour up to its midpoint and the next one's from there, so a report is flanked by its own colour on both sides. Positions
+flagged impossible, or with an unverified time, are left out, as is a lone fix that no neighbour agrees with, and a report
+with ADS-B within 3 minutes on both sides keeps its dot but not its line (ADS-B is denser and more exact). A silence
+longer than the sparser of the two sources allows (ADS-B 20 min, ADS-C 90, CPDLC 150, REP081 90, FMS 60, ACMF 40) or
+an impossible jump (over 700 kt) ends the solid line; the dotted grey estimate takes over across a silence. The legend
+shows each source as its dot with a line out of each side, and has two radio buttons: **Unified track** or **Track by
+source** (a line per source in its own dash style, broken at that source's own silences). The choice is remembered. A
+source's checkbox shows or hides its dots, and in the unified view takes its fixes out of the line too. Click a dot on the map and its message is selected in the list (and scrolled to); click a message that
 has a position (orange bar on its left) to ring it on the map and show its popup
 (only one popup is ever open); the map pans only if it is out of view. Position messages are listed at the time the report carries, with a dotted underline, and the list is ordered by the time shown; hover for both times and the gap between them (one station logs about 3 minutes before the time inside its messages). Other messages show when they arrived. Hover any message time for its age.
 The aircraft is drawn as a plane turned to its track; hovering it shows altitude,

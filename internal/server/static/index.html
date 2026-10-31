@@ -29,6 +29,12 @@
   .info { color: #667; cursor: help; align-self: center; font-size: 15px; }
   .acc:not(.open) .accbody, .acc:not(.open) .acccontrols { display: none; }
   #map { height: 100%; }
+  .lg { display: inline-flex; align-items: center; vertical-align: middle; margin-right: 3px; }
+  .lg i { display: inline-block; box-sizing: content-box; }
+  .lg .st { width: 8px; height: 0; border-top: var(--w, 2px) solid currentColor; }
+  .lg .dot { width: 5px; height: 5px; border-radius: 50%; border: 1.5px solid currentColor; background: currentColor; }
+  .lg .dot.hollow { background: #fff; }
+  body.bysource .lg .st { border-top-style: var(--dash, solid); }   /* the by-source view draws each source in its own dash */
   form { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
   input[name=input] { flex: 1 1 100%; padding: 6px; }
   input[name=until] { flex: 1; padding: 6px; }
@@ -203,13 +209,27 @@ const SOURCES = {
   lookup:       {name: 'AeroDataBox', color: '#6c757d', dash: '1 6', weight: 2, gapMin: 180},
 };
 for (const src of Object.values(SOURCES)) src.group = L.layerGroup().addTo(map);
-L.control.layers(null, Object.fromEntries(Object.values(SOURCES).map(src =>
-  [`<span style="color:${src.color};font-weight:bold">&#9472;&#9472;</span> ${src.name}`, src.group])),
+// A legend glyph: the report's dot with the line running out of each side, as the unified track draws it. (The by-source
+// view dashes the stubs to match that source's line.)
+const cssDash = d => !d ? 'solid' : d.split(' ')[0] <= 2 && d.split(' ').length === 2 ? 'dotted' : 'dashed';
+const legendGlyph = (src, hollow) => `<span class="lg" style="color:${src.color};--w:${src.weight}px;--dash:${cssDash(src.dash)}"><i class="st"></i><i class="dot${hollow ? ' hollow' : ''}"></i><i class="st"></i></span>`;
+// How the tracks are drawn: one line through every plausible report ("unified"), or a line per source. The two radio
+// buttons at the top of the legend are layers only so that the layers control gives them radio buttons.
+const TRACK_MODES = {unified: 'Unified track', source: 'Track by source'};
+let trackMode = 'unified';
+try { const v = localStorage.getItem('trackMode'); if (v in TRACK_MODES) trackMode = v; } catch (e) { /* no storage: keep the default */ }
+const modeGroups = Object.fromEntries(Object.keys(TRACK_MODES).map(k => [k, L.layerGroup()]));
+modeGroups[trackMode].addTo(map);
+document.body.classList.toggle('bysource', trackMode === 'source');
+L.control.layers(Object.fromEntries(Object.entries(TRACK_MODES).map(([k, name]) => [name, modeGroups[k]])),
+  Object.fromEntries(Object.entries(SOURCES).map(([key, src]) => [`${legendGlyph(src, key === 'adsb' || key === 'lookup')} ${src.name}`, src.group])),
   {collapsed: false, position: 'bottomleft'}).addTo(map);
 const wptGroup = L.layerGroup().addTo(map);   // waypoints named in CPDLC position reports
 const projGroup = L.layerGroup().addTo(map);  // dead-reckoned position and look-ahead
 const predGroup = L.layerGroup().addTo(map);  // what the selected report predicted: its route and next waypoints
 const planGroup = L.layerGroup().addTo(map);  // the filed flight plan: planned route and its fixes
+const trackGroup = L.layerGroup().addTo(map);   // the unified track: one line through every plausible report
+let trackCtx = null, srcLines = [];   // what the lines are drawn from (so they can be redrawn), and the by-source lines in their groups
 const bridgeGroup = L.layerGroup().addTo(map);  // estimated path across a silence between two fixes
 const windGroup = L.layerGroup().addTo(map);    // a wind barb on every report that gives wind direction and speed
 // ---- weather radar -------------------------------------------------------------------------------------
@@ -616,6 +636,16 @@ function drawWindBarb(m, color, faded) {
   L.marker(ll(m.lat, m.lon), {icon: L.divIcon({className: 'windbarb-wrap', iconSize: [BARB.size, BARB.size], iconAnchor: [BARB.size / 2, BARB.size / 2], html}),
                               interactive: false, keyboard: false, zIndexOffset: -100}).addTo(windGroup);
 }
+// Every report's barb, except those of a source unticked in the legend (the barb goes with the dot).
+function drawWindBarbs() {
+  windGroup.clearLayers();
+  if (!trackCtx) return;
+  for (const m of trackCtx.msgs) {
+    const src = SOURCES[m.kind];
+    if (m.lat == null || m.suspect || (src && !map.hasLayer(src.group))) continue;
+    drawWindBarb(m, src ? src.color : '#e8590c', isOlder(Date.parse(reportTime(m))));
+  }
+}
 const motionLine = m => [m.gs != null ? `${Math.round(m.gs)} kt` : '', m.trk != null ? `track ${Math.round(m.trk)}°` : ''].filter(Boolean).join(' · ');
 
 function tip(...lines) {
@@ -975,16 +1005,17 @@ function drawPlan(plan) {
 // straight. Fixes close together in time are one continuous track and need none.
 const BRIDGE = {minMin: 5};
 function estimatedPaths(pts, msgs, plan) {
-  const key = p => p.source === 'aerodatabox' ? 'lookup' : 'adsb';
-  const fixes = [
-    ...pts.map(p => ({lat: p.lat, lon: p.lon, t: Date.parse(p.t), key: key(p)})),
+  const unified = trackMode === 'unified';
+  const fixes = unified ? unifiedFixes(pts, msgs) : [
+    ...pts.map(p => ({lat: p.lat, lon: p.lon, t: Date.parse(p.t), key: ptKey(p)})),
     ...msgs.filter(m => m.lat != null && !m.suspect && !m.time_unverified).map(m => ({lat: m.lat, lon: m.lon, t: Date.parse(m.pos_t || m.t), key: m.kind})),
   ].filter(f => !Number.isNaN(f.t)).sort((a, b) => a.t - b.t);
   const out = [];
   for (let i = 0; i + 1 < fixes.length; i++) {
     const a = fixes[i], b = fixes[i + 1], dt = b.t - a.t;
     if (dt < BRIDGE.minMin * 60000 || dt > GHOST.maxGapMin * 60000) continue;
-    if (a.key === b.key && dt <= (SOURCES[a.key] ? SOURCES[a.key].gapMin : 90) * 60000) continue;   // already one solid track
+    // already one solid track: in the unified view whatever the two sources, otherwise only within one source
+    if (unified ? dt <= pairGapMin(a, b) * 60000 : a.key === b.key && dt <= (SOURCES[a.key] ? SOURCES[a.key].gapMin : 90) * 60000) continue;
     if (flightSegs.length > 1 && segOf(a.t) !== segOf(b.t)) continue;
     const nm = distNM(a.lat, a.lon, b.lat, b.lon);
     if (nm / (dt / 3600000) > PROJ.maxGs) continue;
@@ -999,6 +1030,108 @@ function estimatedPaths(pts, msgs, plan) {
   }
   return out;
 }
+
+// ---- the unified track ----------------------------------------------------------------------
+const ptKey = p => p.source === 'aerodatabox' ? 'lookup' : 'adsb';
+// How long a silence between two fixes still counts as one track: the sparser of the two sources sets the cadence.
+const pairGapMin = (a, b) => Math.max((SOURCES[a.key] || {gapMin: 90}).gapMin, (SOURCES[b.key] || {gapMin: 90}).gapMin);
+// A report within this long of ADS-B on both sides adds nothing to the line (ADS-B is denser and more exact, and a
+// report's rounded position and minute-resolution time would only make a zigzag in it): it keeps its dot but not its line.
+const UNIFIED = {adsbCoverMin: 3};
+const impossibleMove = (a, b) => { const dt = b.t - a.t, d = distNM(a.lat, a.lon, b.lat, b.lon); return dt <= 0 ? d > 20 : d / (dt / 3600000) > 700; };
+// Every fix the one line may run through, in time order: not flagged impossible, time not unverified, from a source that is
+// ticked in the legend, not made redundant by ADS-B, and not a lone outlier (a fix that is impossible from the last good one
+// while the next fix is fine from it is the odd one out; two in a row that disagree are a real jump).
+function unifiedFixes(pts, msgs) {
+  const on = key => { const src = SOURCES[key]; return !src || !src.group || map.hasLayer(src.group); };
+  let all = [
+    ...pts.map(p => ({lat: p.lat, lon: p.lon, t: Date.parse(p.t), key: ptKey(p)})),
+    ...msgs.filter(m => m.lat != null && !m.suspect && !m.time_unverified).map(m => ({lat: m.lat, lon: m.lon, t: Date.parse(m.pos_t || m.t), key: m.kind})),
+  ].filter(f => !Number.isNaN(f.t) && on(f.key)).sort((a, b) => a.t - b.t);
+  const adsb = all.filter(f => f.key === 'adsb').map(f => f.t), win = UNIFIED.adsbCoverMin * 60000;
+  let j = 0;
+  all = all.filter(f => {
+    if (f.key === 'adsb' || f.key === 'lookup') return true;
+    while (j < adsb.length && adsb[j] < f.t - win) j++;   // all is sorted by time, so j only moves forward
+    let before = false, after = false;
+    for (let k = j; k < adsb.length && adsb[k] <= f.t + win; k++) { if (adsb[k] <= f.t) before = true; else after = true; }
+    return !(before && after);
+  });
+  const out = [];
+  for (let i = 0; i < all.length; i++) {
+    const f = all[i], last = out[out.length - 1], next = all[i + 1];
+    if (last && impossibleMove(last, f) && next && !impossibleMove(last, next)) continue;
+    out.push(f);
+  }
+  return out;
+}
+// The unified track as runs of consecutive fixes, each in one source's colour. Where the source changes the edge is
+// split at its midpoint, so a report is flanked by its own colour on both sides. A run ends at a silence longer than
+// the pair allows (the dotted estimate takes over), an impossible move, or a change of flight.
+function unifiedRuns(fixes) {
+  const runs = [];
+  let cur = null;
+  const flightOf = f => (flightSegs.length > 1 && !chosenFlight() ? segOf(f.t) : 0);
+  const start = (f, pt = f) => { cur = {key: f.key, faded: flightSegs.length > 1 && !chosenFlight() && flightOf(f) !== flightSegs.length - 1, pts: [pt]}; runs.push(cur); };
+  for (let i = 0; i < fixes.length; i++) {
+    const f = fixes[i], a = fixes[i - 1];
+    if (!a || !cur || f.t - a.t > pairGapMin(a, f) * 60000 || impossibleMove(a, f) || flightOf(a) !== flightOf(f)) { start(f); continue; }
+    if (a.key === f.key) { cur.pts.push(f); continue; }
+    const mid = {lat: (a.lat + f.lat) / 2, lon: (lonU(a.lon) + lonU(f.lon)) / 2};
+    cur.pts.push(mid);
+    start(f, mid);
+    cur.pts.push(f);
+  }
+  return runs.filter(r => r.pts.length >= 2);
+}
+
+// Draws every track line for what showTrack last fetched, in the chosen mode, and the estimated paths across the silences.
+// The by-source lines live in their source's group (so unticking it hides them); the unified ones in trackGroup.
+function drawTrackLines() {
+  trackGroup.clearLayers();
+  for (const l of srcLines) l.group.removeLayer(l.line);
+  srcLines = [];
+  if (!trackCtx) { bridgeGroup.clearLayers(); return; }
+  const {pts, msgs, chosen, plan} = trackCtx;
+  const add = (group, line) => { line.addTo(group); if (line.bringToBack) line.bringToBack(); if (group !== trackGroup) srcLines.push({group, line}); };
+  if (trackMode === 'unified') {
+    for (const run of unifiedRuns(unifiedFixes(pts, msgs))) {
+      const src = SOURCES[run.key];
+      for (const part of trackParts(run.pts)) add(trackGroup, L.polyline(part, {color: src.color, weight: src.weight, opacity: run.faded ? .35 : .9}));
+    }
+  } else {
+    // A track per source. Lines run through each source's positions in time order, skipping ones flagged impossible.
+    const drawTrack = (key, fixes) => {
+      const src = SOURCES[key];
+      // flight by flight: a line never joins two flights, and the older ones are drawn fainter
+      const byFlight = new Map();
+      for (const f of fixes) { const i = flightSegs.length > 1 && !chosen ? segOf(f.t) : 0; if (!byFlight.has(i)) byFlight.set(i, []); byFlight.get(i).push(f); }
+      for (const [i, group] of byFlight) {
+        const faded = flightSegs.length > 1 && !chosen && i !== flightSegs.length - 1;
+        for (const seg of segments(group, src.gapMin)) {
+          for (const part of trackParts(seg)) add(src.group, L.polyline(part, {color: src.color, weight: src.weight, dashArray: src.dash, opacity: faded ? .35 : .9}));
+        }
+      }
+    };
+    const fixOf = p => ({lat: p.lat, lon: p.lon, t: new Date(p.t).getTime()});
+    drawTrack('adsb', pts.filter(p => p.source !== 'aerodatabox').map(fixOf));
+    drawTrack('lookup', pts.filter(p => p.source === 'aerodatabox').map(fixOf));   // the provider's own positions, e.g. over the ocean
+    const byKind = {};
+    for (const m of msgs) if (m.lat != null && SOURCES[m.kind] && !m.suspect) (byKind[m.kind] ||= []).push({lat: m.lat, lon: m.lon, t: new Date(m.pos_t || m.t).getTime()});
+    for (const [kind, fixes] of Object.entries(byKind)) drawTrack(kind, fixes);
+  }
+  drawEstimatedPaths(estimatedPaths(pts, msgs, plan), plan);
+}
+function setTrackMode(mode) {
+  if (mode === trackMode || !(mode in TRACK_MODES)) return;
+  trackMode = mode;
+  document.body.classList.toggle('bysource', mode === 'source');
+  try { localStorage.setItem('trackMode', mode); } catch (e) { /* not saved: fine */ }
+  drawTrackLines();
+}
+for (const [mode, g] of Object.entries(modeGroups)) g.on('add', () => setTrackMode(mode));
+// Ticking or unticking a source adds or removes its barbs, and in the unified view its fixes in the one line.
+for (const src of Object.values(SOURCES)) for (const ev of ['add', 'remove']) src.group.on(ev, () => { if (trackMode === 'unified' && trackCtx) drawTrackLines(); drawWindBarbs(); });
 
 function drawEstimatedPaths(paths, plan) {
   bridgeGroup.clearLayers();
@@ -1166,6 +1299,7 @@ async function showTrack(w, focus) {
     planeMark = null;
     layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); planGroup.clearLayers(); bridgeGroup.clearLayers(); windGroup.clearLayers(); highlight.clearLayers();
     Object.values(SOURCES).forEach(src => src.group.clearLayers());   // the report dots and each source's track
+    trackGroup.clearLayers(); srcLines = []; trackCtx = null;
     lastData = null; lastTrack = {pts: [], msgs: []}; drawProjection(); markers.clear(); renderMessages([]);
     flightSegs = []; syncFlightSelector();
     $('#notespanel').hidden = true;
@@ -1189,29 +1323,13 @@ async function showTrack(w, focus) {
   layer.clearLayers();
   planeMark = null;
   Object.values(SOURCES).forEach(src => src.group.clearLayers());
+  trackGroup.clearLayers(); srcLines = [];
   wptGroup.clearLayers();
   predGroup.clearLayers();
   windGroup.clearLayers();
   markers.clear();
 
-  // A track per source. Lines run through each source's positions in time order, skipping ones flagged impossible.
-  const drawTrack = (key, fixes) => {
-    const src = SOURCES[key];
-    // flight by flight: a line never joins two flights, and the older ones are drawn fainter
-    const byFlight = new Map();
-    for (const f of fixes) { const i = flightSegs.length > 1 && !chosen ? segOf(f.t) : 0; if (!byFlight.has(i)) byFlight.set(i, []); byFlight.get(i).push(f); }
-    for (const [i, group] of byFlight) {
-      const faded = flightSegs.length > 1 && !chosen && i !== flightSegs.length - 1;
-      for (const seg of segments(group, src.gapMin)) {
-        for (const part of trackParts(seg)) {
-          L.polyline(part, {color: src.color, weight: src.weight, dashArray: src.dash, opacity: faded ? .35 : .9}).addTo(src.group);
-        }
-      }
-    }
-  };
-  const fixOf = p => ({lat: p.lat, lon: p.lon, t: new Date(p.t).getTime()});
-  drawTrack('adsb', pts.filter(p => p.source !== 'aerodatabox').map(fixOf));
-  drawTrack('lookup', pts.filter(p => p.source === 'aerodatabox').map(fixOf));   // the provider's own positions, e.g. over the ocean
+  // (The track lines are drawn by drawTrackLines, once the plan is known.)
   for (const [key, group] of [['adsb', pts.filter(p => p.source !== 'aerodatabox')], ['lookup', pts.filter(p => p.source === 'aerodatabox')]]) {
     for (const p of thinPoints(group)) {
       const faded = isOlder(Date.parse(p.t));
@@ -1222,7 +1340,6 @@ async function showTrack(w, focus) {
 
   // Positions reported inside messages: a dot in the source's colour (grey if impossible, faint and dotted if
   // their time is unverified), and a track through them.
-  const byKind = {};
   for (const m of msgs) {
     if (m.lat == null) continue;
     const src = SOURCES[m.kind];
@@ -1234,11 +1351,8 @@ async function showTrack(w, focus) {
     const hs = hoverSummary(m);
     mk.bindTooltip(tip(...hs.lines, fmtAgo(m.pos_t || m.t), motionLine(m), hs.hasWx ? '' : wxLine(m), m.suspect ? '⚠ ' + m.suspect : '', m.time_unverified ? '⏱ time unverified' : ''));
     mk.on('click', () => pickMessage(m.id));   // clicking a dot selects its message in the list
-    if (!m.suspect) drawWindBarb(m, src ? src.color : '#e8590c', isOlder(Date.parse(reportTime(m))));
     markers.set(m.id, mk);
-    if (src && !m.suspect) (byKind[m.kind] ||= []).push({lat: m.lat, lon: m.lon, t: new Date(m.pos_t || m.t).getTime()});
   }
-  for (const [kind, fixes] of Object.entries(byKind)) drawTrack(kind, fixes);
   drawWaypoints(msgs);
   drawFlightFlags(pts, msgs, chosen);
 
@@ -1257,7 +1371,9 @@ async function showTrack(w, focus) {
 
   const plan = choosePlan(plans, chosen);
   drawPlan(plan);
-  drawEstimatedPaths(estimatedPaths(pts, msgs, plan), plan);
+  trackCtx = {pts, msgs, chosen, plan};
+  drawTrackLines();
+  drawWindBarbs();
   lastData = current ? {w, pts, msgs, plan} : null;
   lastTrack = {pts, msgs};
   drawProjection();

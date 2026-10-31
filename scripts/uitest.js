@@ -41,7 +41,7 @@ const mapObj = { setView(ll, z) { calls.setView.push([ll, z]); return this; }, e
 const L = {
   map: () => mapObj, tileLayer: () => ({ addTo() { return this; }, on() { return this; }, setUrl() { return this; } }),
   TileLayer: { extend: () => function () { return { addTo() { return this; }, on() { return this; }, setUrl() { return this; }, redraw() { return this; } }; } },
-  layerGroup() { const g = new Layer(); g.clearLayers = () => { g.items = []; }; groups.push(g); return g; },
+  layerGroup() { const g = new Layer(); g.clearLayers = () => { g.items = []; }; g.removeLayer = l => { g.items = g.items.filter(x => x !== l); }; groups.push(g); return g; },
   polyline(ll, o) { calls.polylines++; const l = new Layer(); l.ll = ll; l.o = o; calls.lines.push(l); return l; },
   control: { layers: (base, overlays) => ({ addTo() { if (!calls.legend) calls.legend = overlays; else calls.legendExtra = overlays; return this; } }) },
   circleMarker(ll, o) { const l = new Layer(); l.ll = ll; l.o = o; calls.circles.push(l); return l; },
@@ -51,7 +51,7 @@ const L = {
 // --- the server ---
 const planData = [];     // what /api/plan returns
 const flightData = [];   // what /api/flights returns; empty unless a test sets it
-const storage = {};
+const storage = {trackMode: 'source'};   // the older tests below look at the per-source lines; the unified track has its own (8c2)
 const watch = {id: 1, kind: 'tail', ident: 'B-LRM', start: '2026-10-30T10:00:00Z', end: '2026-11-01T00:00:00Z', status: 'tracking',
   hex: '780AB8', tail: 'B-LRM', type: 'A359', last_pos: {t: new Date().toISOString(), kind: 'ADS-B', lat: 40, lon: -100}};
 const pts = [{t: '2026-10-30T16:00:00Z', lat: 40, lon: -101, alt_ft: 35000, gs: 470, track: 90, vrate: 0, callsign: 'CPA843', source: 'adsb.lol'},
@@ -83,7 +83,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -280,6 +280,35 @@ highlightGroup = null;
   await lineOf([], [at2(0, 41, -105, 'cpdlc'), at2(10, 5, 5, 'cpdlc', {suspect: 'x'})]);
   const dots = calls.circles.filter(c => c.o.radius === 4);
   assert.deepStrictEqual(dots.map(c => c.o.color), [COLORS.cpdlc, '#888'], 'source colour, grey if impossible');
+
+  // 8c2. the unified track: one line through every plausible report, coloured by source, switched to from the legend
+  t.setTrackMode('unified');
+  assert.strictEqual(storage.trackMode, 'unified', 'the choice is remembered');
+  const rp = (mm, lat, kind, extra = {}) => at2(mm, lat, -100, kind, {t: `2026-10-30T16:${String(mm).padStart(2, '0')}:00Z`, ...extra});
+  // ADS-B handing over to ADS-C minutes later is one connected track, the colour changing half way along the join
+  r = await lineOf([ab(0, 40), ab(1, 40.1), ab(2, 40.2)], [rp(5, 40.3, 'adsc'), rp(10, 40.4, 'adsc')]);
+  assert.deepStrictEqual(r.map(x => [x.color, x.n]), [[COLORS.adsb, 4], [COLORS.adsc, 3]]);
+  assert.ok(Math.abs(r[0].ll[3][0] - 40.25) < 1e-9 && JSON.stringify(r[0].ll[3]) === JSON.stringify(r[1].ll[0]), 'both halves meet at the midpoint');
+  assert.strictEqual(r[0].dash, undefined, 'solid whatever the source');
+  assert.strictEqual(t.bridgeGroup.items.length, 0, 'close together: no dotted estimate');
+  // a report among ADS-B fixes keeps its dot but is left out of the line
+  r = await lineOf([ab(0, 40), ab(1, 40.1), ab(2, 40.2), ab(3, 40.3)], [rp(2, 40.25, 'adsc')]);
+  assert.deepStrictEqual(r.map(x => [x.color, x.n]), [[COLORS.adsb, 4]]);
+  // a source unticked in the legend leaves the line
+  t.SOURCES.adsb.group.onMap = false;
+  r = await lineOf([ab(0, 40), ab(1, 40.1), ab(2, 40.2)], [rp(5, 40.3, 'adsc'), rp(10, 40.4, 'adsc')]);
+  t.SOURCES.adsb.group.onMap = true;
+  assert.deepStrictEqual(r.map(x => [x.color, x.n]), [[COLORS.adsc, 2]]);
+  // a silence longer than ADS-B allows ends the solid line and gets the dotted estimate instead
+  r = await lineOf([ab(0, 40), ab(1, 40.1), ab(31, 40.5), ab(32, 40.6)], []);
+  assert.deepStrictEqual(r.map(x => x.n), [2, 2]);
+  assert.strictEqual(t.bridgeGroup.items.length, 1, 'dotted estimate across the silence');
+  // one wild report between good ones is skipped, not a break in the track
+  r = await lineOf([], [rp(0, 41, 'adsc'), rp(10, 41.1, 'adsc'), rp(15, 5, 'fms_position'), rp(20, 41.2, 'adsc')]);
+  assert.deepStrictEqual(r.map(x => [x.color, x.n]), [[COLORS.adsc, 3]]);
+  // ... and the by-source view is back with the radio button
+  t.setTrackMode('source');
+  assert.strictEqual(storage.trackMode, 'source');
 
   // 8d. a message from a source switched off in the legend turns that track back on when selected
   await t.showTrack(t.watches()[0], false);
