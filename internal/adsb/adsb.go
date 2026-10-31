@@ -32,8 +32,8 @@ var (
 
 // A source that refuses us is left alone for a while rather than asked again with every poll.
 const (
-	refusedFor = time.Hour       // HTTP 401 or 403: we are not allowed
-	tooManyFor = 5 * time.Minute // HTTP 429: slow down (a longer Retry-After is honoured, up to refusedFor)
+	refusedFor = time.Hour        // HTTP 401 or 403: we are not allowed
+	tooManyFor = 30 * time.Second // HTTP 429: slow down (a longer Retry-After is honoured, up to refusedFor)
 )
 
 // Aircraft is one entry of the "ac" array. Only fields we use are mapped.
@@ -110,10 +110,17 @@ type Client struct {
 	UserAgent  string
 
 	Now func() time.Time // for tests; default time.Now
+	// OnPause, if set, is told when a source is paused: which, the HTTP status that caused it, and until when.
+	OnPause func(source string, status int, until time.Time)
 
 	mu      sync.Mutex
 	next    map[string]time.Time
-	blocked map[string]time.Time // source name -> not before
+	blocked map[string]pause // source name -> why and until when
+}
+
+type pause struct {
+	until  time.Time
+	status int
 }
 
 func (c *Client) now() time.Time {
@@ -123,14 +130,19 @@ func (c *Client) now() time.Time {
 	return time.Now()
 }
 
-// block leaves a source alone for d.
-func (c *Client) block(name string, d time.Duration) {
+// block leaves a source alone for d, because it answered with status.
+func (c *Client) block(name string, status int, d time.Duration) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	if c.blocked == nil {
-		c.blocked = map[string]time.Time{}
+		c.blocked = map[string]pause{}
 	}
-	c.blocked[name] = c.now().Add(d)
+	until := c.now().Add(d)
+	already := c.blocked[name].until.After(c.now())
+	c.blocked[name] = pause{until, status}
+	c.mu.Unlock()
+	if !already && c.OnPause != nil {
+		c.OnPause(name, status, until)
+	}
 }
 
 func NewClient(sources ...Source) *Client {
@@ -249,10 +261,10 @@ func fresher(x, y Aircraft) bool {
 
 func (c *Client) get(ctx context.Context, s Source, path string) ([]Aircraft, error) {
 	c.mu.Lock()
-	until := c.blocked[s.Name]
+	p := c.blocked[s.Name]
 	c.mu.Unlock()
-	if c.now().Before(until) {
-		return nil, fmt.Errorf("paused until %s after it refused us", until.UTC().Format("15:04Z"))
+	if c.now().Before(p.until) {
+		return nil, fmt.Errorf("paused (HTTP %d) until %s", p.status, p.until.UTC().Format("15:04:05Z"))
 	}
 	if err := c.wait(ctx, s.Name); err != nil {
 		return nil, err
@@ -270,13 +282,13 @@ func (c *Client) get(ctx context.Context, s Source, path string) ([]Aircraft, er
 	if resp.StatusCode != http.StatusOK {
 		switch resp.StatusCode {
 		case http.StatusUnauthorized, http.StatusForbidden:
-			c.block(s.Name, refusedFor)
+			c.block(s.Name, resp.StatusCode, refusedFor)
 		case http.StatusTooManyRequests:
 			d := tooManyFor
 			if n, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && n > 0 {
 				d = min(max(time.Duration(n)*time.Second, d), refusedFor)
 			}
-			c.block(s.Name, d)
+			c.block(s.Name, resp.StatusCode, d)
 		}
 		return nil, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}

@@ -236,7 +236,7 @@ func TestRefusedSourceIsPaused(t *testing.T) {
 		retryAfter string
 		pause      time.Duration
 	}{
-		{403, "", time.Hour}, {401, "", time.Hour}, {429, "", 5 * time.Minute}, {429, "1200", 20 * time.Minute}, {429, "99999", time.Hour},
+		{403, "", time.Hour}, {401, "", time.Hour}, {429, "", 30 * time.Second}, {429, "1200", 20 * time.Minute}, {429, "99999", time.Hour},
 	} {
 		var refused, answered int
 		bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -254,10 +254,15 @@ func TestRefusedSourceIsPaused(t *testing.T) {
 		c := NewClient(Source{Name: "refuses", BaseURL: bad.URL, RegPath: "reg"}, Source{Name: "answers", BaseURL: good.URL, RegPath: "reg"})
 		c.MinSpacing = time.Millisecond
 		c.Now = func() time.Time { return clock }
+		var told []int
+		c.OnPause = func(source string, status int, until time.Time) { told = append(told, status) }
 		for i := 0; i < 3; i++ {
 			if ac, err := c.Reg(context.Background(), "JA826J"); err != nil || len(ac) != 1 {
 				t.Fatalf("%d: %v %v", tc.code, ac, err)
 			}
+		}
+		if len(told) != 1 || told[0] != tc.code {
+			t.Errorf("HTTP %d: told of the pause %v, want once with the status", tc.code, told)
 		}
 		if refused != 1 || answered != 3 {
 			t.Errorf("HTTP %d (Retry-After %q): refused source asked %d times, other %d; want 1 and 3", tc.code, tc.retryAfter, refused, answered)

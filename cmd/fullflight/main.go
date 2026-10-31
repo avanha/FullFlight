@@ -125,7 +125,11 @@ func main() {
 	defer stop()
 
 	afClient := airframes.NewClient()
-	p := &poller.Poller{Store: st, ADSB: adsb.NewClient(sources...), Log: log,
+	adsbClient := adsb.NewClient(sources...)
+	adsbClient.OnPause = func(source string, status int, until time.Time) {
+		log.Warn("adsb source refused us; leaving it alone", "source", source, "http", status, "until", until.UTC().Format("15:04:05Z"))
+	}
+	p := &poller.Poller{Store: st, ADSB: adsbClient, Log: log,
 		Airframes: afClient, Search: afClient, WaitingEvery: cfg.Poll.Waiting, TrackingEvery: cfg.Poll.Tracking,
 		StopoverGrace: cfg.Poll.StopoverGrace}
 	if cfg.AeroDataBox.APIKey != "" {

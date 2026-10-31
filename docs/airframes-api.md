@@ -29,8 +29,8 @@ registrations allowed) returning the same `{ac:[...], msg, now, total, ctime, pt
 `/v2/hex/{hex}`, `/v2/callsign/{cs}` and `/v2/point/{lat}/{lon}/{nm}`. The reference says nothing about keys or approval,
 but unauthenticated requests from here still got **HTTP 403** ("Please contact us at contact@airplanes.live. Your email
 MUST include any links, a description of the project…"), so it stays opt-in: name `airplanes.live` in `adsb.sources`
-once its operators have agreed. A source that answers 401/403 is left alone for an hour, 429 for five minutes (or its
-`Retry-After`).
+once its operators have agreed. A source that answers 401/403 is left alone for an hour, 429 for 30 seconds (or its
+`Retry-After`), and the pause is logged once with the HTTP status.
 
 Fields it documents that the other two may not send, and we do not read yet: `wd`/`ws` (wind direction and speed,
 calculated), `oat`/`tat` (outside and total air temperature, calculated, not below Mach 0.395), `tas`/`ias`/`mach`,
