@@ -82,7 +82,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -237,12 +237,12 @@ highlightGroup = null;
     calls.lines.length = 0;
     await t.showTrack(t.watches()[0], false);
     pts.splice(0, pts.length, ...sp); msgs.splice(0, msgs.length, ...sm);
-    return calls.lines.map(l => ({color: l.o.color, n: l.ll.length, dash: l.o.dashArray, ll: l.ll}));
+    return calls.lines.filter(l => l.o.color !== '#777').map(l => ({color: l.o.color, n: l.ll.length, dash: l.o.dashArray, ll: l.ll}));   // (not the dotted estimated paths)
   };
   const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
   // the legend lists all five sources
   assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS', 'AeroDataBox']);
-  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Waypoints|Predictions|Planned route|Projection', 'waypoints, predictions and projection have legend entries');
+  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Waypoints|Predictions|Planned route|Estimated path|Projection', 'waypoints, predictions and projection have legend entries');
   // each source gets its own colour and style
   for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {
     const r = await lineOf([], [at2(0, 41, -105, kind), at2(10, 41.1, -104, kind), at2(20, 41.2, -103, kind)]);
@@ -615,6 +615,63 @@ highlightGroup = null;
     assert.strictEqual(t.planGroup.items.length, 0, 'gone when the aircraft has no plan');
   }
 
+  // ===== 8q. estimated path across a silence, and hoverable ADS-B points =============================
+  {
+    const keep = t.flightSegs.slice(); t.flightSegs.length = 0;
+    const plan = {callsign: 'JAL1', from: 'AAAA', to: 'BBBB', points: [{name: 'AAAA', lat: 0, lon: 0, kind: 'airport'}, {name: 'MID', lat: 0, lon: 10, kind: 'fix'}, {name: 'BBBB', lat: 10, lon: 10, kind: 'airport'}]};
+    // ADS-C reports to 20 minutes ago, then ADS-B from now: a 20 minute silence with the route turning inside it
+    const adsc = (minAgo, lat, lon, extra = {}) => dl(minAgo, lat, lon, extra);
+    let e = t.estimatedPaths([ap(0, 1.5, 10)], [adsc(30, 0, 8.5), adsc(20, 0, 9.5)], plan);
+    assert.strictEqual(e.length, 1, JSON.stringify(e.map(x => [x.from.key, x.to.key, x.minutes])));
+    assert.deepStrictEqual([e[0].from.key, e[0].to.key, e[0].minutes, e[0].via], ['adsc', 'adsb', 20, 'route']);
+    assert.ok(e[0].path.length === 3 && e[0].path[1][0] === 0 && e[0].path[1][1] === 10, 'bends at the route waypoint: ' + JSON.stringify(e[0].path));
+    // no plan, or fixes not on it: a straight line
+    e = t.estimatedPaths([ap(0, 1.5, 10)], [adsc(30, 0, 8.5), adsc(20, 0, 9.5)], null);
+    assert.deepStrictEqual([e[0].via, e[0].path.length], ['straight', 2]);
+    e = t.estimatedPaths([ap(0, 6, 7)], [adsc(30, 6, 5), adsc(20, 6, 6)], plan);
+    assert.strictEqual(e[0].via, 'straight', 'fixes off the route');
+    // continuous tracks need none: ADS-B every 45 s, ADS-C every 15 minutes
+    assert.strictEqual(t.estimatedPaths([ap(0, 0, 3), ap(0.75, 0, 2.9), ap(1.5, 0, 2.8)], [], plan).length, 0);
+    assert.strictEqual(t.estimatedPaths([], [adsc(60, 0, 1), adsc(45, 0, 2), adsc(30, 0, 3)], plan).length, 0);
+    // a quiet gap is only bridged within reason: under 5 minutes, over 3 hours, impossible speed, bad fixes
+    assert.strictEqual(t.estimatedPaths([ap(0, 0, 3)], [adsc(4, 0, 2.9)], plan).length, 0, 'four minutes');
+    assert.strictEqual(t.estimatedPaths([ap(0, 0, 3)], [adsc(200, 0, 1)], plan).length, 0, 'over three hours');
+    assert.strictEqual(t.estimatedPaths([ap(0, 0, 60)], [adsc(30, 0, 1)], plan).length, 0, 'no aircraft flies that fast');
+    assert.strictEqual(t.estimatedPaths([ap(0, 0, 3)], [adsc(30, 0, 1, {suspect: 'x'}), adsc(25, 0, 1.5, {time_unverified: true})], plan).length, 0, 'untrustworthy fixes');
+    // ADS-B itself with a 25 minute hole in it
+    e = t.estimatedPaths([ap(60, 0, 1), ap(35, 0, 4)], [], plan);
+    assert.deepStrictEqual([e.length, e[0].from.key, e[0].to.key], [1, 'adsb', 'adsb']);
+    // never across two flights
+    t.flightSegs.push({startMs: NOW - 100 * 60000, endMs: NOW - 40 * 60000}, {startMs: NOW - 20 * 60000, endMs: NOW});
+    assert.strictEqual(t.estimatedPaths([ap(0, 0, 3)], [adsc(30, 0, 1)], plan).length, 0, 'different flights');
+    t.flightSegs.length = 0; t.flightSegs.push(...keep);
+
+    // thinning: close-together points are dropped, the first is kept, the pace is by time and distance
+    const row = (n, stepMin, stepLon) => Array.from({length: n}, (_, i) => ap(60 - i * stepMin, 0, i * stepLon));
+    assert.strictEqual(t.thinPoints(row(40, 0.75, 0.1)).length, 10, '45 s apart: one in four (3 minutes)');
+    assert.strictEqual(t.thinPoints(row(10, 5, 0.01)).length, 1, 'ten minutes apart but a mile: one');
+    assert.strictEqual(t.thinPoints(row(10, 0.1, 1)).length, 1, 'far apart but seconds: one');
+    assert.strictEqual(t.thinPoints(row(5, 10, 1)).length, 5, 'sparse points are all kept');
+    assert.strictEqual(t.thinPoints([]).length, 0);
+
+    // through the page: hoverable dots on the ADS-B track with the point's details, and a dotted estimated path
+    const saved = pts.map(p => ({...p})), savedMsgs = msgs.map(m => ({...m}));
+    const iso2 = m => new Date(Date.UTC(2026, 9, 30, 16, 0, 0) + m * 60000).toISOString();
+    pts.splice(0, pts.length, ...[0, 1, 2, 3, 4, 5, 6, 40, 41, 42, 43].map((m, i) => ({t: iso2(m), lat: 40 + i * 0.1, lon: -100 + i * 0.1, alt_ft: 35000, gs: 470, track: 90, callsign: 'CPA843', source: 'adsb.lol'})));
+    msgs.splice(0, msgs.length);   // ADS-B only
+    const circlesBefore = calls.circles.length, linesBefore = calls.lines.length;
+    await t.showTrack(t.watches()[0], false);
+    const dots = calls.circles.slice(circlesBefore).filter(c => c.o.color === t.SOURCES.adsb.color && c.o.radius === 3);
+    assert.strictEqual(dots.length, 5, 'hover dots, thinned from eleven points to every third minute: ' + dots.length);
+    assert.deepEqual(dots[0].tooltip.children.map(c => c.textContent).slice(0, 3), ['CPA843', '2026-10-30 16:00Z (adsb.lol)', '35,000 ft']);
+    assert.ok(dots.every(d => d.target === t.SOURCES.adsb.group), 'on the ADS-B layer, so the legend switches them off with the track');
+    const bridge = calls.lines.slice(linesBefore).filter(l => l.o.color === '#777');
+    assert.strictEqual(bridge.length, 1, 'one estimated path, for the 34 minute hole');
+    assert.strictEqual(bridge[0].o.dashArray, '2 6');
+    assert.ok(bridge[0].tooltip.children.map(c => c.textContent).includes('34 min without a position, 8 nm'), JSON.stringify(bridge[0].tooltip.children.map(c => c.textContent)));
+    pts.splice(0, pts.length, ...saved); msgs.splice(0, msgs.length, ...savedMsgs);
+    await t.showTrack(t.watches()[0], false);
+  }
   // ===== 8o'. the estimated-position ghost only appears once the newest fix is no longer live =====
   {
     const saved = pts.map(p => ({...p}));
@@ -1034,6 +1091,7 @@ highlightGroup = null;
   await tick();
   assert.strictEqual(trackLayer.items.length, 0, 'no track or plane');
   assert.strictEqual(t.planGroup.items.length, 0, 'no planned route');
+  assert.strictEqual(t.bridgeGroup.items.length, 0, 'no estimated paths');
   assert.strictEqual(t.predGroup.items.length, 0); assert.strictEqual(t.wptGroup.items.length, 0); assert.strictEqual(t.projGroup.items.length, 0);
   assert.strictEqual(highlightGroup.items.length, 0, 'no ring or ghost');
   assert.strictEqual(t.markers.size, 0);

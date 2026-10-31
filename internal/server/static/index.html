@@ -108,10 +108,12 @@ const wptGroup = L.layerGroup().addTo(map);   // waypoints named in CPDLC positi
 const projGroup = L.layerGroup().addTo(map);  // dead-reckoned position and look-ahead
 const predGroup = L.layerGroup().addTo(map);  // what the selected report predicted: its route and next waypoints
 const planGroup = L.layerGroup().addTo(map);  // the filed flight plan: planned route and its fixes
+const bridgeGroup = L.layerGroup().addTo(map);  // estimated path across a silence between two fixes
 L.control.layers(null, {
   '<span style="font-weight:bold">&#9671;</span> Waypoints': wptGroup,
   '<span style="color:#e8590c;font-weight:bold">&#8211; &#8211;</span> Predictions': predGroup,
   '<span style="color:#5c6b8a;font-weight:bold">&#8211; &#8211;</span> Planned route': planGroup,
+  '<span style="color:#777;font-weight:bold">&middot;&middot;&middot;</span> Estimated path': bridgeGroup,
   '<span style="color:#666;font-weight:bold">&middot;&middot;&middot;</span> Projection': projGroup,
 }, {collapsed: false, position: 'bottomleft'}).addTo(map);
 // ---- longitude frame --------------------------------------------------------------------
@@ -547,6 +549,66 @@ function drawPlan(plan) {
   });
 }
 
+// ---- estimated path across a silence, and hoverable ADS-B points ----------------------------
+// Where the aircraft went quiet and was next heard from (an ADS-C track handing over to ADS-B, or a gap in
+// ADS-B coverage), the line between the two fixes is a guess: along the filed route if the plan covers both, else
+// straight. Fixes close together in time are one continuous track and need none.
+const BRIDGE = {minMin: 5};
+function estimatedPaths(pts, msgs, plan) {
+  const key = p => p.source === 'aerodatabox' ? 'lookup' : 'adsb';
+  const fixes = [
+    ...pts.map(p => ({lat: p.lat, lon: p.lon, t: Date.parse(p.t), key: key(p)})),
+    ...msgs.filter(m => m.lat != null && !m.suspect && !m.time_unverified).map(m => ({lat: m.lat, lon: m.lon, t: Date.parse(m.pos_t || m.t), key: m.kind})),
+  ].filter(f => !Number.isNaN(f.t)).sort((a, b) => a.t - b.t);
+  const out = [];
+  for (let i = 0; i + 1 < fixes.length; i++) {
+    const a = fixes[i], b = fixes[i + 1], dt = b.t - a.t;
+    if (dt < BRIDGE.minMin * 60000 || dt > GHOST.maxGapMin * 60000) continue;
+    if (a.key === b.key && dt <= (SOURCES[a.key] ? SOURCES[a.key].gapMin : 90) * 60000) continue;   // already one solid track
+    if (flightSegs.length > 1 && segOf(a.t) !== segOf(b.t)) continue;
+    const nm = distNM(a.lat, a.lon, b.lat, b.lon);
+    if (nm / (dt / 3600000) > PROJ.maxGs) continue;
+    let path = [[a.lat, a.lon], [b.lat, b.lon]], via = 'straight';
+    const ra = walkRoute(plan, a, null), rb = walkRoute(plan, b, null);
+    if (ra && rb && rb.at > ra.at + 1) {
+      const mid = ra.path(ra.at, rb.at).slice(1, -1);
+      path = [[a.lat, a.lon], ...mid, [b.lat, b.lon]];
+      via = 'route';
+    }
+    out.push({from: a, to: b, path, via, nm, minutes: Math.round(dt / 60000)});
+  }
+  return out;
+}
+
+function drawEstimatedPaths(paths, plan) {
+  bridgeGroup.clearLayers();
+  for (const e of paths) {
+    const name = k => (SOURCES[k] ? SOURCES[k].name : k);
+    for (const part of trackParts(e.path.map(([lat, lon]) => ({lat, lon})))) {
+      L.polyline(part, {color: '#777', weight: 2, dashArray: '2 6', opacity: .9}).addTo(bridgeGroup).bindTooltip(tip(
+        'Estimated path', `${name(e.from.key)} fix ${fmtTime(e.from.t)} \u2192 ${name(e.to.key)} fix ${fmtTime(e.to.t)}`,
+        `${e.minutes} min without a position, ${Math.round(e.nm)} nm`,
+        e.via === 'route' ? `along the filed route ${plan.callsign ? plan.callsign + ' ' : ''}${plan.from}\u2192${plan.to}` : 'straight line: no filed route covers both'));
+    }
+  }
+}
+
+// ADS-B points worth hovering: not every one, which would be a solid string of dots. A point is kept if it is at
+// least HOVER.minMin minutes and HOVER.minNM miles from the last one kept.
+const HOVER = {minMin: 2.5, minNM: 6};
+function thinPoints(pts) {
+  const out = [];
+  for (const p of pts) {
+    const prev = out[out.length - 1];
+    if (!prev || (Date.parse(p.t) - Date.parse(prev.t) >= HOVER.minMin * 60000 && distNM(prev.lat, prev.lon, p.lat, p.lon) >= HOVER.minNM)) out.push(p);
+  }
+  return out;
+}
+function pointTip(p) {
+  return tip(p.callsign || '', fmt(p.t) + (p.source ? ` (${p.source})` : ''), p.alt_ft != null ? `${num(p.alt_ft)} ft` : (p.on_ground ? 'on the ground' : ''),
+    [p.gs != null ? `${Math.round(p.gs)} kt` : '', p.track != null ? `track ${Math.round(p.track)}\u00b0` : ''].filter(Boolean).join(' \u00b7 '));
+}
+
 function drawProjection() {
   projGroup.clearLayers();
   if (!lastData) return;
@@ -680,7 +742,7 @@ async function showTrack(w, focus) {
   if (!w.hex) {
     // A target not yet matched to an aircraft has nothing to show, and nothing of the previous target may stay.
     ++showSeq;   // a fetch for the previous target still in flight must not draw over this
-    layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); planGroup.clearLayers(); highlight.clearLayers();
+    layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); planGroup.clearLayers(); bridgeGroup.clearLayers(); highlight.clearLayers();
     Object.values(SOURCES).forEach(src => src.group.clearLayers());   // the report dots and each source's track
     lastData = null; lastTrack = {pts: [], msgs: []}; drawProjection(); markers.clear(); renderMessages([]);
     flightSegs = []; syncFlightSelector();
@@ -726,6 +788,13 @@ async function showTrack(w, focus) {
   const fixOf = p => ({lat: p.lat, lon: p.lon, t: new Date(p.t).getTime()});
   drawTrack('adsb', pts.filter(p => p.source !== 'aerodatabox').map(fixOf));
   drawTrack('lookup', pts.filter(p => p.source === 'aerodatabox').map(fixOf));   // the provider's own positions, e.g. over the ocean
+  for (const [key, group] of [['adsb', pts.filter(p => p.source !== 'aerodatabox')], ['lookup', pts.filter(p => p.source === 'aerodatabox')]]) {
+    for (const p of thinPoints(group)) {
+      const faded = isOlder(Date.parse(p.t));
+      L.circleMarker(ll(p.lat, p.lon), {radius: 3, weight: 1, color: SOURCES[key].color, fillColor: '#fff', opacity: faded ? .4 : 1, fillOpacity: faded ? .4 : .9})
+        .addTo(SOURCES[key].group).bindTooltip(pointTip(p));
+    }
+  }
 
   // Positions reported inside messages: a dot in the source's colour (grey if impossible, faint and dotted if
   // their time is unverified), and a track through them.
@@ -763,6 +832,7 @@ async function showTrack(w, focus) {
 
   const plan = choosePlan(plans, chosen);
   drawPlan(plan);
+  drawEstimatedPaths(estimatedPaths(pts, msgs, plan), plan);
   lastData = current ? {w, pts, msgs, plan} : null;
   lastTrack = {pts, msgs};
   drawProjection();

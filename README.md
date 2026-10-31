@@ -253,6 +253,18 @@ when it was filed). It can be switched off in the legend. The projection follows
 route and heading roughly along it (70 degrees) is projected along the legs, turning where they turn, and stops at the
 destination; otherwise the straight-line projection is used as before. The plan is as filed, not as flown.
 
+## Estimated path and ADS-B points
+
+Where the aircraft went quiet and was next heard from, a dotted grey line joins the two fixes: ADS-C handing over to
+ADS-B, or a hole in ADS-B coverage. It follows the filed route when the plan covers both fixes (bending at its
+waypoints), else it is a straight line; hover for the two fixes, the time and the distance. It is drawn only for a silence of 5
+minutes to 3 hours between trustworthy fixes of one flight, never across an impossible speed, and not where the two fixes
+are already one continuous track (the same source within its usual interval). It has its own legend entry
+("Estimated path").
+
+The ADS-B track has a small hoverable dot every 2.5 minutes and 6 nm or so (a point is kept only if it is at least that far in
+time and distance from the last one kept), showing the callsign, time, altitude, speed and track. They are on the ADS-B layer.
+
 ## Ghost position for a message with no position
 
 Select a message that carries no position and, if trustworthy fixes (ADS-B or datalink) lie either side of
