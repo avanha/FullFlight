@@ -377,7 +377,7 @@ function drawWaypoints(msgs) {
     L.marker(ll(wp.lat, wp.lon), {icon: wptIcon(wp.exact), zIndexOffset: 500}).addTo(wptGroup)
       .on('click', () => pickMessage(m.id))
       .bindTooltip(tip(`${wp.name} \u2014 ${(ROLE_TEXT[wp.role] || (() => wp.role))(wp)}`,
-        wp.exact ? wp.how : '\u26a0 ' + wp.how, `named in the ${m.kind} report of ${fmt(m.pos_t || m.t)}`));
+        wp.exact ? wp.how : '\u26a0 ' + wp.how, `${m.kind} report of ${fmt(m.pos_t || m.t)}`));
   }
 }
 
@@ -925,7 +925,7 @@ function drawPredictions() {
     L.polyline([here, ...ahead.map(w => ll(w.lat, w.lon))], {color: c, weight: 2, dashArray: '6 6', interactive: false}).addTo(predGroup);
     for (const w of ahead) {
       L.circleMarker(ll(w.lat, w.lon), {radius: 9, color: c, weight: 2, fillOpacity: 0}).addTo(predGroup).bindTooltip(tip(
-        `${w.name} \u2014 ${(ROLE_TEXT[w.role] || (() => w.role))(w)}`, w.exact ? w.how : '\u26a0 ' + w.how, `named in the report of ${fmt(m.pos_t || m.t)}`));
+        `${w.name} \u2014 ${(ROLE_TEXT[w.role] || (() => w.role))(w)}`, w.exact ? w.how : '\u26a0 ' + w.how, `${m.kind} report of ${fmt(m.pos_t || m.t)}`));
     }
   }
 }
