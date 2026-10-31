@@ -172,10 +172,12 @@ const fmtTime = t => new Date(t).toISOString().slice(11, 19) + 'Z';
 function ago(t) {
   const s = Math.max(0, Math.round((Date.now() - new Date(t)) / 1000));
   if (s < 90) return s + 's ago';
-  if (s < 5400) return Math.round(s / 60) + 'm ago';
+  if (s < 7200) return Math.round(s / 60) + 'm ago';
   if (s < 48 * 3600) return (s / 3600).toFixed(1).replace(/\.0$/, '') + 'h ago';
   return Math.round(s / 86400) + 'd ago';
 }
+// A time with how long ago it was, for a hover: "2026-10-30 18:48Z · 31m ago".
+const fmtAgo = t => `${fmt(t)} · ${ago(t)}`;
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -335,7 +337,7 @@ function aircraftTip(w, pts) {
   const t = p.on_ground ? '' : trend(pts);
   const motion = [p.gs != null ? `${num(p.gs)} kt` : '', p.track != null ? `track ${Math.round(p.track)}°` : ''].filter(Boolean).join(' · ');
   const dest = w.route && !w.route.stale ? `${w.route.from ? w.route.from + ' → ' : '→ '}${w.route.to}` : '';
-  return tip(aircraftName(w, p.callsign), dest, [alt, t].filter(Boolean).join('  '), motion, `${fmt(p.t)} (${p.source})`);
+  return tip(aircraftName(w, p.callsign), dest, [alt, t].filter(Boolean).join('  '), motion, `${fmtAgo(p.t)} (${p.source})`);
 }
 
 // An aeroplane silhouette (Material "airplanemode_active", nose up), turned to the track.
@@ -377,7 +379,7 @@ function drawWaypoints(msgs) {
     L.marker(ll(wp.lat, wp.lon), {icon: wptIcon(wp.exact), zIndexOffset: 500}).addTo(wptGroup)
       .on('click', () => pickMessage(m.id))
       .bindTooltip(tip(`${wp.name} \u2014 ${(ROLE_TEXT[wp.role] || (() => wp.role))(wp)}`,
-        wp.exact ? wp.how : '\u26a0 ' + wp.how, `${m.kind} report of ${fmt(m.pos_t || m.t)}`));
+        wp.exact ? wp.how : '\u26a0 ' + wp.how, `${m.kind} report of ${fmtAgo(m.pos_t || m.t)}`));
   }
 }
 
@@ -571,7 +573,7 @@ function drawPlan(plan) {
   plan.points.forEach((p, i) => {
     const last = i === plan.points.length - 1;
     L.circleMarker(ll(p.lat, p.lon), {radius: p.kind === 'airport' ? 5 : 3, color: PLAN_COLOR, weight: 1.5, fillColor: '#fff', fillOpacity: 1}).addTo(planGroup)
-      .bindTooltip(tip(p.name, p.via && !last ? `then ${p.via}` : '', `planned route ${head}`, `filed ${fmt(plan.t)}`,
+      .bindTooltip(tip(p.name, p.via && !last ? `then ${p.via}` : '', `planned route ${head}`, `filed ${fmtAgo(plan.t)}`,
         p.kind === 'fix' ? 'position from nav db (2013 src)' : '', plan.missing && plan.missing.length && i === 0 ? `not placed: ${plan.missing.join(', ')}` : ''));
   });
 }
@@ -632,7 +634,7 @@ function thinPoints(pts) {
   return out;
 }
 function pointTip(p) {
-  return tip(p.callsign || '', fmt(p.t) + (p.source ? ` (${p.source})` : ''), p.alt_ft != null ? `${num(p.alt_ft)} ft` : (p.on_ground ? 'on the ground' : ''),
+  return tip(p.callsign || '', fmtAgo(p.t) + (p.source ? ` (${p.source})` : ''), p.alt_ft != null ? `${num(p.alt_ft)} ft` : (p.on_ground ? 'on the ground' : ''),
     [p.gs != null ? `${Math.round(p.gs)} kt` : '', p.track != null ? `track ${Math.round(p.track)}\u00b0` : ''].filter(Boolean).join(' \u00b7 '));
 }
 
@@ -834,7 +836,7 @@ async function showTrack(w, focus) {
       opacity: isOlder(Date.parse(reportTime(m))) ? .4 : 1,
       fillOpacity: m.time_unverified ? .2 : isOlder(Date.parse(reportTime(m))) ? .3 : .8, dashArray: m.time_unverified ? '2 2' : null,
     }).addTo(src ? src.group : layer);
-    mk.bindTooltip(tip(m.summary, fmt(m.pos_t || m.t), motionLine(m), wxLine(m), m.suspect ? '⚠ ' + m.suspect : '', m.time_unverified ? '⏱ time unverified' : ''));
+    mk.bindTooltip(tip(m.summary, fmtAgo(m.pos_t || m.t), motionLine(m), wxLine(m), m.suspect ? '⚠ ' + m.suspect : '', m.time_unverified ? '⏱ time unverified' : ''));
     mk.on('click', () => pickMessage(m.id));   // clicking a dot selects its message in the list
     markers.set(m.id, mk);
     if (src && !m.suspect) (byKind[m.kind] ||= []).push({lat: m.lat, lon: m.lon, t: new Date(m.pos_t || m.t).getTime()});
@@ -853,7 +855,7 @@ async function showTrack(w, focus) {
   } else if (cur) {
     const m = cur.ref;
     L.marker(ll(m.lat, m.lon), {icon: planeIcon(m.trk), zIndexOffset: 1000}).addTo(layer)
-      .bindTooltip(tip(`${aircraftName(w, null, false)}: last report`, m.summary, fmt(m.pos_t || m.t), motionLine(m), wxLine(m), 'no newer ADS-B'))
+      .bindTooltip(tip(`${aircraftName(w, null, false)}: last report`, m.summary, fmtAgo(m.pos_t || m.t), motionLine(m), wxLine(m), 'no newer ADS-B'))
       .on('click', () => pickMessage(m.id));
   }
 
@@ -910,14 +912,14 @@ function drawPredictions() {
       L.circleMarker(ll(p.lat, p.lon), {radius: 5, color: c, weight: 2, fillColor: '#fff', fillOpacity: 1}).addTo(predGroup).bindTooltip(tip(
         `${p.name ? p.name + ' \u2014 ' : ''}predicted ${p.kind === 'next' ? 'next waypoint' : 'waypoint after next'}`, etaText(m, p.eta_sec),
         p.name ? (p.name_src === 'learned' ? 'name from nav db (learned)' : 'name from nav db (2013 src)') : '(coordinates only)',
-        `predicted by the report of ${fmt(m.pos_t || m.t)}`));
+        `predicted by the report of ${fmtAgo(m.pos_t || m.t)}`));
     }
   }
   const proj = (m.route || []).find(p => p.kind === 'fixed');
   if (proj) {
     L.circleMarker(ll(proj.lat, proj.lon), {radius: 5, color: SOURCES.adsc.color, weight: 2, fillColor: SOURCES.adsc.color, fillOpacity: .35}).addTo(predGroup).bindTooltip(tip(
       `FMS forecast${proj.eta_sec != null ? ' in ' + Math.round(proj.eta_sec / 60) + ' min' : ''}`, etaText(m, proj.eta_sec),
-      `predicted by the report of ${fmt(m.pos_t || m.t)}`));
+      `predicted by the report of ${fmtAgo(m.pos_t || m.t)}`));
   }
   const ahead = (m.waypoints || []).filter(w => w.role !== 'passed');
   if (ahead.length) {
@@ -925,7 +927,7 @@ function drawPredictions() {
     L.polyline([here, ...ahead.map(w => ll(w.lat, w.lon))], {color: c, weight: 2, dashArray: '6 6', interactive: false}).addTo(predGroup);
     for (const w of ahead) {
       L.circleMarker(ll(w.lat, w.lon), {radius: 9, color: c, weight: 2, fillOpacity: 0}).addTo(predGroup).bindTooltip(tip(
-        `${w.name} \u2014 ${(ROLE_TEXT[w.role] || (() => w.role))(w)}`, w.exact ? w.how : '\u26a0 ' + w.how, `${m.kind} report of ${fmt(m.pos_t || m.t)}`));
+        `${w.name} \u2014 ${(ROLE_TEXT[w.role] || (() => w.role))(w)}`, w.exact ? w.how : '\u26a0 ' + w.how, `${m.kind} report of ${fmtAgo(m.pos_t || m.t)}`));
     }
   }
 }
@@ -1100,7 +1102,8 @@ function fixLines(f) {
     return lines;
   }
   lines.push(`learned from ${f.n} message${f.n === 1 ? '' : 's'} · ${(f.sources || []).map(x => FIX_HOW[x] || x).join(', ')}`);
-  lines.push(f.first ? `first heard ${fmt(f.first)} · last confirmed ${fmt(f.last)} (${ago(f.last)})` : 'the messages that taught it are no longer stored');
+  if (f.first) lines.push(`first heard ${fmtAgo(f.first)}`, `last confirmed ${fmtAgo(f.last)}`);
+  else lines.push('the messages that taught it are no longer stored');
   if (f.db_nm != null) lines.push(`nav db: ${f.db_nm < 0.1 ? 'same place' : f.db_nm.toFixed(1) + ' nm away'}`);
   else if (fixData && fixData.database_names) lines.push('not in nav db');
   return lines;

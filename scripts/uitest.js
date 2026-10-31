@@ -108,7 +108,7 @@ highlightGroup = null;
   assert.strictEqual(calls.fitBounds, 0, 'no longer fits the whole history');
   const openTips = () => allLayers.filter(l => l.open);
   const lines = el => el.children.map(c => c.textContent);
-  assert.deepEqual(lines(plane.tooltip), ['B-LRM \u00b7 CPA843 \u00b7 A359', '35,025 ft  \u2193 descending 1,800 ft/min', '480 kt \u00b7 track 135\u00b0', '2026-10-30 16:01Z (adsb.lol)'], 'plane hover text');
+  assert.deepEqual(lines(plane.tooltip).map(l => l.replace(/ \u00b7 \d+\S* ago/, '')), ['B-LRM \u00b7 CPA843 \u00b7 A359', '35,025 ft  \u2193 descending 1,800 ft/min', '480 kt \u00b7 track 135\u00b0', '2026-10-30 16:01Z (adsb.lol)'], 'plane hover text');
 
   // 3. the undecoded message is hidden; the rest are listed newest first
   const box = byId['#msgs'];
@@ -663,7 +663,7 @@ highlightGroup = null;
     await t.showTrack(t.watches()[0], false);
     const dots = calls.circles.slice(circlesBefore).filter(c => c.o.color === t.SOURCES.adsb.color && c.o.radius === 3);
     assert.strictEqual(dots.length, 5, 'hover dots, thinned from eleven points to every third minute: ' + dots.length);
-    assert.deepEqual(dots[0].tooltip.children.map(c => c.textContent).slice(0, 3), ['CPA843', '2026-10-30 16:00Z (adsb.lol)', '35,000 ft']);
+    assert.deepEqual(dots[0].tooltip.children.map(c => c.textContent.replace(/ \u00b7 \d+\S* ago/, '')).slice(0, 3), ['CPA843', '2026-10-30 16:00Z (adsb.lol)', '35,000 ft']);
     assert.ok(dots.every(d => d.target === t.SOURCES.adsb.group), 'on the ADS-B layer, so the legend switches them off with the track');
     const bridge = calls.lines.slice(linesBefore).filter(l => l.o.color === '#777');
     assert.strictEqual(bridge.length, 1, 'one estimated path, for the 34 minute hole');
