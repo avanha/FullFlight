@@ -218,5 +218,41 @@
   "label": "H1",
   "received": "2026-10-31T03:01:15Z",
   "text": "*POS\r\n10280938N3426W11820222249025727M2071494"
+ },
+ {
+  "label": "80",
+  "received": "2026-10-31T01:10:07Z",
+  "text": "3N01 POSRPT 0039/30 KLAX/ZSPD .N501DN\r\n/POS N34414W119598/ALT 252/MCH 759/FOB 2022\r\n/TME 1941/WND 239 032/OAT -029/TAS 0462/ETA 0925",
+  "name": "posrpt_dal39_late"
+ },
+ {
+  "label": "80",
+  "received": "2026-10-31T00:40:46Z",
+  "text": "3N01 POSRPT 0039/30 KLAX/ZSPD .N501DN\r\n/POS N33566W118293/ALT 021/MCH 321/FOB 2121\r\n/TME 1926/WND 225 006/OAT 0014/TAS 0213/ETA 0925",
+  "name": "posrpt_dal39_takeoff"
+ },
+ {
+  "label": "80",
+  "received": "2026-10-24T13:03:34Z",
+  "text": "M57ADL01703N01 POSRPT 0170/24 RKSI/KMSP .N515DN\n\t/POS N39135E149583/ALT 350/MCH 851/FOB 1422\n\t/TME 1306/WND 292 099/OAT -046/TAS 0501/ETA 2227",
+  "name": "posrpt_prefixed"
+ },
+ {
+  "label": "80",
+  "received": "2026-10-24T07:37:07Z",
+  "text": "3N01 POSRPT 0811/24 KLAX/NFFN .DQ-FAM\r\n/POS N33370W119312/ALT 193/MCH 656/FOB 0670\r\n/TME 0726/WND -16 69/OAT -12/TAS 413/ETA 1736",
+  "name": "posrpt_fiji_negwind"
+ },
+ {
+  "label": "80",
+  "received": "2026-10-25T12:36:30Z",
+  "text": "3N01 POSRPT 0911/24 NFFN/YSSY .DQ-FAM\r\n/POS S33580E151110/ALT 001/MCH 211/FOB 0128\r\n/TME 0109/WND -13 16/OAT 30/TAS 141/ETA ----",
+  "name": "posrpt_eta_dashes"
+ },
+ {
+  "label": "80",
+  "received": "2026-10-25T16:08:25Z",
+  "text": "M76ADL02803N01 POSRPT 0280/25 ZSPD/KSEA .N501DN\n\t/POS N48280W166266/ALT 390/MCH 847/FOB 0698\n\t/TME 1611/WND 261 041/OAT -056/TAS 0486/ETA     ",
+  "name": "posrpt_eta_blank"
  }
 ]

@@ -129,15 +129,22 @@ ACARS from its UPS80 flight of 28 October on the 31st.
   the flight (fuel, to judge by the rate). Sent on time they match their arrival to the minute, so they are decoded
   and placed at their own time, however late they came: the late ones show up on the 28th, where the flight was, with
   a note saying how late they were delivered.
-- **They are also clocks.** A message that arrived at the same station within 30 minutes of a `*POS` report, nearest
-  to one that was delivered late (over 10 minutes), is taken to be from the same backlog and flagged as having an
+- **POSRPT** (label 80, Delta and Fiji Airways: `3N01 POSRPT 0039/30 KLAX/ZSPD .N501DN`, then `/POS N34414W119598/ALT 252/
+  MCH 759/FOB 2022` and `/TME 1941/WND 239 032/OAT -029/TAS 0462/ETA 0925`) is decoded too: position in degrees and
+  tenths of minutes, flight level, Mach, wind (a negative direction is 180 to 360, so -142 is 218), temperature, and the
+  origin and destination, which count as a route source. `TME` is UTC (174 of the first 206 arrived within five minutes
+  of it, the station stamping arrival three minutes early) and the day after the flight number is the day the flight is
+  dated, which settles which day when a report is more than a day late (a report more than a day late can still be a
+  day out). DAL39's report from Point Conception, delivered at 01:10 on the 31st, is placed at 19:41 on the 30th.
+- **They are also clocks.** A message that arrived at the same station within 30 minutes of a `*POS` or POSRPT report
+  that was delivered more than an hour late is taken to be from the same backlog (the dated messages split cleanly: 190
+  within 10 minutes, 16 between 10 and 60, 45 over an hour late, mostly hours) and flagged as having an
   unverified time, as FMS reports with a doubtful waypoint time are: drawn faint, never the plane's position, not
   projected from, and not naming the aircraft's flight (`in a late batch: ...` in the hover). One nearest to a `*POS`
-  on time is left alone, and messages from other stations are not judged: live traffic from Honolulu arrives among a
+  on time or only a little late is left alone, and messages from other stations are not judged: live traffic from Honolulu arrives among a
   California backlog. Run `fullflight -redecode` to apply it to stored messages. Progress reports and FMS waypoint
   times are not used as clocks: their times are not UTC in the samples we have.
-- Only these `*POS` reports are used as clocks so far. Other formats that carry their own time (Delta's label 80
-  `POSRPT` has `/TME hhmm`) could be, once decoded.
+- Only `*POS` and POSRPT reports are used as clocks so far.
 
 ## Destination from the aircraft
 

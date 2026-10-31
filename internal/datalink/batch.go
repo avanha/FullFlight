@@ -12,6 +12,11 @@ import (
 // to be taken as part of the same backlog.
 const BatchWindow = 30 * time.Minute
 
+// BatchLate is how late a dated message must be for the messages around it to be taken for a backlog. A message
+// a few minutes late is just late; the dated messages we have split cleanly: 190 within 10 minutes, 16 between 10
+// and 60, and 45 more than an hour late, mostly by three hours or more (a station replaying what it had stored).
+const BatchLate = time.Hour
+
 // lateBatchPrefix starts the TimeNote MarkLate writes, so it can tell its own verdicts from the others.
 const lateBatchPrefix = "in a late batch: "
 
@@ -39,12 +44,13 @@ func humanDur(d time.Duration) string {
 	return fmt.Sprintf("%dm", int(d.Minutes()))
 }
 
-// ownTime returns the true time of a message that carries a full date and time of its own that has been checked
-// against messages sent on time: a *POS report. Others carry dates too (a progress report's TS field, an FMS
-// waypoint time) but those are not UTC in the samples we have, so they say nothing about lateness and are not
-// used as clocks.
+// ownTime returns the true time of a message that carries a time of its own that has been checked against
+// messages sent on time: a *POS report (full date and time), or a POSRPT (UTC time of day, and the day the flight
+// is dated: 174 of the 206 we have arrived within five minutes of it). Others carry times too (a progress report's TS
+// field, an FMS waypoint time) but those are not UTC in the samples we have, so they say nothing about lateness
+// and are not used as clocks.
 func ownTime(m store.Message) (time.Time, bool) {
-	if m.Kind == "pos_report" && m.PosT != nil {
+	if (m.Kind == "pos_report" || m.Kind == "posrpt") && m.PosT != nil {
 		return *m.PosT, true
 	}
 	return time.Time{}, false
@@ -54,7 +60,7 @@ func ownTime(m store.Message) (time.Time, bool) {
 // Some messages carry a full date (see ownTime), so their lateness is known. Others (an ADS-C report holds only
 // minutes and seconds past the hour, a CPDLC or AFN message a time of day) cannot say: the app dates them by
 // arrival, which for a message from three days ago puts the aircraft where it was then, as if now. So a message
-// that arrived at the same station within BatchWindow of a dated one, which was late, nearest to it, is taken to
+// that arrived at the same station within BatchWindow of a dated one, which was over BatchLate late, nearest to it, is taken to
 // be as late and flagged; one nearest to a dated message that was on time is left alone. Messages from other
 // stations are not judged by it: a backlog from one station can arrive among live messages from others.
 //
@@ -94,7 +100,7 @@ func MarkLate(st *store.Store, hexAddr string, since time.Time) (int, error) {
 		}
 		note, flag := "", false
 		if near != nil {
-			if late := near.arrived.Sub(near.own); late > TimeTolerance {
+			if late := near.arrived.Sub(near.own); late > BatchLate {
 				note = lateBatchPrefix + fmt.Sprintf("%s delivered a message at %s that was dated %s (%s earlier), so this one is probably old too: its time is unverified",
 					m.Station, near.arrived.UTC().Format("15:04:05Z"), near.own.UTC().Format("2006-01-02 15:04Z"), humanDur(late))
 				flag = true

@@ -745,3 +745,77 @@ func TestResolveMonthDay(t *testing.T) {
 		}
 	}
 }
+
+func TestPOSRPT(t *testing.T) {
+	// DAL39 off Point Conception, delivered five and a half hours after the time it carries.
+	f, r := load(t, "posrpt_dal39_late")
+	if r.Kind != KindPOSRPT || r.Label != "80" || r.Pos == nil {
+		t.Fatalf("kind %v label %q pos %+v", r.Kind, r.Label, r.Pos)
+	}
+	near(t, "lat", r.Pos.Lat, 34+41.4/60, 1e-9)
+	near(t, "lon", r.Pos.Lon, -(119 + 59.8/60), 1e-9)
+	if r.Pos.AltFt == nil || *r.Pos.AltFt != 25200 {
+		t.Errorf("alt = %v", r.Pos.AltFt)
+	}
+	// 19:41 on the 30th, the day the flight is dated, though it arrived at 01:10 on the 31st.
+	if want := time.Date(2026, 10, 30, 19, 41, 0, 0, time.UTC); !r.Pos.At(f.Received).Equal(want) {
+		t.Errorf("placed at %v, want %v", r.Pos.At(f.Received), want)
+	}
+	if r.Identity.Tail != "N501DN" || r.Fields["origin"] != "KLAX" || r.Fields["dest"] != "ZSPD" || r.Fields["eta"] != "0925" {
+		t.Errorf("identity %+v fields %v", r.Identity, r.Fields)
+	}
+	if r.Wx == nil || *r.Wx.WindDirDeg != 239 || *r.Wx.WindKt != 32 || *r.Wx.TempC != -29 || r.Fields["mach"] != 0.759 || r.Fields["tas"] != 462 || r.Fields["fob"] != 2022 {
+		t.Errorf("wx %+v fields %v", r.Wx, r.Fields)
+	}
+	if want := "Position report KLAX→ZSPD 34.690N 119.997W FL252, M0.759"; r.Summary != want {
+		t.Errorf("summary = %q", r.Summary)
+	}
+	// Just after takeoff (2,100 ft, positive OAT with a leading zero).
+	_, r = load(t, "posrpt_dal39_takeoff")
+	if *r.Pos.AltFt != 2100 || *r.Wx.TempC != 14 || r.Fields["fob"] != 2121 {
+		t.Errorf("takeoff: %v %+v %v", *r.Pos.AltFt, r.Wx, r.Fields)
+	}
+	// A message number and flight in front, tabs before the lines.
+	_, r = load(t, "posrpt_prefixed")
+	if r.Kind != KindPOSRPT || r.Identity.FlightID != "DL0170" || r.Identity.Flight != "DL170" || r.Identity.Tail != "N515DN" || r.Pos.Lon < 149 {
+		t.Errorf("prefixed: %v %+v %+v", r.Kind, r.Identity, r.Pos)
+	}
+	// Fiji: a hyphenated tail, a wind direction below zero (-142 is 218) and no ETA.
+	_, r = load(t, "posrpt_fiji_negwind")
+	if r.Kind != KindPOSRPT || r.Identity.Tail != "DQ-FAM" || *r.Wx.WindDirDeg < 0 || *r.Wx.WindDirDeg > 360 {
+		t.Errorf("fiji: %v %+v %+v", r.Kind, r.Identity, r.Wx)
+	}
+	res, _ := Decode(Message{Label: "80", Text: "3N01 POSRPT 0811/26 KLAX/NFFN .DQ-FAM\n/POS S03020W165549/ALT 400/MCH 845/FOB 0207\n/TME 1447/WND -142 16/OAT -53/TAS 489/ETA 1739"})
+	if res.Pos == nil || *res.Wx.WindDirDeg != 218 || res.Pos.Lat > -3 || res.Pos.Lon > -165 {
+		t.Errorf("negative direction: %+v %+v", res.Pos, res.Wx)
+	}
+	for _, name := range []string{"posrpt_eta_dashes", "posrpt_eta_blank"} {
+		if _, r = load(t, name); r.Kind != KindPOSRPT || r.Pos == nil || r.Fields["eta"] != nil {
+			t.Errorf("%s: %v %+v %v", name, r.Kind, r.Pos, r.Fields)
+		}
+	}
+}
+
+func TestResolveDayTime(t *testing.T) {
+	at := func(d, h, m int) time.Time { return time.Date(2026, 10, d, h, m, 0, 0, time.UTC) }
+	sec := func(h, m int) float64 { return float64(h*3600 + m*60) }
+	for _, tc := range []struct {
+		name string
+		day  int
+		s    float64
+		recv time.Time
+		want time.Time
+	}{
+		{"on time", 30, sec(14, 54), at(30, 14, 51), at(30, 14, 54)}, // the station is three minutes early
+		{"an hour late", 30, sec(13, 54), at(30, 14, 52), at(30, 13, 54)},
+		{"5 h late, over midnight", 30, sec(19, 41), at(31, 1, 10), at(30, 19, 41)},
+		{"flight dated the 30th, report after midnight UTC", 30, sec(2, 0), at(31, 2, 3), at(31, 2, 0)},
+		{"7 h late, same day", 28, sec(10, 20), at(28, 17, 30), at(28, 10, 20)},
+		{"a flight dated the 28th, reporting late in the evening of the 29th", 28, sec(23, 0), at(30, 3, 0), at(29, 23, 0)},
+		{"no matching day: the latest time of day", 15, sec(10, 20), at(30, 12, 0), at(30, 10, 20)},
+	} {
+		if got := ResolveDayTime(tc.day, tc.s, tc.recv); !got.Equal(tc.want) {
+			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

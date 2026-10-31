@@ -22,6 +22,7 @@ const (
 	KindACMF     Kind = "acmf_report"
 	KindAOC      Kind = "aoc_position"
 	KindPOS      Kind = "pos_report"
+	KindPOSRPT   Kind = "posrpt"
 	KindUnknown  Kind = "unknown"
 )
 
@@ -123,6 +124,8 @@ func classify(label, body string) (Kind, string, Direction) {
 		k, defLabel = KindACMF, "H1"
 	case posRptRe.MatchString(body):
 		k, defLabel = KindPOS, "H1"
+	case posrptRe.MatchString(body):
+		k, defLabel = KindPOSRPT, "80"
 	case aocRe.MatchString(body):
 		k, defLabel = KindAOC, "83"
 	case strings.Contains(body, ".AFN/"):
@@ -227,6 +230,8 @@ func Decode(m Message) (Result, error) {
 		parseAOC(body, &r)
 	case KindPOS:
 		parsePosRpt(body, &r)
+	case KindPOSRPT:
+		parsePOSRPT(body, &r)
 	case KindAFN:
 		parseAFN(body, &r)
 	case KindDATIS:

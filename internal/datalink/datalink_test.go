@@ -914,3 +914,30 @@ func TestMarkLate(t *testing.T) {
 		t.Errorf("second pass changed %d", n)
 	}
 }
+
+// DAL39's POSRPT from Point Conception arrived at 01:10 on the 31st carrying 19:41: it is placed at 19:41 on the 30th.
+func TestPOSRPTIsPlacedAtItsOwnTime(t *testing.T) {
+	st := newStore(t)
+	f := fixture(t, "posrpt_dal39_late")
+	if _, err := Ingest(st, "A63DFF", msg(1, f)); err != nil {
+		t.Fatal(err)
+	}
+	ms, _ := st.Messages("A63DFF", f.Received.Add(-time.Hour), f.Received.Add(time.Hour), 5)
+	m := ms[0]
+	if m.Kind != "posrpt" || m.PosT == nil || !m.PosT.Equal(time.Date(2026, 10, 30, 19, 41, 0, 0, time.UTC)) || m.Lat == nil {
+		t.Fatalf("kind %q posT %v", m.Kind, m.PosT)
+	}
+	if m.TimeFlag || !strings.Contains(m.TimeNote, "5h 29m") {
+		t.Errorf("flag=%v note=%q", m.TimeFlag, m.TimeNote)
+	}
+	if m.Tail != "N501DN" {
+		t.Errorf("tail = %q", m.Tail)
+	}
+	// Sent on time (the station stamps three minutes early) there is no note.
+	g := fixture(t, "posrpt_prefixed") // 13:03:34, TME 13:06
+	Ingest(st, "A6745A", msg(2, g))
+	ms, _ = st.Messages("A6745A", g.Received.Add(-time.Hour), g.Received.Add(time.Hour), 5)
+	if ms[0].TimeNote != "" || ms[0].TimeFlag {
+		t.Errorf("on time: %q %v", ms[0].TimeNote, ms[0].TimeFlag)
+	}
+}

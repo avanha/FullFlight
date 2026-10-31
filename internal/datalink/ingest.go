@@ -90,7 +90,7 @@ func decodeInto(st *store.Store, m *store.Message, dir decoder.Direction) {
 			if res.Kind == decoder.KindFMS {
 				m.TimeNote, m.TimeFlag = compareTimes(m.T, fmt.Sprint(res.Fields["wpt_time"]))
 			}
-			if res.Kind == decoder.KindPOS {
+			if res.Kind == decoder.KindPOS || res.Kind == decoder.KindPOSRPT {
 				m.TimeNote, m.TimeFlag = datedLate(m.T, t)
 			}
 			// A position whose time is in doubt cannot be judged against where other fixes were at that

@@ -91,3 +91,32 @@ func ResolveMonthDay(mmddhhmm int, ref time.Time) time.Time {
 	}
 	return best
 }
+
+// ResolveDayTime places a time of day (seconds since 00:00 UTC) that comes with a day of the month, which is the day
+// the flight is dated, not always the UTC day of the report (a flight that crosses midnight UTC is still dated
+// for its start). It is the latest such time not after recv (allowing ClockSkew) whose UTC day, or the day before it,
+// is the one given. That rules out a time of day that falls on an unrelated day, which the time of day alone cannot,
+// but a report more than a day late can still be a day out: the 28th and the 29th both fit "dated the 28th" (the
+// 29th for a flight that crossed midnight), and the latest is taken. Reports of this kind have been at most about
+// twelve hours late. If no day in the last ten matches, the latest time of day before recv is used.
+func ResolveDayTime(day int, secs float64, recv time.Time) time.Time {
+	recv = recv.UTC()
+	base := recv.Truncate(24 * time.Hour)
+	var fallback time.Time
+	for k := 0; k <= 10; k++ {
+		t := base.AddDate(0, 0, -k).Add(time.Duration(secs * float64(time.Second)))
+		if t.After(recv.Add(ClockSkew)) {
+			continue
+		}
+		if fallback.IsZero() {
+			fallback = t
+		}
+		if t.Day() == day || t.AddDate(0, 0, -1).Day() == day {
+			return t
+		}
+	}
+	if fallback.IsZero() {
+		return recv
+	}
+	return fallback
+}
