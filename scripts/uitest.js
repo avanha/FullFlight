@@ -488,11 +488,11 @@ highlightGroup = null;
     lat: 10, lon: 100, wx: {dir: 70, kt: 50, temp_c: -45}, gs: 520, trk: 184};
   r = await draw([], [wxmsg], false);
   let dotTip = lines(r.circles.find(c => c.o.radius === 4).tooltip);
-  assert.ok(dotTip.includes('wind from 070° at 50 kt · -45°C'), 'wind (3 digits) and temperature: ' + dotTip);
+  assert.ok(dotTip.includes('wind 070°/50kt · -45°C'), 'wind (3 digits) and temperature: ' + dotTip);
   assert.ok(dotTip.includes('520 kt · track 184°'), 'speed and track: ' + dotTip);
   r = await draw([], [{...wxmsg, wx: {kt: 12.4}, gs: null, trk: null}], false);
   dotTip = lines(r.circles.find(c => c.o.radius === 4).tooltip);
-  assert.ok(dotTip.includes('wind 12 kt') && !dotTip.some(l => /track|°C/.test(l)), 'only what is known: ' + dotTip);
+  assert.ok(dotTip.includes('wind 12kt') && !dotTip.some(l => /track|°C/.test(l)), 'only what is known: ' + dotTip);
   r = await draw([], [{...wxmsg, wx: undefined, gs: undefined, trk: undefined}], false);
   assert.strictEqual(lines(r.circles.find(c => c.o.radius === 4).tooltip).length, 2, 'summary and time only when there is nothing else');
   // a REP081 summary carries the weather itself: broken at the OAT, and not repeated as a weather line
@@ -500,7 +500,7 @@ highlightGroup = null;
   dotTip = lines(r.circles.find(c => c.o.radius === 4).tooltip);
   assert.strictEqual(dotTip[0], 'REP081 VHHH\u2192YSSY 12.345N 150.000E FL380', 'the position and level on the first line: ' + dotTip);
   assert.strictEqual(dotTip[1], 'OAT -52.0\u00b0C, wind 270\u00b0/80kt', 'then the weather, once: ' + dotTip);
-  assert.ok(!dotTip.some(l => l.startsWith('wind from')), 'no second, decoded wind line: ' + dotTip);
+  assert.ok(!dotTip.some(l => l.startsWith('wind ')), 'no second, decoded wind line: ' + dotTip);
 
   // ===== 8m. waypoints named in CPDLC reports ====================================================
   const wp = (name, exact, role = 'next', extra = {}) => ({name, role, lat: 5 + name.length, lon: 120, exact, source: exact ? 'database' : 'projected', how: exact ? 'from nav db (2013 src)' : 'estimated: 61 nm ahead on track 122° at 520 kt, by its ETA', t: '2026-10-30T18:55:00Z', ...extra});

@@ -319,6 +319,7 @@ async function refresh() {
     li.querySelector('.del').onclick = async e => { e.stopPropagation(); await api('/api/watches/' + w.id, {method: 'DELETE'}); refresh(); };
     li.onclick = () => {
       if (selected !== w.id) { selectedMsg = null; expanded.clear(); highlight.clearLayers(); }
+      clearAirport(); clearFixes();   // whatever a search tab left on the map
       selected = w.id;
       refresh();
       showTrack(w, true);
@@ -347,9 +348,9 @@ function wxLine(m) {
   if (!w) return '';
   const parts = [];
   const dir = w.dir != null ? `${String(Math.round(w.dir) % 360).padStart(3, '0')}°` : null;   // the direction it blows from
-  if (dir && w.kt != null) parts.push(`wind from ${dir} at ${Math.round(w.kt)} kt`);
-  else if (w.kt != null) parts.push(`wind ${Math.round(w.kt)} kt`);
-  else if (dir) parts.push(`wind from ${dir}`);
+  if (dir && w.kt != null) parts.push(`wind ${dir}/${Math.round(w.kt)}kt`);
+  else if (w.kt != null) parts.push(`wind ${Math.round(w.kt)}kt`);
+  else if (dir) parts.push(`wind ${dir}`);
   if (w.temp_c != null) parts.push(`${Math.round(w.temp_c * 10) / 10}°C`);
   return parts.join(' · ');
 }
@@ -1450,11 +1451,28 @@ $('#aptq').onkeydown = e => {   // Enter goes to the first match
   if (e.key === 'Enter' && airportData && airportData.airports.length) { e.preventDefault(); showAirport(airportData.airports[0]); }
 };
 
+// What a search tab put on the map goes when it is left, or when a target is chosen: the airport's circle, the chosen
+// fix and the "all on the map" dots.
+function clearAirport() {
+  airportGroup.clearLayers();
+  airportChosen = null;
+  if (airportData) renderAirports();
+}
+function clearFixes() {
+  fixGroup.clearLayers();
+  fixAllGroup.clearLayers();
+  fixChosen = null;
+  $('#fixall').checked = false;
+  if (fixData) renderFixes();
+}
+
 function showTab(name) {
   for (const t of ['watch', 'fixes', 'airports']) {
     $('#tab-' + t).hidden = name !== t;
     $('#tab' + t).classList.toggle('on', name === t);
   }
+  if (name !== 'airports') clearAirport();
+  if (name !== 'fixes') clearFixes();
   if (name === 'fixes') { loadFixes(); drawAllFixes(); }
   if (name === 'airports') loadAirports();
 }
