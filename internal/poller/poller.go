@@ -286,7 +286,7 @@ const (
 	// on the ground must be to count as having arrived (big airports have
 	// runways several miles from the reference point).
 	ArrivalRadiusNM = 10.0
-	// An aircraft last seen below ApproachAltFt within ApproachRadiusNM of the
+	// An aircraft last seen below ApproachAltFt (above the field) within ApproachRadiusNM of the
 	// destination, then silent for VanishedAfter, is taken to have landed
 	// (many arrivals drop out of ADS-B coverage on the ground).
 	ApproachRadiusNM = 15.0
@@ -314,7 +314,7 @@ func (p *Poller) checkVanishedNearDest(e *watchlist.Entry, now time.Time) bool {
 		return false
 	}
 	last, ok := p.Store.LastPosition(e.Hex)
-	if !ok || now.Sub(last.T) < VanishedAfter || last.AltFt == nil || *last.AltFt > ApproachAltFt {
+	if !ok || now.Sub(last.T) < VanishedAfter || last.AltFt == nil || *last.AltFt-dest.ElevFt > ApproachAltFt {
 		return false
 	}
 	if geo.DistNM(last.Lat, last.Lon, dest.Lat, dest.Lon) > ApproachRadiusNM {

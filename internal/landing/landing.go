@@ -19,8 +19,9 @@ import (
 const (
 	// RadiusNM is how near an airport the last fix must be.
 	RadiusNM = 15.0
-	// MaxAltFt is the highest the last fix may be (barometric, so field elevation is not subtracted).
-	MaxAltFt = 5000.0
+	// MaxHeightFt is the highest above the field the last fix may be. The altitude is barometric, so
+	// this is height above the field to within the pressure setting, a few hundred feet at most.
+	MaxHeightFt = 5000.0
 	// MaxGS is the fastest the last fix may be going: faster is not an approach.
 	MaxGS = 250.0
 	// AheadDeg is how far off its track the airport may lie, for a fix with a track.
@@ -75,12 +76,15 @@ func Infer(f Fix, now time.Time, dest string) *Landing {
 		h := hits[0]
 		return &Landing{h.Airport, h.DistNM, f.T, fmt.Sprintf("last fix on the ground, %.1f nm from %s", h.DistNM, code(h.Airport))}
 	}
-	if f.AltFt == nil || *f.AltFt > MaxAltFt || f.GS == nil || *f.GS > MaxGS {
+	if f.AltFt == nil || f.GS == nil || *f.GS > MaxGS {
 		return nil
 	}
 	var best *airports.Hit
 	for i := range hits {
 		h := &hits[i]
+		if height(*f.AltFt, h.Airport) > MaxHeightFt {
+			continue // too high above this airport to be landing at it
+		}
 		if f.Track != nil && angleDiff(bearing(f.Lat, f.Lon, h.Lat, h.Lon), *f.Track) > AheadDeg && h.DistNM > 1 {
 			continue // behind it or off to the side: it is not heading there
 		}
@@ -104,11 +108,23 @@ func Infer(f Fix, now time.Time, dest string) *Landing {
 	if now.Before(at.Add(Margin)) {
 		return nil // it may still be on the way down
 	}
-	basis := fmt.Sprintf("last fix %.0f ft, %.0f kt, %.1f nm from %s", *f.AltFt, *f.GS, best.DistNM, code(best.Airport))
+	basis := fmt.Sprintf("last fix %.0f ft", *f.AltFt)
+	if best.HasElev {
+		basis += fmt.Sprintf(" (%.0f above the field)", height(*f.AltFt, best.Airport))
+	}
+	basis += fmt.Sprintf(", %.0f kt, %.1f nm from %s", *f.GS, best.DistNM, code(best.Airport))
 	if f.VRate != nil && *f.VRate < -200 {
 		basis += fmt.Sprintf(", descending %.0f ft/min", -*f.VRate)
 	}
 	return &Landing{best.Airport, best.DistNM, at, basis + ", and nothing since"}
+}
+
+// height is the altitude above an airport's elevation, or the altitude itself if the elevation is not known.
+func height(altFt float64, a airports.Airport) float64 {
+	if a.HasElev {
+		return altFt - a.ElevFt
+	}
+	return altFt
 }
 
 func code(a airports.Airport) string {

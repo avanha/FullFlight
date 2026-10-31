@@ -20,6 +20,8 @@ var data string
 type Airport struct {
 	ICAO, IATA, Name, City string
 	Lat, Lon               float64
+	ElevFt                 float64 // field elevation above mean sea level
+	HasElev                bool    // false if the data has none
 }
 
 var (
@@ -35,10 +37,15 @@ func load() {
 	if err != nil {
 		panic("airports: bad embedded csv: " + err.Error())
 	}
-	for _, r := range rows[1:] { // header: icao,iata,name,city,lat,lon
+	for _, r := range rows[1:] { // header: icao,iata,name,city,lat,lon,elevation_ft
 		lat, _ := strconv.ParseFloat(r[4], 64)
 		lon, _ := strconv.ParseFloat(r[5], 64)
 		a := Airport{ICAO: r[0], IATA: r[1], Name: r[2], City: r[3], Lat: lat, Lon: lon}
+		if len(r) > 6 && r[6] != "" {
+			if e, err := strconv.ParseFloat(r[6], 64); err == nil {
+				a.ElevFt, a.HasElev = e, true
+			}
+		}
 		all = append(all, a)
 		byICAO[a.ICAO] = a
 		if a.IATA != "" {

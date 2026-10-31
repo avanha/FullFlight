@@ -45,6 +45,8 @@ Add an optional destination, IATA or ICAO: `UA869 2026-10-31 SFO`.
 
 Airport data: OurAirports (public domain), large and medium airports plus any
 with an IATA code, embedded from `internal/airports/airports.csv`.
+Each has its field elevation (used to judge height above the field when inferring a landing); refresh them with
+`scripts/add-airport-elevations.py` and a downloaded copy of OurAirports' `airports.csv`.
 
 Every hex/tail pairing ever seen (from ADS-B or airframes.io) is kept in the
 `airframe` table forever, independent of watches; see `GET /api/airframes`.

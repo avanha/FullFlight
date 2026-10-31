@@ -29,7 +29,7 @@ func TestLandingAtNarita(t *testing.T) {
 	if d := l.At.Sub(t0); d < 40*time.Second || d > 55*time.Second {
 		t.Errorf("touchdown %v after the fix, want about 47 s", d)
 	}
-	if l.Basis != "last fix 400 ft, 147 kt, 1.9 nm from RJAA, descending 1024 ft/min, and nothing since" {
+	if l.Basis != "last fix 400 ft (259 above the field), 147 kt, 1.9 nm from RJAA, descending 1024 ft/min, and nothing since" {
 		t.Errorf("basis = %q", l.Basis)
 	}
 	// Knowing where it was going changes nothing here.
@@ -63,6 +63,19 @@ func TestNotLanding(t *testing.T) {
 	remote := Fix{T: t0, Lat: 30, Lon: -150, AltFt: f(400), GS: f(147), Track: f(330)}
 	if Infer(remote, later, "") != nil {
 		t.Error("no airport within reach")
+	}
+}
+
+// Denver's field is at 5,431 ft: an aircraft there is "under 5,000 ft" only above the field, not by the altimeter.
+func TestHighAirport(t *testing.T) {
+	fix := Fix{T: t0, Lat: 39.90, Lon: -104.67, AltFt: f(5900), GS: f(150), Track: f(180), VRate: f(-700)}
+	l := Infer(fix, t0.Add(10*time.Minute), "")
+	if l == nil || l.Airport.ICAO != "KDEN" {
+		t.Fatalf("Denver: %+v", l)
+	}
+	fix.AltFt = f(11000) // 5,600 ft above the field: still on the way down from the north, not landing
+	if Infer(fix, t0.Add(10*time.Minute), "") != nil {
+		t.Error("11,000 ft over Denver is not a landing")
 	}
 }
 
