@@ -16,6 +16,7 @@ import (
 	"github.com/avanha/fullflight/internal/airlines"
 	"github.com/avanha/fullflight/internal/airports"
 	"github.com/avanha/fullflight/internal/flights"
+	"github.com/avanha/fullflight/internal/landing"
 	"github.com/avanha/fullflight/internal/navdata"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/watchlist"
@@ -88,26 +89,59 @@ func fail(w http.ResponseWriter, code int, msg string) {
 }
 
 type watchJSON struct {
-	ID       int64       `json:"id"`
-	Kind     string      `json:"kind"`
-	Ident    string      `json:"ident"`
-	Date     string      `json:"date,omitempty"`
-	Dest     string      `json:"dest,omitempty"` // ICAO code
-	DestName string      `json:"dest_name,omitempty"`
-	DestLat  *float64    `json:"dest_lat,omitempty"` // for stopping a projection at the destination
-	DestLon  *float64    `json:"dest_lon,omitempty"`
-	Start    time.Time   `json:"start"`
-	End      time.Time   `json:"end"`
-	Status   string      `json:"status"`
-	Hex      string      `json:"hex,omitempty"`
-	Tail     string      `json:"tail,omitempty"`
-	Callsign string      `json:"callsign,omitempty"`
-	Type     string      `json:"type,omitempty"` // aircraft type, e.g. A359
-	LastPos  *lastPos    `json:"last_pos,omitempty"`
-	Route    *routeJSON  `json:"route,omitempty"`
-	Flight   *flightJSON `json:"flight,omitempty"`    // tail and hex watches only: the flight it is operating
-	Notes    int         `json:"notes,omitempty"`     // notes you have written about this airframe
-	LastNote string      `json:"last_note,omitempty"` // the newest, abbreviated, for a hover
+	ID       int64        `json:"id"`
+	Kind     string       `json:"kind"`
+	Ident    string       `json:"ident"`
+	Date     string       `json:"date,omitempty"`
+	Dest     string       `json:"dest,omitempty"` // ICAO code
+	DestName string       `json:"dest_name,omitempty"`
+	DestLat  *float64     `json:"dest_lat,omitempty"` // for stopping a projection at the destination
+	DestLon  *float64     `json:"dest_lon,omitempty"`
+	Start    time.Time    `json:"start"`
+	End      time.Time    `json:"end"`
+	Status   string       `json:"status"`
+	Hex      string       `json:"hex,omitempty"`
+	Tail     string       `json:"tail,omitempty"`
+	Callsign string       `json:"callsign,omitempty"`
+	Type     string       `json:"type,omitempty"` // aircraft type, e.g. A359
+	LastPos  *lastPos     `json:"last_pos,omitempty"`
+	Route    *routeJSON   `json:"route,omitempty"`
+	Flight   *flightJSON  `json:"flight,omitempty"`    // tail and hex watches only: the flight it is operating
+	Landing  *landingJSON `json:"landing,omitempty"`   // the aircraft has probably landed: its last fix was low, near an airport, and nothing followed
+	Notes    int          `json:"notes,omitempty"`     // notes you have written about this airframe
+	LastNote string       `json:"last_note,omitempty"` // the newest, abbreviated, for a hover
+}
+
+// landingJSON is an inferred landing (see package landing).
+type landingJSON struct {
+	Code   string    `json:"code"`
+	Name   string    `json:"name"`
+	Lat    float64   `json:"lat"`
+	Lon    float64   `json:"lon"`
+	At     time.Time `json:"at"` // when it probably touched down
+	DistNM float64   `json:"dist_nm"`
+	Basis  string    `json:"basis"`
+}
+
+// landing says whether the aircraft's newest position, from any source, is where it landed. A later
+// datalink position (ADS-C, a periodic report) means it did not.
+func (s *Server) landing(hex, dest string) *landingJSON {
+	p, ok := s.Store.LastPosition(hex)
+	if !ok {
+		return nil
+	}
+	if m, ok := s.Store.LastMessagePosition(hex); ok && m.T.After(p.T) {
+		return nil
+	}
+	l := landing.Infer(landing.Fix{T: p.T, Lat: p.Lat, Lon: p.Lon, AltFt: p.AltFt, GS: p.GS, Track: p.Track, VRate: p.VRate, OnGround: p.OnGround}, s.now(), dest)
+	if l == nil {
+		return nil
+	}
+	code := l.Airport.ICAO
+	if code == "" {
+		code = l.Airport.IATA
+	}
+	return &landingJSON{Code: code, Name: l.Airport.Name, Lat: l.Airport.Lat, Lon: l.Airport.Lon, At: l.At, DistNM: l.DistNM, Basis: l.Basis}
 }
 
 // flightJSON is the flight an aircraft is currently operating, from its newest ADS-B callsign
@@ -164,7 +198,7 @@ const (
 	InfoHideAfter = 24 * time.Hour
 )
 
-// routeJSON is the origin and destination the aircraft last reported (REP081).
+// routeJSON is the origin and destination the aircraft last reported (REP081, ACMF, an airline report or a flight plan).
 type routeJSON struct {
 	From     string    `json:"from"`
 	To       string    `json:"to"`
@@ -186,7 +220,7 @@ func (s *Server) route(hex string) *routeJSON {
 	if age > InfoHideAfter {
 		return nil
 	}
-	out := &routeJSON{From: r.From, To: r.To, T: r.T, Stale: r.Source == "REP081" && age > InfoFreshFor || r.Source == "flight plan" && age > PlanFreshFor, Source: r.Source}
+	out := &routeJSON{From: r.From, To: r.To, T: r.T, Stale: r.Source != "flight plan" && age > InfoFreshFor || r.Source == "flight plan" && age > PlanFreshFor, Source: r.Source}
 	if a, ok := airports.Lookup(r.From); ok {
 		out.FromName = a.Name
 	}
@@ -238,6 +272,11 @@ func (s *Server) withAircraft(j watchJSON) watchJSON {
 		j.Type = s.Store.TypeForHex(j.Hex)
 		j.LastPos = s.lastPosition(j.Hex)
 		j.Route = s.route(j.Hex)
+		dest := j.Dest
+		if dest == "" && j.Route != nil && !j.Route.Stale {
+			dest = j.Route.To
+		}
+		j.Landing = s.landing(j.Hex, dest)
 		if n, latest := s.Store.NoteSummary(j.Hex); n > 0 {
 			j.Notes, j.LastNote = n, preview(latest)
 		}

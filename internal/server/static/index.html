@@ -69,6 +69,7 @@
               border-radius: 3px; background: rgba(255,255,255,.92); border: 1px solid #bbb; color: #555; white-space: nowrap; pointer-events: none; }
   .agebadge.s2 { color: #d9480f; border-color: #d9480f; }
   .agebadge.s3 { color: #8a5a12; border-color: #a8793a; }
+  .agebadge.s5 { color: #2b8a3e; border-color: #2b8a3e; font-weight: 600; }
   .agebadge.s4 { color: #555; border: 1px dashed #868e96; font-style: italic; }
   .agering { position: absolute; left: -3px; top: -3px; width: 30px; height: 30px; border: 2px dashed #868e96; border-radius: 50%; pointer-events: none; }
   .plane svg { display: block; filter: drop-shadow(0 1px 2px rgba(0,0,0,.5)); }
@@ -265,7 +266,7 @@ async function refresh() {
     if (w.last_pos || w.type) {
       const lp = document.createElement('small');
       lp.className = 'lastpos';
-      lp.textContent = [w.last_pos && `last ${w.last_pos.kind} ${fmtTime(w.last_pos.t)} (${ago(w.last_pos.t)})`, w.type].filter(Boolean).join(' · ');
+      lp.textContent = [w.last_pos && `last ${w.last_pos.kind} ${fmtTime(w.last_pos.t)} (${ago(w.last_pos.t)})`, w.landing && `landed ${w.landing.code} ~${fmtTime(w.landing.at)}`, w.type].filter(Boolean).join(' · ');
       li.append(lp);
     }
     if (w.flight) {
@@ -343,22 +344,23 @@ function aircraftTip(w, pts, fixMs) {
   const t = p.on_ground ? '' : trend(pts);
   const motion = [p.gs != null ? `${num(p.gs)} kt` : '', p.track != null ? `track ${Math.round(p.track)}°` : ''].filter(Boolean).join(' · ');
   const dest = w.route && !w.route.stale ? `${w.route.from ? w.route.from + ' → ' : '→ '}${w.route.to}` : '';
-  return tip(aircraftName(w, p.callsign), dest, [alt, t].filter(Boolean).join('  '), motion, `${fmtAgo(p.t)} (${p.source})`, staleNote(Date.now() - (fixMs ?? Date.parse(p.t))));
+  return tip(aircraftName(w, p.callsign), dest, [alt, t].filter(Boolean).join('  '), motion, `${fmtAgo(p.t)} (${p.source})`, fixNote(w, Date.now() - (fixMs ?? Date.parse(p.t))));
 }
 
 // An aeroplane silhouette (Material "airplanemode_active", nose up), turned to the track.
 const PLANE_PATH = 'M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z';
 // ageMs: how old the fix the plane stands on is. An old one fades through AGE_STEPS and shows its age.
-function planeIcon(track, {fill = '#c00', opacity = 1, ageMs = null} = {}) {
+function planeIcon(track, {fill = '#c00', opacity = 1, ageMs = null, landed = false} = {}) {
   const deg = Number.isFinite(Number(track)) ? Number(track) : 0;
-  const step = ageMs == null ? null : ageStep(ageMs);
+  const step = landed || ageMs == null ? null : ageStep(ageMs);
   if (step) { fill = step.fill; opacity = step.op; }
+  if (landed) fill = '#2b8a3e';
   return L.divIcon({
     className: 'plane', iconSize: [30, 30], iconAnchor: [15, 15],
     html: (step && step.ring ? '<span class="agering"></span>' : '') +
           `<svg viewBox="0 0 24 24" width="30" height="30" style="transform: rotate(${deg}deg); opacity: ${Number(opacity)}">` +
           `<path d="${PLANE_PATH}" fill="${fill}" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/></svg>` +
-          (step ? `<span class="agebadge s${step.n}">${ago(Date.now() - ageMs).replace(' ago', '')}</span>` : ''),
+          (landed ? '<span class="agebadge s5">landed</span>' : step ? `<span class="agebadge s${step.n}">${ago(Date.now() - ageMs).replace(' ago', '')}</span>` : ''),
   });
 }
 
@@ -413,18 +415,21 @@ const AGE_STEPS = [
 ];
 const ageStep = ageMs => AGE_STEPS.filter(s => ageMs >= s.min * 60000).pop() || null;
 const staleNote = ageMs => (ageStep(ageMs) || {}).note || '';
+// The server's inference that the aircraft landed (its last fix was low, near an airport, and nothing followed).
+const landingNote = l => `landed at ${l.name} (${l.code}), inferred, about ${fmtTime(l.at)}: ${l.basis}`;
+const fixNote = (w, ageMs) => w.landing ? landingNote(w.landing) : staleNote(ageMs);
 let planeMark = null;   // the plane at the newest fix: {marker, track, t, html}
 // Put the plane on the map at a fix of time t (ms).
-function placePlane(lat, lon, track, t) {
-  const icon = planeIcon(track, {ageMs: Date.now() - t});
+function placePlane(lat, lon, track, t, landed = false) {
+  const icon = planeIcon(track, {ageMs: Date.now() - t, landed});
   const marker = L.marker(ll(lat, lon), {icon, zIndexOffset: 1000}).addTo(layer);
-  planeMark = {marker, track, t, html: icon.html};
+  planeMark = {marker, track, t, landed, html: icon.html};
   return marker;
 }
 // The map is redrawn every 30 s but the plane ages every second: bring its icon up to date.
 function refreshPlaneAge() {
   if (!planeMark) return;
-  const icon = planeIcon(planeMark.track, {ageMs: Date.now() - planeMark.t});
+  const icon = planeIcon(planeMark.track, {ageMs: Date.now() - planeMark.t, landed: planeMark.landed});
   if (icon.html !== planeMark.html) { planeMark.marker.setIcon(icon); planeMark.html = icon.html; }
 }
 let aheadMin = 30, lastData = null, lastTrack = {pts: [], msgs: []};
@@ -490,7 +495,7 @@ function walkRoute(plan, L0, trk) {
 }
 
 function projection(w, pts, msgs, nowMs, ahead = aheadMin, plan = null) {
-  if (!ahead) return null;
+  if (!ahead || w.landing) return null;   // an aircraft that has landed is not flying on
   const cands = [
     ...pts.map(p => ({lat: p.lat, lon: p.lon, t: Date.parse(p.t), gs: p.gs, trk: p.track, ground: !!p.on_ground, src: p.source || 'ADS-B'})),
     ...msgs.filter(m => m.lat != null && !m.suspect && !m.time_unverified).map(m =>
@@ -889,11 +894,11 @@ async function showTrack(w, focus) {
   // A plane standing on a report is that report: clicking it selects the message.
   const cur = current ? latestFix(pts, msgs) : null;
   if (cur && cur.kind === 'adsb') {
-    placePlane(cur.lat, cur.lon, cur.ref.track, cur.t).bindTooltip(aircraftTip(w, pts, cur.t));
+    placePlane(cur.lat, cur.lon, cur.ref.track, cur.t, !!w.landing).bindTooltip(aircraftTip(w, pts, cur.t));
   } else if (cur) {
     const m = cur.ref;
-    placePlane(m.lat, m.lon, m.trk, cur.t)
-      .bindTooltip(tip(`${aircraftName(w, null, false)}: last report`, m.summary, fmtAgo(m.pos_t || m.t), motionLine(m), wxLine(m), 'no newer ADS-B', staleNote(Date.now() - cur.t)))
+    placePlane(m.lat, m.lon, m.trk, cur.t, !!w.landing)
+      .bindTooltip(tip(`${aircraftName(w, null, false)}: last report`, m.summary, fmtAgo(m.pos_t || m.t), motionLine(m), wxLine(m), 'no newer ADS-B', fixNote(w, Date.now() - cur.t)))
       .on('click', () => pickMessage(m.id));
   }
 

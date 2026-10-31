@@ -240,6 +240,8 @@ func summarize(r Result) string {
 		return fmt.Sprintf("D-ATIS %v request for %v", r.Fields["atis_type"], r.Fields["airport"])
 	case KindACMF:
 		return acmfSummary(r)
+	case KindAOC:
+		return aocSummary(r)
 	case KindFMS:
 		if r.Pos == nil {
 			return "FMS position report"

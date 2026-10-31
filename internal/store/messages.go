@@ -300,7 +300,7 @@ func boolInt(b bool) int {
 type Route struct {
 	From, To string // ICAO codes
 	T        time.Time
-	Source   string // "REP081" or "flight plan"
+	Source   string // "REP081", "ACMF", "airline report" or "flight plan"
 }
 
 // LastRoute returns the newest origin/destination reported by the aircraft in a
@@ -531,13 +531,19 @@ func (s *Store) PositionTimes(hexAddr string, since, until time.Time) ([]time.Ti
 	return out, rows.Err()
 }
 
-// routeReportsSQL selects (t, origin, dest) from the two kinds of message that say where a flight is going: a
-// REP081 report and a filed flight plan (arguments: hex, from, to).
+// routeReportsSQL selects (t, origin, dest, source) from the kinds of message that say where a flight is going: a
+// REP081 report, a 787 ACMF report, an airline (label 83) position report and a filed flight plan (arguments:
+// hex, from, to).
 const routeReportsSQL = `
 	SELECT COALESCE(pos_ts, ts) AS t, COALESCE(json_extract(decoded, '$.fields.rep081.Origin'), '') AS origin,
 		json_extract(decoded, '$.fields.rep081.Dest') AS dest, 'REP081' AS src
 	FROM message WHERE hex=?1 AND kind='miam' AND COALESCE(pos_ts, ts) BETWEEN ?2 AND ?3
 	  AND json_extract(decoded, '$.fields.rep081.Dest') IS NOT NULL AND json_extract(decoded, '$.fields.rep081.Dest') != ''
+	UNION ALL
+	SELECT COALESCE(pos_ts, ts), COALESCE(json_extract(decoded, '$.fields.origin'), ''), json_extract(decoded, '$.fields.dest'),
+		CASE kind WHEN 'acmf_report' THEN 'ACMF' ELSE 'airline report' END
+	FROM message WHERE hex=?1 AND kind IN ('acmf_report', 'aoc_position') AND COALESCE(pos_ts, ts) BETWEEN ?2 AND ?3
+	  AND json_extract(decoded, '$.fields.dest') IS NOT NULL AND json_extract(decoded, '$.fields.dest') != ''
 	UNION ALL
 	SELECT ts, COALESCE(json_extract(decoded, '$.fields.plan.from'), ''), json_extract(decoded, '$.fields.plan.to'), 'flight plan'
 	FROM message WHERE hex=?1 AND kind='flight_plan' AND ts BETWEEN ?2 AND ?3

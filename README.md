@@ -112,6 +112,12 @@ carry a fix every 3 minutes (1 in descent): `N5810.2,W14513.5,302238, 35998,-49.
 DDHHMM, altitude, temperature, wind from/knots, phase (ER, CL, DC). Only the first block of a long report has
 the header, and the message's one position is its newest fix; the others are listed in its detail. Fix times are
 whole minutes. The header's trailing number counts seconds (zero point unknown) and a few fields are unexplained.
+Airline position reports (label 83, e.g. `M78AZG0001PHNL,RJAA,302314, 28.71, 173.77,40000,258,- 84.1, 62503`) are
+sent about every 30 minutes by United and ZIPAIR 787s: message number and flight (optional), origin, destination,
+DDHHMM, position in signed decimal degrees, altitude, the direction the wind blows from, the wind along the track
+(positive a tailwind), and a number we have not explained. They, the 787 ACMF reports, REP081 and filed flight
+plans all say where a flight is going, so any of them gives a watch its route, and a destination to stop the
+projection at.
 Cathay A350 REP081 reports name the flight's origin and destination (`VHHH YSSY`).
 The newest one is shown on the watch (`VHHH → YSSY (REP081 12m ago)`) and in the plane's
 hover, for tail and hex watches as well as flights. REP081 goes out about every 20
@@ -321,6 +327,16 @@ the age of the fix (`7m`, `2.5h`) that keeps counting between refreshes:
 | 60 min | grey, dashed ring | too old to project from: no ghost, no look-ahead |
 
 The plane's hover says which step it is in. (Whether the look-ahead is switched off is a separate setting.)
+
+**Landing.** Many arrivals drop out of ADS-B coverage on the final approach or the runway, and dead reckoning from
+such a fix would fly the aircraft on past the runway. So the server infers a landing, with or without a known
+destination: the newest position the aircraft has, from any source, is airborne and under 5,000 ft and 250 kt, or on
+the ground; an airport (large, medium or with an IATA code) is within 15 nm and, if the track is known, within 60
+degrees of it; and the time to reach it at the fix's speed, plus a minute for a late fix, has passed. A known
+destination wins when several airports are near. The watch then carries `landing` (airport, estimated touchdown, the
+evidence); the plane turns green with a `landed` badge, the projection is not drawn, and the sidebar and hover say
+`landed RJAA ~03:26:44Z`. A newer position of any kind clears it. It is an inference: a missed approach that then
+leaves coverage would be called a landing until the aircraft is heard again.
 
 ## Web page
 

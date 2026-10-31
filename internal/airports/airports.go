@@ -6,9 +6,12 @@ package airports
 import (
 	_ "embed"
 	"encoding/csv"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/avanha/fullflight/internal/geo"
 )
 
 //go:embed airports.csv
@@ -23,6 +26,7 @@ var (
 	once   sync.Once
 	byICAO map[string]Airport
 	byIATA map[string]Airport
+	all    []Airport
 )
 
 func load() {
@@ -35,6 +39,7 @@ func load() {
 		lat, _ := strconv.ParseFloat(r[4], 64)
 		lon, _ := strconv.ParseFloat(r[5], 64)
 		a := Airport{ICAO: r[0], IATA: r[1], Name: r[2], City: r[3], Lat: lat, Lon: lon}
+		all = append(all, a)
 		byICAO[a.ICAO] = a
 		if a.IATA != "" {
 			if _, dup := byIATA[a.IATA]; !dup {
@@ -57,4 +62,23 @@ func Lookup(code string) (Airport, bool) {
 		a, ok = byICAO[code]
 	}
 	return a, ok
+}
+
+// Hit is an airport and how far it is from a point.
+type Hit struct {
+	Airport
+	DistNM float64
+}
+
+// Near returns the airports within maxNM of a position, nearest first.
+func Near(lat, lon, maxNM float64) []Hit {
+	once.Do(load)
+	var out []Hit
+	for _, a := range all {
+		if d := geo.DistNM(lat, lon, a.Lat, a.Lon); d <= maxNM {
+			out = append(out, Hit{a, d})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].DistNM < out[j].DistNM })
+	return out
 }

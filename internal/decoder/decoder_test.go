@@ -645,3 +645,35 @@ func TestACMFReport(t *testing.T) {
 		t.Errorf("fix time = %v, want %v", r.Pos.At(f.Received), want)
 	}
 }
+
+func TestAOCPositionReport(t *testing.T) {
+	// ZIPAIR flight ZG1, Honolulu to Narita, heading west: the report names where it is going.
+	f, r := load(t, "aoc83_zipair")
+	if r.Kind != KindAOC || r.Label != "83" || r.Pos == nil {
+		t.Fatalf("zipair: %v %q %+v", r.Kind, r.Label, r.Pos)
+	}
+	if r.Fields["origin"] != "PHNL" || r.Fields["dest"] != "RJAA" || r.Identity.FlightID != "ZG0001" || r.Identity.Flight != "ZG1" {
+		t.Errorf("fields %v identity %+v", r.Fields, r.Identity)
+	}
+	near(t, "lat", r.Pos.Lat, 28.71, 1e-9)
+	near(t, "lon", r.Pos.Lon, 173.77, 1e-9)
+	if r.Pos.AltFt == nil || *r.Pos.AltFt != 40000 || r.Fields["tailwind_kt"] != -84.1 || r.Fields["wind_dir"] != 258.0 {
+		t.Errorf("alt %v fields %v", r.Pos.AltFt, r.Fields)
+	}
+	if want := time.Date(2026, 10, 30, 23, 14, 0, 0, time.UTC); !r.Pos.At(f.Received).Equal(want) {
+		t.Errorf("fix time = %v, want %v", r.Pos.At(f.Received), want)
+	}
+	if want := "Airline position report PHNL→RJAA 28.710N 173.770E FL400"; r.Summary != want {
+		t.Errorf("summary = %q", r.Summary)
+	}
+
+	// No message number or flight in front; the sign of the longitude is followed by spaces.
+	_, r = load(t, "aoc83_united_west")
+	if r.Kind != KindAOC || r.Pos == nil || r.Fields["origin"] != "KDEN" || r.Fields["dest"] != "LIRF" || r.Identity.Flight != "" {
+		t.Fatalf("united: %v %+v %v", r.Kind, r.Pos, r.Fields)
+	}
+	near(t, "lon", r.Pos.Lon, -4.15, 1e-9)
+	if r.Fields["tailwind_kt"] != 130.1 {
+		t.Errorf("tailwind = %v", r.Fields["tailwind_kt"])
+	}
+}

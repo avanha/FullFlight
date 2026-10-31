@@ -842,3 +842,57 @@ func TestFixesAPI(t *testing.T) {
 		t.Errorf("no database: %d %s", code, body)
 	}
 }
+
+// JA826J: its last ADS-B fix was 400 ft and 1.9 nm from Narita, then nothing. The watch says it landed there, and
+// where it was going comes from the airline's own position reports.
+func TestLandingAndTheRouteFromPositionReports(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	fix := time.Date(2026, 10, 31, 3, 25, 59, 0, time.UTC)
+	f := func(v float64) *float64 { return &v }
+	st.AddPosition(store.Position{Hex: "86D646", T: fix.Add(-2 * time.Minute), Lat: 35.6455, Lon: 140.4613, AltFt: f(2400), GS: f(181), Track: f(329), VRate: f(-992), Source: "adsb.fi"})
+	st.AddPosition(store.Position{Hex: "86D646", T: fix, Lat: 35.738, Lon: 140.3946, AltFt: f(400), GS: f(147), Track: f(330), VRate: f(-1024), Source: "adsb.lol"})
+	// A label-83 report four hours earlier names the destination.
+	rep := fix.Add(-4 * time.Hour)
+	rlat, rlon := 28.71, 173.77
+	st.AddMessage(store.Message{ID: 1, Hex: "86D646", T: rep, Label: "83", Text: "x", Kind: "aoc_position", Lat: &rlat, Lon: &rlon, PosT: &rep,
+		Decoded: `{"fields":{"origin":"PHNL","dest":"RJAA"}}`})
+	e, _ := watchlist.Parse("tail:JA826J", fix.Add(-time.Hour), time.Time{})
+	e.Hex = "86D646"
+	st.AddWatch(e)
+
+	get := func(now time.Time) (ws []struct {
+		Route   *struct{ From, To, Source string }
+		Landing *struct {
+			Code   string
+			DistNM float64 `json:"dist_nm"`
+			At     time.Time
+		}
+	}) {
+		ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+		defer ts.Close()
+		_, body := do(t, "GET", ts.URL+"/api/watches", "")
+		if err := json.Unmarshal([]byte(body), &ws); err != nil || len(ws) != 1 {
+			t.Fatalf("%v: %s", err, body)
+		}
+		return
+	}
+	// Half a minute after the fix it is still on the way down.
+	if ws := get(fix.Add(30 * time.Second)); ws[0].Landing != nil {
+		t.Errorf("landed too soon: %+v", ws[0].Landing)
+	}
+	ws := get(fix.Add(10 * time.Minute))
+	if ws[0].Landing == nil || ws[0].Landing.Code != "RJAA" || ws[0].Landing.DistNM > 3 || ws[0].Landing.At.Sub(fix) > time.Minute {
+		t.Errorf("landing = %+v", ws[0].Landing)
+	}
+	if ws[0].Route == nil || ws[0].Route.To != "RJAA" || ws[0].Route.From != "PHNL" || ws[0].Route.Source != "airline report" {
+		t.Errorf("route = %+v", ws[0].Route)
+	}
+	// A later report with a position, from any source, means it did not land there.
+	later := fix.Add(5 * time.Minute)
+	llat, llon := 35.9, 140.2
+	st.AddMessage(store.Message{ID: 2, Hex: "86D646", T: later, Label: "B6", Text: "y", Kind: "adsc", Lat: &llat, Lon: &llon, PosT: &later})
+	if ws := get(fix.Add(10 * time.Minute)); ws[0].Landing != nil {
+		t.Errorf("a newer report ignored: %+v", ws[0].Landing)
+	}
+}
