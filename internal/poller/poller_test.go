@@ -707,3 +707,44 @@ func TestProviderTakesCallsignOfUnknownAirline(t *testing.T) {
 		}
 	}
 }
+
+// An aircraft that is not transmitting (parked, landed, out of coverage) is asked about a quarter as often as one that is:
+// asking every source every 45 s about silence is most of the traffic, and the feeds rate-limit.
+func TestQuietAircraftArePolledLess(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 31, 4, 0, 0, 0, time.UTC)
+	for _, id := range []string{"hex:AAAAAA", "hex:BBBBBB"} {
+		e, _ := watchlist.Parse(id, now, time.Time{})
+		st.AddWatch(e)
+	}
+	live := ac(41)
+	live.Hex = "AAAAAA"
+	f := &fake{byHex: map[string][]adsb.Aircraft{"AAAAAA": {live}}} // BBBBBB is heard from never
+	p := &Poller{Store: st, ADSB: f, Now: func() time.Time { return now }, TrackingEvery: time.Second}
+	count := func(h string) (n int) {
+		for _, c := range f.calls {
+			if c == "hex:"+h {
+				n++
+			}
+		}
+		return
+	}
+	for i := 0; i < 8; i++ { // eight seconds, one poll opportunity each
+		p.Once(context.Background())
+		now = now.Add(time.Second)
+	}
+	if a, b := count("AAAAAA"), count("BBBBBB"); a != 8 || b != 2 {
+		t.Errorf("polls in 8 s: transmitting %d (want 8), silent %d (want 2: at once, then every four)", a, b)
+	}
+	// Once a silent aircraft is heard it is polled at the normal rate again.
+	f.byHex["BBBBBB"] = []adsb.Aircraft{func() adsb.Aircraft { a := ac(40); a.Hex = "BBBBBB"; return a }()}
+	f.calls = nil
+	for i := 0; i < 8; i++ {
+		p.Once(context.Background())
+		now = now.Add(time.Second)
+	}
+	if b := count("BBBBBB"); b < 6 {
+		t.Errorf("after being heard it was polled only %d times in 8 s", b)
+	}
+}

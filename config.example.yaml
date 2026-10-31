@@ -14,6 +14,7 @@ adsb:
 poll:
   waiting: 3m                  # flight entries not yet matched to an aircraft
   tracking: 45s                # aircraft being followed
+                               # (one not heard from for 5 minutes is asked about only every 4x this, to stay within the feeds' rate limits)
   stopover_grace: 3h           # flight watch ends after this long on the ground
 
 navdata:

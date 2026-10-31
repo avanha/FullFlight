@@ -54,6 +54,11 @@ type Poller struct {
 	WaitingEvery  time.Duration // flight entries not yet matched; default 3m
 	TrackingEvery time.Duration // entries following an aircraft; default 45s
 	MaxPosAge     time.Duration // ignore positions older than this; default 60s
+	// QuietAfter is how old an aircraft's newest position may be before it counts as quiet (parked, landed,
+	// out of coverage); default 5m. A quiet aircraft is polled only every QuietEvery (default four times
+	// TrackingEvery, 3m) instead of every TrackingEvery: asking all the sources every 45 s about an aircraft
+	// that is not transmitting is most of the traffic, and the feeds rate-limit.
+	QuietAfter, QuietEvery time.Duration
 	// StopoverGrace is how long a flight entry's aircraft may sit on the
 	// ground before the flight counts as finished; default 3h.
 	StopoverGrace time.Duration
@@ -91,6 +96,12 @@ func (p *Poller) defaults() {
 	}
 	if p.MaxPosAge == 0 {
 		p.MaxPosAge = 60 * time.Second
+	}
+	if p.QuietAfter == 0 {
+		p.QuietAfter = 5 * time.Minute
+	}
+	if p.QuietEvery == 0 {
+		p.QuietEvery = 4 * p.TrackingEvery
 	}
 	if p.StopoverGrace == 0 {
 		p.StopoverGrace = 3 * time.Hour
@@ -155,6 +166,8 @@ func (p *Poller) Once(ctx context.Context) {
 		every := p.TrackingEvery
 		if e.Status == watchlist.StatusWaiting {
 			every = p.WaitingEvery
+		} else if p.quiet(e, now) {
+			every = max(every, p.QuietEvery)
 		}
 		if t, ok := p.last[e.ID]; ok && now.Sub(t) < every {
 			continue
@@ -164,6 +177,16 @@ func (p *Poller) Once(ctx context.Context) {
 			p.Log.Warn("poll failed", "watch", e.Ident, "err", err)
 		}
 	}
+}
+
+// quiet reports whether the entry's aircraft has not been heard from lately: it has no position newer than
+// QuietAfter. An entry not yet matched to an aircraft is left to its own, slower, schedule.
+func (p *Poller) quiet(e watchlist.Entry, now time.Time) bool {
+	if e.Hex == "" {
+		return false
+	}
+	last, ok := p.Store.LastPosition(e.Hex)
+	return !ok || now.Sub(last.T) > p.QuietAfter
 }
 
 // poll queries one entry, latches/updates it, and records the position.
