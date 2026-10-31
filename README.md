@@ -11,12 +11,41 @@ positions (adsb.lol, adsb.fi) with ACARS/ADS-C/CPDLC datalink messages
 
 ## Build and run
 
-    brew install cmake pkgconf jansson   # macOS; libxml2/zlib come with the SDK
+FullFlight is a Go program that calls [libacars](https://github.com/szpajder/libacars) (C, built with cmake) to decode
+datalink messages, so building needs Go, a C compiler and the libacars libraries.
+
+**macOS**
+
+    brew install cmake pkgconf jansson   # libxml2/zlib come with the SDK
+
+**Debian, Ubuntu and other Debian-based Linux**
+
+    sudo apt install build-essential git cmake pkg-config libjansson-dev libxml2-dev zlib1g-dev
+
+- `build-essential` is the C compiler and `make` (Go needs the compiler for libacars, cgo); `git` is what
+  `make libacars` uses to fetch the libacars source; `pkg-config` is how Go finds the library afterwards.
+- **Install all three libraries** (`libjansson-dev`, `libxml2-dev`, `zlib1g-dev`). libacars builds without any of them
+  and quietly leaves the feature out: no zlib and compressed MIAM messages (the A350 reports) do not decode, no libxml2
+  and the XML ones do not, no jansson and its JSON ones do not. Nothing fails if one is missing, so check: after `make libacars`,
+  `grep WITH_ third_party/libacars/build/libacars/config.h` should print `#define WITH_ZLIB`, `WITH_LIBXML2` and
+  `WITH_JANSSON` (the `- zlib:`, `- libxml2:` and `- jansson:` lines of cmake's summary say the same, `enabled: TRUE`).
+  If one is missing, install its package and run `make libacars` again.
+- **Go** 1.27.3 or newer (see `go.mod`) from <https://go.dev/dl/>; the version in Debian's own `golang` package is
+  usually older. Put it on your `PATH` and check with `go version`.
+- Optional: `nodejs` for `make uitest`, and `sqlite3` to look inside the database.
+
+**Then, on either**
+
     make libacars                        # clones and builds libacars into third_party/
     make test
     make build                           # -> bin/fullflight
     cp config.example.yaml config.yaml   # edit; then:
     bin/fullflight -config config.yaml
+
+Use the `make` targets: they point Go at the libacars that `make libacars` installed under `third_party/install`.
+To run `go test` or `go build` yourself, first `export PKG_CONFIG_PATH=$PWD/third_party/install/lib/pkgconfig`; without it
+they stop with "Package libacars-2 was not found". The binary finds the library by itself (the path is built in), so it can
+be run from anywhere, but not if `third_party/` is moved or deleted.
 
 ## Watchlist
 
