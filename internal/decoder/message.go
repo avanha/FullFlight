@@ -23,6 +23,8 @@ const (
 	KindAOC      Kind = "aoc_position"
 	KindPOS      Kind = "pos_report"
 	KindPOSRPT   Kind = "posrpt"
+	KindPOSA1    Kind = "posa1"
+	KindSBPOS    Kind = "sbpos"
 	KindUnknown  Kind = "unknown"
 )
 
@@ -118,6 +120,10 @@ func classify(label, body string) (Kind, string, Direction) {
 	}
 	switch {
 	case k != "":
+	case posa1Re.MatchString(body):
+		k, defLabel = KindPOSA1, "16"
+	case sbPosRe.MatchString(body):
+		k, defLabel = KindSBPOS, "H1"
 	case posnRe.MatchString(body):
 		k, defLabel = KindFMS, "H1"
 	case acmfHeader.MatchString(body) || acmfPoint.MatchString(body):
@@ -165,6 +171,9 @@ func Decode(m Message) (Result, error) {
 		return r, nil
 	}
 	prefix, body := SplitPrefix(m.Text)
+	if strings.HasPrefix(m.Text, "POSA1") || strings.HasPrefix(m.Text, "SB0122BA_") {
+		prefix, body = "", m.Text // the latitude digits after POSA1N look like a message number
+	}
 	body = strings.TrimRight(body, "\r\n")
 	if noSlashARINC.MatchString(body) {
 		body = "/" + body
@@ -243,6 +252,10 @@ func Decode(m Message) (Result, error) {
 		parsePosRpt(body, &r)
 	case KindPOSRPT:
 		parsePOSRPT(body, &r)
+	case KindPOSA1:
+		parsePOSA1(body, &r)
+	case KindSBPOS:
+		parseSBPos(body, &r)
 	case KindAFN:
 		parseAFN(body, &r)
 	case KindDATIS:

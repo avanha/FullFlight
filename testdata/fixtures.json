@@ -302,5 +302,93 @@
   "text": "- #MD/A6 FUKJJYA.ADS.N575UP07000BCA0D010E010F01150125511B",
   "fromHex": "50",
   "toHex": "A762CC"
+ },
+ {
+  "name": "ck_posa1_satcom",
+  "label": "16",
+  "received": "2026-10-31T01:21:11Z",
+  "text": "M84ACK0624POSA1N59929E149881,DERUD  ,011141,360,OVGAR  ,013635,-50, 46, 391,823",
+  "fromHex": "781D8D",
+  "toHex": "50"
+ },
+ {
+  "name": "ck_posa1_late",
+  "label": "16",
+  "received": "2026-10-30T20:46:57Z",
+  "text": "POSA1N33925W118539,EVOSE  ,171146,43 ,MKGEE  ,171325,9,  9, 940,375",
+  "fromHex": "781D8D",
+  "toHex": "11540A"
+ },
+ {
+  "name": "ck_posa1_nowpt",
+  "label": "16",
+  "received": "2026-10-30T20:42:45Z",
+  "text": "POSA1N33934W118412,,,2  ,-,------,19,  7, 938,261",
+  "fromHex": "781D8D",
+  "toHex": "11540A"
+ },
+ {
+  "name": "ck_posa1_europe",
+  "label": "16",
+  "received": "2026-10-29T23:25:11Z",
+  "text": "POSA1N51266E  9100,LIKSI  ,141839,263,TOLGI  ,143050,-30, 44, 876,761",
+  "fromHex": "781D8D",
+  "toHex": "11981A"
+ },
+ {
+  "name": "ck_posa1_latlonwpt",
+  "label": "16",
+  "received": "2026-10-24T00:25:12Z",
+  "text": "M58ACK0223POSA1N42908E169402,N41E160,233835,310,N43E170,003125,-47, 61, 622,831",
+  "fromHex": "781D8D",
+  "toHex": "50"
+ },
+ {
+  "name": "ck_sb_vdl",
+  "label": "H1",
+  "received": "2026-10-30T21:55:27Z",
+  "text": "SB0122BA_B-221W  KLAXZSPD355\r\n 62280-1533462154 35997-4201960820107GX010014"
+ },
+ {
+  "name": "ck_sb_satcom",
+  "label": "H1",
+  "received": "2026-10-31T02:22:17Z",
+  "text": "O30ACK0624#10BSB0122BA_B-221W  KLAXZSPD373\n\t 55222 1399940225 35998-5602120570107GX013018",
+  "fromHex": "781D8D",
+  "toHex": "50"
+ },
+ {
+  "name": "ck_sb_approach",
+  "label": "H1",
+  "received": "2026-10-24T09:25:32Z",
+  "text": "SB0122BA_B-223A  ZSPDEDDF456\r\n 50134 0089500921 04007 0002690310XONXW066085",
+  "fromHex": "781ED4",
+  "toHex": "11981A"
+ },
+ {
+  "name": "ck_sb_late",
+  "label": "H1",
+  "received": "2026-10-30T15:26:01Z",
+  "text": "SB0122BA_B-221W  ZSPDKLAX335\r\n 33494-1192311418 21998-230249029010PSZ011013",
+  "fromHex": "781D8D",
+  "toHex": "11103A"
+ },
+ {
+  "name": "ck_posa1_ground",
+  "label": "16",
+  "received": "2026-10-27T06:48:59Z",
+  "text": "POSA1N33942W118383,RW25L  ,063630,1  ,SMO160 ,------,19,---, 102,---"
+ },
+ {
+  "name": "ck_sb_sat_nohdr",
+  "label": "H1",
+  "received": "2026-10-28T23:21:03Z",
+  "text": "#10BSB0122BA_B-221W  KJFKZSPD234\r\n 41782-0733592320 25971-2902590570907GX015025"
+ },
+ {
+  "name": "ck_sb_short_seq",
+  "label": "H1",
+  "received": "2026-10-26T16:26:26Z",
+  "text": "SB0122BA_B-221W  KSEAKJFK 27\r\n 44212-0933331811 32997-450251056090NXW018024"
  }
 ]

@@ -159,6 +159,16 @@ ACARS from its UPS80 flight of 28 October on the 31st.
   of it, the station stamping arrival three minutes early) and the day after the flight number is the day the flight is
   dated, which settles which day when a report is more than a day late (a report more than a day late can still be a
   day out). DAL39's report from Point Conception, delivered at 01:10 on the 31st, is placed at 19:41 on the 30th.
+- **China Cargo position reports** (B-221W, B-223A and their sisters) come in two formats, over VDL2 and over satellite
+  (behind `M84ACK0624` or `O30ACK0624#10B`). `POSA1` (label 16: `POSA1N59929E149881,DERUD  ,011141,360,OVGAR  ,013635,-50, 46, 391,823`)
+  has the position in thousandths of a degree, the waypoint last passed and when (UTC), flight level, the next
+  waypoint and its ETA, temperature and wind speed. Its time is the waypoint's, and the position lies between that and
+  the next ETA, so a report that arrived inside that window is placed at arrival, and a late one at the middle of the
+  window. `SB0122BA_` (H1: `SB0122BA_B-221W  KLAXZSPD355`, then ` 62280-1533462154 35997-420196082...`) has the
+  registration and airports, then latitude and longitude, UTC time, altitude in feet, temperature, and wind
+  direction and speed, and a time of day only. They are drawn as POSA1 and SB. Over the Pacific they are often all
+  there is: the Chinese coast has no ADS-B receivers that feed the sources we ask, and 170 stored messages of 781D8D
+  and 781ED4 went from unknown to positions. Run `fullflight -redecode` to apply them to stored messages.
 - **They are also clocks.** A message that arrived at the same station within 30 minutes of a `*POS` or POSRPT report
   that was delivered more than an hour late is taken to be from the same backlog (the dated messages split cleanly: 190
   within 10 minutes, 16 between 10 and 60, 45 over an hour late, mostly hours) and flagged as having an

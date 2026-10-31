@@ -242,7 +242,7 @@ highlightGroup = null;
   };
   const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
   // the legend lists all five sources
-  assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS', 'ACMF', 'AOC', 'POS', 'POSRPT', 'AeroDataBox']);
+  assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS', 'ACMF', 'AOC', 'POS', 'POSRPT', 'POSA1', 'SB', 'AeroDataBox']);
   assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Satellite (IR)|Waypoints|Predictions|Planned route|Estimated path|Projection|Wind barbs', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
   // each source gets its own colour and style
   for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {

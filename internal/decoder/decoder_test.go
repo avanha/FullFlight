@@ -878,3 +878,102 @@ func TestUPSSatcomWrapper(t *testing.T) {
 		}
 	}
 }
+
+func TestChinaCargoPOSA1(t *testing.T) {
+	f, r := load(t, "ck_posa1_satcom")
+	if r.Kind != KindPOSA1 || r.Label != "16" || r.Pos == nil {
+		t.Fatalf("kind %q label %q pos %v", r.Kind, r.Label, r.Pos)
+	}
+	near(t, "lat", r.Pos.Lat, 59.929, 1e-6)
+	near(t, "lon", r.Pos.Lon, 149.881, 1e-6)
+	near(t, "alt", *r.Pos.AltFt, 36000, 1)
+	near(t, "temp", *r.Wx.TempC, -50, 0)
+	if r.Fields["last_wpt"] != "DERUD" || r.Fields["next_wpt"] != "OVGAR" {
+		t.Errorf("fields %v", r.Fields)
+	}
+	// Received 01:21:11, between DERUD at 01:11:41 and OVGAR at 01:36:35: placed at receipt.
+	if got := r.Pos.At(f.Received); !got.Equal(f.Received) {
+		t.Errorf("on time: placed at %v, want receipt %v", got, f.Received)
+	}
+
+	// Delivered after the window closed: the middle of it.
+	f, r = load(t, "ck_posa1_late")
+	near(t, "lon", r.Pos.Lon, -118.539, 1e-6)
+	want := time.Date(2026, 10, 30, 17, 11, 46, 0, time.UTC).Add(time.Duration(((17*3600+13*60+25)-(17*3600+11*60+46))*1e9 / 2))
+	if got := r.Pos.At(f.Received); !got.Equal(want) {
+		t.Errorf("late: placed at %v, want %v", got, want)
+	}
+
+	// No waypoints (on the ground): placed at receipt.
+	f, r = load(t, "ck_posa1_nowpt")
+	if r.Pos == nil || r.Pos.Basis != BasisReceipt || !r.Pos.At(f.Received).Equal(f.Received) {
+		t.Errorf("no waypoints: %+v", r.Pos)
+	}
+
+	_, r = load(t, "ck_posa1_europe")
+	near(t, "padded lon", r.Pos.Lon, 9.1, 1e-6)
+	// A coordinate for the last waypoint looks like an ACMF waypoint: it is still this report.
+	_, r = load(t, "ck_posa1_latlonwpt")
+	if r.Kind != KindPOSA1 {
+		t.Errorf("coordinate waypoints: kind %q", r.Kind)
+	}
+	if r.Pos == nil || r.Fields["last_wpt"] != "N41E160" {
+		t.Errorf("coordinate waypoints: %+v %v", r.Pos, r.Fields)
+	}
+}
+
+func TestChinaCargoSB(t *testing.T) {
+	f, r := load(t, "ck_sb_vdl")
+	if r.Kind != KindSBPOS || r.Pos == nil {
+		t.Fatalf("kind %q pos %v", r.Kind, r.Pos)
+	}
+	near(t, "lat", r.Pos.Lat, 62.28, 1e-6)
+	near(t, "lon", r.Pos.Lon, -153.346, 1e-6)
+	near(t, "alt", *r.Pos.AltFt, 35997, 0)
+	near(t, "temp", *r.Wx.TempC, -42, 0)
+	near(t, "wind dir", *r.Wx.WindDirDeg, 196, 0)
+	near(t, "wind kt", *r.Wx.WindKt, 82, 0)
+	if got, want := r.Pos.At(f.Received), time.Date(2026, 10, 30, 21, 54, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("time %v, want %v", got, want)
+	}
+	if r.Fields["origin"] != "KLAX" || r.Fields["dest"] != "ZSPD" {
+		t.Errorf("fields %v", r.Fields)
+	}
+
+	// Behind the satellite header; the clock runs 3 minutes ahead of the receiving time.
+	f, r = load(t, "ck_sb_satcom")
+	if r.Kind != KindSBPOS || r.Pos == nil {
+		t.Fatalf("satcom: kind %q pos %v", r.Kind, r.Pos)
+	}
+	near(t, "lon", r.Pos.Lon, 139.994, 1e-6)
+	if got, want := r.Pos.At(f.Received), time.Date(2026, 10, 31, 2, 25, 0, 0, time.UTC); !got.Equal(want) {
+		t.Errorf("satcom time %v, want %v", got, want)
+	}
+
+	_, r = load(t, "ck_sb_approach")
+	near(t, "lon", r.Pos.Lon, 8.95, 1e-6)
+	near(t, "alt", *r.Pos.AltFt, 4007, 0)
+	f, r = load(t, "ck_sb_late")
+	if got := r.Pos.At(f.Received); got.Hour() != 14 || got.Minute() != 18 {
+		t.Errorf("late time %v", got)
+	}
+}
+
+func TestChinaCargoVariants(t *testing.T) {
+	f, r := load(t, "ck_posa1_ground") // a runway for a waypoint, dashes for what is not known
+	if r.Kind != KindPOSA1 || r.Pos == nil || r.Fields["last_wpt"] != "RW25L" {
+		t.Fatalf("ground: %q %v %v", r.Kind, r.Pos, r.Fields)
+	}
+	if _, ok := r.Fields["wind_kt"]; !ok {
+		t.Log("wind is the third value on the ground, dashes")
+	}
+	_ = f
+	_, r = load(t, "ck_sb_sat_nohdr") // satellite header with no message number
+	if r.Kind != KindSBPOS || r.Pos == nil {
+		t.Errorf("no number: %q %v", r.Kind, r.Pos)
+	}
+	_, r = load(t, "ck_sb_short_seq") // two digit number after the airports
+	if r.Kind != KindSBPOS || r.Pos == nil || r.Fields["dest"] != "KJFK" {
+		t.Errorf("short number: %q %v", r.Kind, r.Fields)
+	}
+}

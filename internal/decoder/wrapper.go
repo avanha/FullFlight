@@ -16,6 +16,8 @@ import "regexp"
 // says which way it went (A uplink, B downlink).
 var (
 	wrapLabelRe = regexp.MustCompile(`(?s)^(?:([A-Z0-9]{4})([A-Z0-9]{2}\d{4}))?(?:- ?)?#M[A-Z0-9]{1,2}/([A-Z0-9]{2}) (.+)$`)
+	// China Cargo: a message number and sequence (O30ACK0624), "#10B" for some, then the report.
+	wrapChinaRe = regexp.MustCompile(`(?s)^(?:([A-Z0-9]{3})ACK(\d{4}))?(?:#10B)?((?:POSA1|SB0122BA_).+)$`)
 	wrapPosRe   = regexp.MustCompile(`(?s)^([A-Z0-9]{4})([A-Z0-9]{2}\d{4})#DFB(\*POS.*)$`)
 )
 
@@ -30,6 +32,9 @@ func unwrapSatcom(text string) (inner, label, prefix string, ok bool) {
 	}
 	if m := wrapPosRe.FindStringSubmatch(text); m != nil {
 		return m[3], "", m[1] + m[2], true
+	}
+	if m := wrapChinaRe.FindStringSubmatch(text); m != nil {
+		return m[3], "", "", true
 	}
 	return text, "", "", false
 }
