@@ -44,6 +44,8 @@
   li small { color: #666; display: block; }
   li small.lastpos { color: #333; }
   li small.route, li small.flight { color: #333; }
+  li small.adsbpoll { color: #666; }
+  li small.adsbpoll.bad { color: #b45309; }
   li small.route.stale, li small.flight.stale { color: #999; font-style: italic; }
   .waiting { color: #a60; } .tracking { color: #070; } .done, .expired { color: #888; } .paused { color: #888; font-style: italic; }
   button.del { float: right; }
@@ -440,6 +442,27 @@ function copyButton(text) {
   return b;
 }
 
+// What the last ADS-B ask for a watch found, so a missing track can be explained: when it was asked, whether the aircraft
+// was in the answer, and when it was last heard. (The line under "last ADS-B" says when the newest position is from.)
+const POLL_RESULT = {heard: '', not_seen: 'not in the answer', no_position: 'in the answer, no usable position', error: 'the ask failed'};
+function pollText(w) {
+  const p = w.poll;
+  if (!p) return '';
+  return [`ADS-B ${w.status === 'paused' ? 'paused, last asked' : 'asked'} ${ago(p.asked)}`, POLL_RESULT[p.outcome] ?? p.outcome,
+    p.heard ? `heard ${ago(p.heard)}${p.source ? ' (' + p.source + ')' : ''}` : 'never heard',
+    p.misses > 1 ? `${p.misses} asks without it` : ''].filter(Boolean).join(' \u00b7 ');
+}
+function pollLine(w) {
+  if (!w.poll) return null;
+  const s = document.createElement('small');
+  s.className = 'adsbpoll' + (w.poll.outcome === 'error' ? ' bad' : '');
+  s.textContent = pollText(w);
+  s.title = [`Asked the ADS-B sources about it at ${fmt(w.poll.asked)}.`, w.poll.detail,
+    w.poll.heard ? `Newest position they ever gave: ${fmt(w.poll.heard)}${w.poll.source ? ' from ' + w.poll.source : ''}.` : 'They have not given a position yet.',
+    w.status === 'paused' ? 'Paused: nothing is being asked.' : ''].filter(Boolean).join('\n');
+  return s;
+}
+
 async function refresh() {
   watches = await api('/api/watches');
   $('#targetcount').textContent = watches.length ? `(${watches.length})` : '';
@@ -504,6 +527,8 @@ async function refresh() {
       lp.textContent = [w.last_pos && `last ${w.last_pos.kind} ${fmtTime(w.last_pos.t)} (${ago(w.last_pos.t)})`, w.landing && `landed ${w.landing.code} ~${fmtTime(w.landing.at)}`, w.type].filter(Boolean).join(' · ');
       li.append(lp);
     }
+    const pl = pollLine(w);
+    if (pl) li.append(pl);
     if (w.flight) {
       const f = document.createElement('small');
       f.className = 'flight' + (w.flight.stale ? ' stale' : '');

@@ -159,6 +159,17 @@ var migrations = []string{
 	 BEGIN
 		SELECT RAISE(ABORT, 'airframe has notes and is never purged');
 	 END;`,
+	// What the last ADS-B ask for a watch found, so that "why is there no track?" can be answered from the page:
+	// when it was asked, what came back, and when it last gave a position. Goes when the watch goes.
+	`CREATE TABLE IF NOT EXISTS poll_state (
+		watch_id INTEGER PRIMARY KEY REFERENCES watch (id) ON DELETE CASCADE,
+		asked_ts INTEGER NOT NULL,
+		outcome  TEXT NOT NULL,            -- heard, not_seen, no_position or error
+		detail   TEXT NOT NULL DEFAULT '', -- the error, or why an answer had no usable position
+		heard_ts INTEGER NOT NULL DEFAULT 0, -- when the newest position it ever gave was taken (0: never)
+		source   TEXT NOT NULL DEFAULT '', -- who gave that
+		misses   INTEGER NOT NULL DEFAULT 0 -- asks since then that found it absent, or without a position
+	 );`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.
@@ -329,6 +340,10 @@ func (s *Store) GetWatch(id int64) (watchlist.Entry, error) {
 }
 
 func (s *Store) DeleteWatch(id int64) error {
+	// (the foreign key would do it, but it is only switched on for a file database)
+	if _, err := s.db.Exec(`DELETE FROM poll_state WHERE watch_id=?`, id); err != nil {
+		return err
+	}
 	_, err := s.db.Exec(`DELETE FROM watch WHERE id=?`, id)
 	return err
 }
@@ -501,4 +516,73 @@ func (s *Store) ListAirframes() ([]Airframe, error) {
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// Poll outcomes: what asking the ADS-B sources about a watch found.
+const (
+	PollHeard      = "heard"       // a position, fresh enough to store
+	PollNotSeen    = "not_seen"    // the sources answered and the aircraft was not in the answer
+	PollNoPosition = "no_position" // it was in the answer, without a position we can use
+	PollError      = "error"       // no source could answer
+)
+
+// PollState is what the last ADS-B ask for a watch found.
+type PollState struct {
+	Asked   time.Time
+	Outcome string
+	Detail  string
+	Heard   time.Time // when the newest position it ever gave was taken; zero if never
+	Source  string    // who gave it
+	Misses  int       // asks since it was last heard that found it absent or without a position
+}
+
+// RecordPoll notes the outcome of asking about a watch at t. A position (heard non-zero) becomes the newest heard and
+// clears the misses; an answer without the aircraft, or without a usable position, adds a miss; a failed ask
+// changes neither, since it says nothing about the aircraft.
+func (s *Store) RecordPoll(watchID int64, t time.Time, outcome, detail string, heard time.Time, source string) error {
+	var h int64
+	if !heard.IsZero() {
+		h = ts(heard)
+	}
+	_, err := s.db.Exec(`INSERT INTO poll_state (watch_id, asked_ts, outcome, detail, heard_ts, source, misses)
+		VALUES (?1, ?2, ?3, ?4, ?5, ?6, CASE WHEN ?3 IN ('not_seen','no_position') THEN 1 ELSE 0 END)
+		ON CONFLICT(watch_id) DO UPDATE SET asked_ts=?2, outcome=?3, detail=?4,
+			heard_ts = CASE WHEN ?5 > 0 THEN ?5 ELSE heard_ts END,
+			source   = CASE WHEN ?5 > 0 THEN ?6 ELSE source END,
+			misses   = CASE WHEN ?3 = 'heard' THEN 0 WHEN ?3 IN ('not_seen','no_position') THEN misses + 1 ELSE misses END`,
+		watchID, ts(t), outcome, detail, h, source)
+	return err
+}
+
+// PollStates returns what the last ask found for each watch that has been asked about.
+func (s *Store) PollStates() (map[int64]PollState, error) {
+	rows, err := s.db.Query(`SELECT watch_id, asked_ts, outcome, detail, heard_ts, source, misses FROM poll_state`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]PollState{}
+	for rows.Next() {
+		var id, asked, heard int64
+		var p PollState
+		if err := rows.Scan(&id, &asked, &p.Outcome, &p.Detail, &heard, &p.Source, &p.Misses); err != nil {
+			return nil, err
+		}
+		p.Asked = time.Unix(asked, 0).UTC()
+		if heard > 0 {
+			p.Heard = time.Unix(heard, 0).UTC()
+		}
+		out[id] = p
+	}
+	return out, rows.Err()
+}
+
+// PollStateFor returns what the last ask found for one watch, if it has been asked about.
+func (s *Store) PollStateFor(watchID int64) (PollState, bool) {
+	all, err := s.PollStates()
+	if err != nil {
+		return PollState{}, false
+	}
+	p, ok := all[watchID]
+	return p, ok
 }

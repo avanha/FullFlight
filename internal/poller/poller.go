@@ -4,6 +4,7 @@ package poller
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -225,7 +226,11 @@ func (p *Poller) poll(ctx context.Context, e watchlist.Entry, now time.Time) (er
 		ac, err = p.findFlight(ctx, e)
 	}
 	if err != nil {
+		p.notePoll(e, now, store.PollError, firstLine(err.Error(), 300), time.Time{}, "")
 		return err
+	}
+	if len(ac) == 0 {
+		p.notePoll(e, now, store.PollNotSeen, "", time.Time{}, "")
 	}
 	if len(ac) == 0 && e.Kind == watchlist.KindFlight {
 		// No ADS-B: ask the flight-number provider, which also covers mid-ocean.
@@ -292,6 +297,7 @@ func (p *Poller) poll(ctx context.Context, e watchlist.Entry, now time.Time) (er
 	}
 
 	if !a.HasPosition(p.MaxPosAge) {
+		p.notePoll(e, now, store.PollNoPosition, noPositionWhy(a, p.MaxPosAge), time.Time{}, a.Source)
 		return nil
 	}
 	pos := store.Position{
@@ -300,7 +306,39 @@ func (p *Poller) poll(ctx context.Context, e watchlist.Entry, now time.Time) (er
 		VRate: a.BaroRate, Callsign: cs, Reg: strings.ToUpper(a.Reg), Source: a.Source,
 	}
 	_, err = p.Store.AddPosition(pos)
+	p.notePoll(e, now, store.PollHeard, "", pos.T, a.Source)
 	return err
+}
+
+// notePoll records what asking the ADS-B sources about a watch found, for the page to show. Failing to is only logged:
+// diagnostics must never stop the polling.
+func (p *Poller) notePoll(e watchlist.Entry, now time.Time, outcome, detail string, heard time.Time, source string) {
+	if err := p.Store.RecordPoll(e.ID, now, outcome, detail, heard, source); err != nil {
+		p.Log.Warn("record poll", "watch", e.Ident, "err", err)
+	}
+}
+
+// noPositionWhy says why an aircraft that was in an answer gave no position we could use.
+func noPositionWhy(a adsb.Aircraft, maxAge time.Duration) string {
+	who := a.Source
+	if who == "" {
+		who = "a source"
+	}
+	if a.Lat == nil || a.Lon == nil {
+		return "in the answer from " + who + " with no position"
+	}
+	return fmt.Sprintf("in the answer from %s, but its position was %.0f s old (we use up to %.0f s)", who, *a.SeenPos, maxAge.Seconds())
+}
+
+// firstLine is the start of s, up to its first line break and at most n characters.
+func firstLine(s string, n int) string {
+	if i := strings.IndexAny(s, "\r\n"); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > n {
+		s = s[:n] + "…"
+	}
+	return s
 }
 
 // Arrival detection at a given destination.

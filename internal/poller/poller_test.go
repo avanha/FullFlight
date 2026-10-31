@@ -2,6 +2,7 @@ package poller
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -40,11 +41,12 @@ type fake struct {
 	byHex      map[string][]adsb.Aircraft
 	byReg      map[string][]adsb.Aircraft
 	calls      []string
+	err        error // returned by Hex
 }
 
 func (f *fake) Hex(_ context.Context, h string) ([]adsb.Aircraft, error) {
 	f.calls = append(f.calls, "hex:"+h)
-	return f.byHex[h], nil
+	return f.byHex[h], f.err
 }
 func (f *fake) Callsign(_ context.Context, c string) ([]adsb.Aircraft, error) {
 	f.calls = append(f.calls, "cs:"+c)
@@ -782,5 +784,95 @@ func TestPausedWatchIsNotPolled(t *testing.T) {
 	p.Once(context.Background())
 	if len(f.calls) != 1 {
 		t.Errorf("after resuming: %v", f.calls)
+	}
+}
+
+// What asking about a watch found is recorded, so the page can say why there is no track.
+func TestPollDiagnostics(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 31, 6, 0, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("hex:AAAAAA", now, time.Time{})
+	e, _ = st.AddWatch(e)
+	f := &fake{byHex: map[string][]adsb.Aircraft{}}
+	p := &Poller{Store: st, ADSB: f, Now: func() time.Time { return now }, TrackingEvery: time.Second}
+	ask := func() store.PollState {
+		now = now.Add(10 * time.Second)
+		p.Once(context.Background())
+		all, err := st.PollStates()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return all[e.ID]
+	}
+	check := func(step string, s store.PollState, outcome string, misses int, heard bool) {
+		t.Helper()
+		if s.Outcome != outcome || s.Misses != misses || s.Heard.IsZero() == heard || !s.Asked.Equal(now) {
+			t.Errorf("%s: %+v (now %v), want %s, %d misses, heard=%v", step, s, now, outcome, misses, heard)
+		}
+	}
+
+	// The sources answer and it is not there.
+	check("empty answer", ask(), "not_seen", 1, false)
+	check("again", ask(), "not_seen", 2, false)
+
+	// It is in the answer, with no position, then with an old one.
+	a := ac(41)
+	a.Hex, a.Lat, a.Lon = "AAAAAA", nil, nil
+	f.byHex["AAAAAA"] = []adsb.Aircraft{a}
+	s := ask()
+	check("no position", s, "no_position", 3, false)
+	if !strings.Contains(s.Detail, "no position") || !strings.Contains(s.Detail, "adsb.lol") {
+		t.Errorf("detail = %q", s.Detail)
+	}
+	a = ac(41)
+	a.Hex, a.SeenPos = "AAAAAA", fl(300)
+	f.byHex["AAAAAA"] = []adsb.Aircraft{a}
+	s = ask()
+	check("old position", s, "no_position", 4, false)
+	if !strings.Contains(s.Detail, "300 s old") {
+		t.Errorf("detail = %q", s.Detail)
+	}
+
+	// A failed ask says nothing about the aircraft: it is not a miss, and the error is kept.
+	f.err = errors.New("adsb.lol: HTTP 429\nadsb.fi: HTTP 503")
+	s = ask()
+	check("error", s, "error", 4, false)
+	if s.Detail != "adsb.lol: HTTP 429" {
+		t.Errorf("error detail = %q", s.Detail)
+	}
+	f.err = nil
+
+	// Heard: when its position was taken, and by whom; the misses are cleared.
+	a = ac(41)
+	a.Hex = "AAAAAA"
+	f.byHex["AAAAAA"] = []adsb.Aircraft{a}
+	s = ask()
+	if s.Outcome != "heard" || s.Misses != 0 || s.Source != "adsb.lol" || !s.Heard.Equal(now.Add(-2*time.Second)) {
+		t.Errorf("heard: %+v (now %v)", s, now)
+	}
+	heardAt := s.Heard
+
+	// Gone again: the last time it was heard is kept, and the misses start over.
+	f.byHex["AAAAAA"] = nil
+	s = ask()
+	if s.Outcome != "not_seen" || s.Misses != 1 || !s.Heard.Equal(heardAt) || s.Source != "adsb.lol" {
+		t.Errorf("gone again: %+v", s)
+	}
+
+	// Pausing stops the asking: the state stays as it was.
+	w, _ := st.GetWatch(e.ID)
+	w.Pause()
+	st.UpdateWatch(w)
+	before := s
+	now = now.Add(time.Hour)
+	p.Once(context.Background())
+	if all, _ := st.PollStates(); all[e.ID] != before {
+		t.Errorf("a paused watch was asked about: %+v", all[e.ID])
+	}
+	// And it goes with the watch.
+	st.DeleteWatch(e.ID)
+	if all, _ := st.PollStates(); len(all) != 0 {
+		t.Errorf("state outlived its watch: %+v", all)
 	}
 }

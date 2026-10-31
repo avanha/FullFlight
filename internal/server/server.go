@@ -110,9 +110,20 @@ type watchJSON struct {
 	LastPos  *lastPos     `json:"last_pos,omitempty"`
 	Route    *routeJSON   `json:"route,omitempty"`
 	Flight   *flightJSON  `json:"flight,omitempty"`    // tail and hex watches only: the flight it is operating
+	Poll     *pollJSON    `json:"poll,omitempty"`      // what the last ADS-B ask for it found
 	Landing  *landingJSON `json:"landing,omitempty"`   // the aircraft has probably landed: its last fix was low, near an airport, and nothing followed
 	Notes    int          `json:"notes,omitempty"`     // notes you have written about this airframe
 	LastNote string       `json:"last_note,omitempty"` // the newest, abbreviated, for a hover
+}
+
+// pollJSON is what the last ADS-B ask for a watch found, so the page can say why there is, or is not, a track.
+type pollJSON struct {
+	Asked   time.Time  `json:"asked"`
+	Outcome string     `json:"outcome"` // heard, not_seen, no_position or error
+	Detail  string     `json:"detail,omitempty"`
+	Heard   *time.Time `json:"heard,omitempty"` // when the newest position it ever gave was taken
+	Source  string     `json:"source,omitempty"`
+	Misses  int        `json:"misses,omitempty"` // asks since then that did not find it
 }
 
 // landingJSON is an inferred landing (see package landing).
@@ -271,6 +282,14 @@ func toJSON(e watchlist.Entry) watchJSON {
 
 // withAircraft adds what we know about the followed aircraft.
 func (s *Server) withAircraft(j watchJSON) watchJSON {
+	if p, ok := s.Store.PollStateFor(j.ID); ok {
+		pj := &pollJSON{Asked: p.Asked, Outcome: p.Outcome, Detail: p.Detail, Source: p.Source, Misses: p.Misses}
+		if !p.Heard.IsZero() {
+			h := p.Heard
+			pj.Heard = &h
+		}
+		j.Poll = pj
+	}
 	if j.Hex != "" {
 		j.Type = s.Store.TypeForHex(j.Hex)
 		j.LastPos = s.lastPosition(j.Hex)

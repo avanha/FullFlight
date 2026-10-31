@@ -1043,3 +1043,46 @@ func TestPauseAndResumeAPI(t *testing.T) {
 		t.Errorf("bad id: %d", code)
 	}
 }
+
+func TestWatchesCarryWhatTheLastPollFound(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 31, 6, 50, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("tail:N575UP", now.Add(-time.Hour), time.Time{})
+	e, _ = st.AddWatch(e)
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	get := func() (ws []struct {
+		Poll *struct {
+			Asked   time.Time
+			Outcome string
+			Detail  string
+			Heard   *time.Time
+			Source  string
+			Misses  int
+		}
+	}) {
+		_, body := do(t, "GET", ts.URL+"/api/watches", "")
+		if err := json.Unmarshal([]byte(body), &ws); err != nil || len(ws) != 1 {
+			t.Fatalf("%v: %s", err, body)
+		}
+		return
+	}
+	// Never asked: nothing to say.
+	if ws := get(); ws[0].Poll != nil {
+		t.Errorf("poll before any ask: %+v", ws[0].Poll)
+	}
+	st.RecordPoll(e.ID, now.Add(-5*time.Minute), "heard", "", now.Add(-5*time.Minute), "adsb.fi")
+	st.RecordPoll(e.ID, now.Add(-2*time.Minute), "not_seen", "", time.Time{}, "")
+	st.RecordPoll(e.ID, now.Add(-time.Minute), "not_seen", "", time.Time{}, "")
+	p := get()[0].Poll
+	if p == nil || p.Outcome != "not_seen" || p.Misses != 2 || p.Source != "adsb.fi" || p.Heard == nil || !p.Heard.Equal(now.Add(-5*time.Minute)) || !p.Asked.Equal(now.Add(-time.Minute)) {
+		t.Errorf("poll = %+v", p)
+	}
+	// Removed and added again: no memory of the one before.
+	st.DeleteWatch(e.ID)
+	e2, _ := st.AddWatch(e)
+	if ws := get(); ws[0].Poll != nil {
+		t.Errorf("a new watch %d inherited %+v", e2.ID, ws[0].Poll)
+	}
+}
