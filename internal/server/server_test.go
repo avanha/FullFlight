@@ -950,3 +950,46 @@ func TestAirportsAPI(t *testing.T) {
 		t.Errorf("no match = %+v", r)
 	}
 }
+
+// A fix the 2013 database lacks, but whose position we have learned from the aircraft's own reports, is placed from
+// that, and says so; where both have it, what we learned wins.
+func TestPlanUsesLearnedFixes(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 31, 5, 0, 0, 0, time.UTC)
+	nav := navdata.New()
+	nav.Add("ITIDE", navdata.Point{Lat: -26.735, Lon: 153.49, Kind: "fix"})
+	nav.Add("GOMIK", navdata.Point{Lat: -9.60, Lon: -172.90, Kind: "fix"}) // 2013 position, a few nm from the learned one
+	plan := `{"fields":{"plan":{"callsign":"CPA198","from":"NZAA","to":"VHHH","fixes":[
+		{"name":"ITIDE"},{"name":"ELNIT"},{"name":"GOMIK"},{"name":"UNKNOWN"}]}}}`
+	st.AddMessage(store.Message{ID: 1, Hex: "780AA4", T: now.Add(-4 * time.Hour), Label: "H1", Text: "FPN/x", Kind: "flight_plan", Decoded: plan})
+	st.AddFix("ELNIT", 50, -20.0, 148.0, "adsc-eta")
+	st.AddFix("GOMIK", 51, -9.464, -172.938, "adsc-eta")
+	ts := httptest.NewServer((&Server{Store: st, Nav: nav, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	_, body := do(t, "GET", ts.URL+"/api/plan/780aa4", "")
+	var plans []struct {
+		Points []struct {
+			Name, Kind string
+			Lat, Lon   float64
+		}
+		Missing []string
+	}
+	if err := json.Unmarshal([]byte(body), &plans); err != nil || len(plans) != 1 {
+		t.Fatalf("%v: %s", err, body)
+	}
+	kinds := map[string]string{}
+	pos := map[string][2]float64{}
+	for _, p := range plans[0].Points {
+		kinds[p.Name], pos[p.Name] = p.Kind, [2]float64{p.Lat, p.Lon}
+	}
+	if kinds["ITIDE"] != "fix" || kinds["ELNIT"] != "learned" || kinds["GOMIK"] != "learned" {
+		t.Errorf("kinds = %v", kinds)
+	}
+	if pos["ELNIT"] != [2]float64{-20.0, 148.0} || pos["GOMIK"] != [2]float64{-9.464, -172.938} {
+		t.Errorf("positions = %v", pos)
+	}
+	if len(plans[0].Missing) != 1 || plans[0].Missing[0] != "UNKNOWN" {
+		t.Errorf("missing = %v", plans[0].Missing)
+	}
+}

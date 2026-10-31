@@ -242,7 +242,7 @@ type Point struct {
 	Lat  float64 `json:"lat"`
 	Lon  float64 `json:"lon"`
 	Via  string  `json:"via,omitempty"` // the airway flown from here to the next point
-	Kind string  `json:"kind"`          // "airport", "given" (coordinates in the message) or "fix" (looked up by name)
+	Kind string  `json:"kind"`          // "airport", "given" (coordinates in the message), "fix" (looked up by name) or "learned" (a fix name we learned the position of from the aircraft's own reports; set by the server)
 }
 
 // MaxLegNM is the longest leg a fix looked up by name may add to the route. Names repeat around the world,

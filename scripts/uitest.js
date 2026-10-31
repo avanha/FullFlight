@@ -563,6 +563,10 @@ highlightGroup = null;
     assert.ok(pr.pathFromFix.length === 3 && pr.pathFromFix[1][0] === 0 && pr.pathFromFix[1][1] === 10, 'the line has a vertex at the waypoint: ' + JSON.stringify(pr.pathFromFix));
     assert.ok(Math.abs(pr.ticks[0].lat - 0.83) < 0.02 && Math.abs(pr.ticks[0].lon - 10) < 0.01, 'ticks follow the turn ' + JSON.stringify(pr.ticks[0]));
     assert.ok(pr.basis.includes('filed route UPS58 AAAA\u2192BBBB'), pr.basis);
+    // 18 nm off the line: projected from where the aircraft is, closing the gap, not starting on the line
+    pr = run(ap(0, 0.3, 5));
+    assert.ok(pr.onRoute && pr.pathFromFix[0][0] === 0.3 && pr.pathFromFix[0][1] === 5, 'starts at the aircraft: ' + JSON.stringify(pr.pathFromFix[0]));
+    assert.ok(pr.basis.includes('18 nm off it at the fix'), pr.basis);
     // 10 minutes old: the estimated position now is already round the corner, heading north
     pr = run(ap(10, 0, 9.5));
     assert.ok(pr.now[0] > 0.8 && Math.abs(pr.now[1] - 10) < 0.01 && Math.abs(pr.trk) < 1, 'now: ' + JSON.stringify(pr.now) + ' trk ' + pr.trk);

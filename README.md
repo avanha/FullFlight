@@ -340,6 +340,14 @@ for an aircraft on the ground or outside 100-700 kt, and it stops at a known des
 set, else a recent REP081 one) rather than flying past it. The look-ahead past now (off, 15, 30 or 60 min)
 is the selector under the watch list. It does not know about turns or weather deviations.
 
+When the flight's filed plan is known and the aircraft is near it, the projection follows the plan's legs, but it starts
+from where the aircraft *is*: the distance from the line at the last fix is kept and closed over 150 nm (or by the end
+of the route), so the dotted path never begins on the line when the aircraft is beside it. Where the plan's own line is
+poor (a fix missing from the 2013 database leaves a long straight leg), the route ahead is shaped by the next and
+next-but-one waypoints of the newest ADS-C report (under 45 minutes old, and still ahead of the aircraft), which are
+exact, and then rejoins the plan. A fix name's position is taken from what we have learned from aircraft's own
+reports (marked `nav db (learned)` in the plan's hover) before the navigation database.
+
 **The plane shows how stale its fix is**, in steps that follow what the projection does with it, with a badge giving
 the age of the fix (`7m`, `2.5h`) that keeps counting between refreshes:
 

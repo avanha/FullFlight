@@ -446,7 +446,9 @@ function drawWaypoints(msgs) {
 // ghostAfterSec: a fix younger than this is the plane's position (ADS-B arrives every ~45 s, so a younger fix is
 // live); only an older one gets the estimated-position ghost drawn ahead of it.
 const PROJ = {maxFixAgeMin: 60, maxSpanMin: 90, minGs: 100, maxGs: 700, tickMin: 10, ghostAfterSec: 180, destSlackDeg: 35,
-  planSlackNM: 60, planSlackDeg: 70};   // follow the filed route only if the fix is within this of it, heading roughly along it
+  planSlackNM: 60, planSlackDeg: 70,
+  rejoinNM: 150,          // an aircraft off its route is projected parallel to it, closing the gap over this distance
+  adscRouteMaxMin: 45};   // the waypoints an ADS-C report listed are used to shape the route ahead for this long   // follow the filed route only if the fix is within this of it, heading roughly along it
 // How stale the plane's newest fix is, in steps that follow what the page does with an old fix: under 3
 // minutes it is live; then a dead-reckoned ghost is drawn ahead of it; once it is an hour old there is
 // no projection at all. The plane fades towards grey and carries the fix's age as a badge.
@@ -527,14 +529,45 @@ function walkRoute(plan, L0, trk) {
   return {
     total, at: best.g.start + best.u * best.g.d, cross: best.cross,
     pointAt, bearingAt: s => legAt(Math.max(0, Math.min(total, s))).brg,
-    // the line from s0 to s1, with a vertex at every fix passed on the way
-    path(s0, s1) {
-      const out = [pointAt(s0)];
-      for (const g of legs) if (g.start > s0 && g.start < s1) out.push([g.a.lat, g.a.lon + 0]);
-      out.push(pointAt(s1));
+    // the plan's points with how far along the route each is
+    verts: legs.map(g => ({p: g.a, s: g.start})).concat([{p: legs[legs.length - 1].b, s: total}]),
+    // the line from s0 to s1, with a vertex at every fix passed on the way. shift(point, s) moves each point
+    // (s is how far along the route it is): the projection uses it to start at the aircraft, not on the line.
+    path(s0, s1, shift = p => p) {
+      const out = [shift(pointAt(s0), s0)];
+      for (const g of legs) if (g.start > s0 && g.start < s1) out.push(shift([g.a.lat, g.a.lon + 0], g.start));
+      out.push(shift(pointAt(s1), s1));
       return out;
     },
   };
+}
+
+// The newest ADS-C report's next and next-but-one waypoints are exact, where the filed plan's line is only as good
+// as the fixes we could place (a fix missing from the navigation database leaves a long straight leg). So the route
+// ahead of the aircraft is made to run from the aircraft through those waypoints and then rejoin the plan. Returns
+// {plan, n} (the plan with its first legs replaced, and how many waypoints were used) or null if there is nothing
+// to use: no recent report, the waypoints already passed or not ahead, or the plan not near where they end.
+function patchPlan(plan, msgs, L0, trk, nowMs) {
+  const rep = msgs.filter(m => m.kind === 'adsc' && m.route && !m.suspect && !m.time_unverified && m.lat != null)
+    .map(m => ({m, t: Date.parse(m.pos_t || m.t)}))
+    .filter(x => x.t <= nowMs + 60000 && nowMs - x.t <= PROJ.adscRouteMaxMin * 60000)
+    .sort((a, b) => b.t - a.t)[0];
+  if (!rep) return null;
+  const wp = rep.m.route.filter(p => p.kind === 'next' || p.kind === 'next+1').sort((a, b) => (a.kind === 'next' ? 0 : 1) - (b.kind === 'next' ? 0 : 1));
+  const ahead = [];
+  let from = L0;
+  for (const p of wp) {
+    const d = distNM(from.lat, from.lon, p.lat, p.lon), b = bearingTo(from.lat, from.lon, p.lat, p.lon);
+    if (d < 1 || d > 600 || angDiff(b, ahead.length ? bearingTo(L0.lat, L0.lon, ahead[0].lat, ahead[0].lon) : trk) > (ahead.length ? 100 : 60)) break;   // passed, behind, or doubling back
+    ahead.push(p);
+    from = p;
+  }
+  if (!ahead.length) return null;
+  const last = ahead[ahead.length - 1];
+  const base = walkRoute(plan, last, null);   // where the last of them meets the filed route
+  if (!base) return null;
+  const rest = base.verts.filter(v => v.s > base.at + 1).map(v => v.p);
+  return {plan: {...plan, points: [{name: '', lat: L0.lat, lon: L0.lon, kind: 'position'}, ...ahead.map(p => ({name: '', lat: p.lat, lon: p.lon, kind: 'adsc'})), ...rest]}, n: ahead.length};
 }
 
 function projection(w, pts, msgs, nowMs, ahead = aheadMin, plan = null) {
@@ -573,13 +606,27 @@ function projection(w, pts, msgs, nowMs, ahead = aheadMin, plan = null) {
   if (!(gs >= PROJ.minGs && gs <= PROJ.maxGs)) return null;
   const endMin = Math.min(ageMin + ahead, PROJ.maxSpanMin);   // minutes after the fix at the far end
   let nowNm = gs * Math.max(ageMin, 0) / 60, endNm = gs * endMin / 60, stop = null;
-  const route = walkRoute(plan, L0, trk);
-  const place = nm => route ? route.pointAt(route.at + nm) : advance(L0.lat, L0.lon, trk, nm);
+  let route = walkRoute(plan, L0, trk), viaAdsc = 0;
+  {
+    // (tried even if the plan's own line is too far from the aircraft to follow: the waypoints are the better line)
+    const patched = patchPlan(plan, msgs, L0, trk, nowMs), r2 = patched && walkRoute(patched.plan, L0, trk);
+    if (r2) { route = r2; plan = patched.plan; viaAdsc = patched.n; }
+  }
+  // The route is followed from where the aircraft is, not from the nearest point on it: its distance from the line
+  // at the fix is kept, and closed over rejoinNM (or by the end of the route, if that is nearer).
+  let shift = p => p;
+  if (route) {
+    const p0 = route.pointAt(route.at), off = [L0.lat - p0[0], wrap180(L0.lon - p0[1])];
+    const conv = Math.max(1, Math.min(PROJ.rejoinNM, route.total - route.at));
+    shift = (pt, s) => { const f = Math.max(0, 1 - (s - route.at) / conv); return [pt[0] + off[0] * f, pt[1] + off[1] * f]; };
+  }
+  const place = nm => route ? shift(route.pointAt(route.at + nm), route.at + nm) : advance(L0.lat, L0.lon, trk, nm);
   const dest = route ? null : destOf(w);
   if (route) {
     const left = route.total - route.at;
     if (endNm >= left) { endNm = left; nowNm = Math.min(nowNm, left); stop = plan.to; }   // the route ends at the destination
-    basis = `${Math.round(gs)} kt along the filed route ${plan.callsign ? plan.callsign + ' ' : ''}${plan.from}\u2192${plan.to} (${Math.round(route.cross)} nm off it at the fix)`;
+    basis = `${Math.round(gs)} kt along the filed route ${plan.callsign ? plan.callsign + ' ' : ''}${plan.from}\u2192${plan.to}` +
+      (viaAdsc ? `, through the ${viaAdsc === 1 ? 'waypoint' : 'waypoints'} its newest ADS-C report listed` : route.cross > 1 ? ` (${Math.round(route.cross)} nm off it at the fix, closing the gap over ${Math.round(Math.min(PROJ.rejoinNM, route.total - route.at))} nm)` : '');
     trk = route.bearingAt(route.at + nowNm);
   }
   if (dest) {
@@ -596,7 +643,7 @@ function projection(w, pts, msgs, nowMs, ahead = aheadMin, plan = null) {
     ticks.push({lat: la, lon: lo, min: k * PROJ.tickMin});
   }
   return {fix: L0, ageMin, gs, trk, basis, stop, now: place(nowNm), end: place(endNm), ticks, onRoute: !!route,
-          pathToNow: route ? route.path(route.at, route.at + nowNm) : null, pathFromFix: route ? route.path(route.at, route.at + endNm) : null, pathFromNow: route ? route.path(route.at + nowNm, route.at + endNm) : null,
+          pathToNow: route ? route.path(route.at, route.at + nowNm, shift) : null, pathFromFix: route ? route.path(route.at, route.at + endNm, shift) : null, pathFromNow: route ? route.path(route.at + nowNm, route.at + endNm, shift) : null,
           endMin: endMin - Math.max(ageMin, 0), capped: ageMin + ahead > PROJ.maxSpanMin};
 }
 
@@ -658,7 +705,7 @@ function drawPlan(plan) {
     const last = i === plan.points.length - 1;
     L.circleMarker(ll(p.lat, p.lon), {radius: p.kind === 'airport' ? 5 : 3, color: PLAN_COLOR, weight: 1.5, fillColor: '#fff', fillOpacity: 1}).addTo(planGroup)
       .bindTooltip(tip(p.name, p.via && !last ? `then ${p.via}` : '', `planned route ${head}`, `filed ${fmtAgo(plan.t)}`,
-        p.kind === 'fix' ? 'position from nav db (2013 src)' : '', plan.missing && plan.missing.length && i === 0 ? `not placed: ${plan.missing.join(', ')}` : ''));
+        p.kind === 'fix' ? 'position from nav db (2013 src)' : p.kind === 'learned' ? 'position from nav db (learned)' : '', plan.missing && plan.missing.length && i === 0 ? `not placed: ${plan.missing.join(', ')}` : ''));
   });
 }
 

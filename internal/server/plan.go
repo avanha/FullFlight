@@ -26,7 +26,8 @@ type planJSON struct {
 
 // plans serves the flight plans an aircraft sent, oldest first. A plan is often sent several times (heard by
 // more than one station, or re-sent when the crew changes it); identical ones are reported once, at the
-// time of the newest. Fixes named without coordinates are placed from the navigation database.
+// time of the newest. Fixes named without coordinates are placed from what we have learned of them, else from the
+// navigation database.
 func (s *Server) plans(w http.ResponseWriter, r *http.Request) {
 	hex := strings.ToUpper(r.PathValue("hex"))
 	hours := 96
@@ -39,8 +40,18 @@ func (s *Server) plans(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, err.Error())
 		return
 	}
+	// A fix name's positions: what we have learned from aircraft's own reports if anything (it is current, and
+	// covers names the 2013 database lacks), else the navigation database.
+	learned := map[string][][2]float64{}
 	lookup := func(name string) [][2]float64 {
 		var out [][2]float64
+		for _, l := range s.Store.LearnedFixes(name) {
+			out = append(out, [2]float64{l.Lat, l.Lon})
+		}
+		if len(out) > 0 {
+			learned[name] = out
+			return out
+		}
 		for _, p := range s.Nav.Lookup(name) {
 			out = append(out, [2]float64{p.Lat, p.Lon})
 		}
@@ -68,6 +79,11 @@ func (s *Server) plans(w http.ResponseWriter, r *http.Request) {
 		p := d.Fields.Plan
 		key := p.Callsign + "|" + p.From + "|" + p.To + "|" + routeKey(p)
 		pts, missing := flightplan.Resolve(p, lookup, airport)
+		for i := range pts {
+			if pts[i].Kind == "fix" && len(learned[pts[i].Name]) > 0 {
+				pts[i].Kind = "learned"
+			}
+		}
 		if k, dup := seen[key]; dup {
 			out[k].T, out[k].ID = m.T, m.ID
 			if n := len(pts) - len(missing); n >= given[key] { // the newer copy is at least as complete
