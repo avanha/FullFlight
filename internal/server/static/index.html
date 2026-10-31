@@ -916,7 +916,7 @@ function drawPredictions() {
   const proj = (m.route || []).find(p => p.kind === 'fixed');
   if (proj) {
     L.circleMarker(ll(proj.lat, proj.lon), {radius: 5, color: SOURCES.adsc.color, weight: 2, fillColor: SOURCES.adsc.color, fillOpacity: .35}).addTo(predGroup).bindTooltip(tip(
-      `Where the flight computer expects it to be ${proj.eta_sec != null ? 'in ' + Math.round(proj.eta_sec / 60) + ' min' : 'later'}`, etaText(m, proj.eta_sec),
+      `FMS forecast${proj.eta_sec != null ? ' in ' + Math.round(proj.eta_sec / 60) + ' min' : ''}`, etaText(m, proj.eta_sec),
       `predicted by the report of ${fmt(m.pos_t || m.t)}`));
   }
   const ahead = (m.waypoints || []).filter(w => w.role !== 'passed');

@@ -242,8 +242,8 @@ about a name's position within a quarter of a degree, the position most of them 
 
 Selecting a report that carried predictions plots them, and selecting any other point replaces them
 (with nothing selected, the newest ADS-C route is shown). An ADS-C report draws a dashed line from its
-position through the waypoints it expects to reach (with ETAs), plus a ring where the flight computer
-expects to be after a fixed time; a CPDLC position report draws a line through its next fixes, leaving
+position through the waypoints it expects to reach (with ETAs), plus an **FMS forecast** ring: where the flight
+computer expects the aircraft to be after a fixed time (ADS-C's intermediate projection); a CPDLC position report draws a line through its next fixes, leaving
 out the one it already passed. Clicking the dot, the waypoint or the plane that stands on a report all
 select it. The plane is drawn at the newest trustworthy fix from ADS-B *or* a datalink report, and is
 the report itself when that is newer.

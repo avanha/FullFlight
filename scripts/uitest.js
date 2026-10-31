@@ -833,7 +833,7 @@ highlightGroup = null;
   assert.ok(t1.includes('ETA 18:10:00Z (+10 min)') && t1.includes('name from nav db (learned)'), t1.join(' | '));
   assert.strictEqual(t2[0], 'KAPPU — predicted waypoint after next');
   assert.ok(t2.includes('name from nav db (2013 src)'), t2.join(' | '));
-  assert.ok(tf[0].startsWith('Where the flight computer expects it to be in 37 min') && tf.includes('ETA 18:37:00Z (+37 min)'), tf.join(' | '));
+  assert.ok(tf[0].startsWith('FMS forecast in 37 min') && tf.includes('ETA 18:37:00Z (+37 min)'), tf.join(' | '));
   // a nameless waypoint says why
   t.rows.get(71).onclick();
   assert.ok(lines(predDots()[0].tooltip).includes('(coordinates only)'));
