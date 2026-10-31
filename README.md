@@ -253,6 +253,16 @@ of the same name. That last figure is a check on the learning: most agree to 0.0
 about a name's position within a quarter of a degree, the position most of them agree on is used, not an average.
 `GET /api/fixes?q=` serves the same.
 
+## Airport search
+
+The **Airports** tab searches the embedded airport list (large and medium airports and anything with an IATA code)
+by code, name or city: an exact code first, then codes that start with what you typed, then names and cities (50
+at most; type more to narrow it). With nothing typed it lists the airports your watches use, saying why: a
+watch's destination, either end of the route its aircraft reported, or a landing we inferred. Click one (or press
+Enter for the first) to centre the map on it with its name, position and field elevation, and a dashed circle of
+15 nm, the distance within which a low, slow aircraft that goes silent is taken to have landed there.
+`GET /api/airports?q=` serves the same.
+
 ## Predictions
 
 Selecting a report that carried predictions plots them, and selecting any other point replaces them

@@ -896,3 +896,57 @@ func TestLandingAndTheRouteFromPositionReports(t *testing.T) {
 		t.Errorf("a newer report ignored: %+v", ws[0].Landing)
 	}
 }
+
+func TestAirportsAPI(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	fix := time.Date(2026, 10, 31, 3, 25, 59, 0, time.UTC)
+	f := func(v float64) *float64 { return &v }
+	st.AddPosition(store.Position{Hex: "86D646", T: fix, Lat: 35.738, Lon: 140.3946, AltFt: f(400), GS: f(147), Track: f(330), VRate: f(-1024), Source: "adsb.lol"})
+	rep := fix.Add(-4 * time.Hour)
+	rlat, rlon := 28.71, 173.77
+	st.AddMessage(store.Message{ID: 1, Hex: "86D646", T: rep, Label: "83", Text: "x", Kind: "aoc_position", Lat: &rlat, Lon: &rlon, PosT: &rep,
+		Decoded: `{"fields":{"origin":"PHNL","dest":"RJAA"}}`})
+	e, _ := watchlist.Parse("tail:JA826J", fix.Add(-time.Hour), time.Time{})
+	e.Hex = "86D646"
+	st.AddWatch(e)
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return fix.Add(10 * time.Minute) }}).Handler())
+	defer ts.Close()
+
+	type resp struct {
+		Total    int
+		Watched  bool
+		More     bool
+		Airports []struct {
+			ICAO, IATA, Name string
+			ElevFt           *float64 `json:"elev_ft"`
+			Why              []string
+		}
+	}
+	get := func(q string) (r resp) {
+		_, body := do(t, "GET", ts.URL+"/api/airports"+q, "")
+		if err := json.Unmarshal([]byte(body), &r); err != nil {
+			t.Fatalf("%v: %s", err, body)
+		}
+		return
+	}
+	// No query: the airports the watches use, with the reasons.
+	r := get("")
+	if !r.Watched || r.Total < 8000 || len(r.Airports) != 2 || r.Airports[0].ICAO != "PHNL" || r.Airports[1].ICAO != "RJAA" {
+		t.Fatalf("watched = %+v", r)
+	}
+	if got := strings.Join(r.Airports[1].Why, "; "); got != "JA826J route destination (airline report); JA826J landed" {
+		t.Errorf("RJAA why = %q", got)
+	}
+	// A query: ranked matches, with elevation, and the reasons on the ones the watches use.
+	r = get("?q=nrt")
+	if r.Watched || len(r.Airports) == 0 || r.Airports[0].ICAO != "RJAA" || r.Airports[0].ElevFt == nil || *r.Airports[0].ElevFt != 141 || len(r.Airports[0].Why) != 2 {
+		t.Errorf("q=nrt = %+v", r.Airports)
+	}
+	if r = get("?q=international"); len(r.Airports) != 50 || !r.More {
+		t.Errorf("limit: %d more %v", len(r.Airports), r.More)
+	}
+	if r = get("?q=zzzzqq"); len(r.Airports) != 0 || r.Watched {
+		t.Errorf("no match = %+v", r)
+	}
+}

@@ -28,3 +28,32 @@ func TestElevation(t *testing.T) {
 		t.Errorf("Narita = %+v", a)
 	}
 }
+
+func TestSearch(t *testing.T) {
+	first := func(q string) string {
+		got, _ := Search(q, 10)
+		if len(got) == 0 {
+			return ""
+		}
+		return got[0].ICAO
+	}
+	for q, want := range map[string]string{"nrt": "RJAA", "RJAA": "RJAA", "narita": "RJAA", "ksfo": "KSFO", "sfo": "KSFO", "hong kong": "VHHH"} {
+		if got := first(q); got != want {
+			t.Errorf("Search(%q) first = %q, want %q", q, got, want)
+		}
+	}
+	// An exact code comes first (KDE is Koroba's IATA code), then codes that start with the text.
+	got, _ := Search("kde", 10)
+	if len(got) < 3 || got[0].ICAO != "AYOW" || got[1].ICAO[:3] != "KDE" {
+		t.Errorf("kde: %+v", got)
+	}
+	if got, more := Search("international", 5); len(got) != 5 || !more {
+		t.Errorf("limit: %d more %v", len(got), more)
+	}
+	if got, _ := Search("zzzzqq", 5); got != nil {
+		t.Errorf("no match = %+v", got)
+	}
+	if got, _ := Search("  ", 5); got != nil {
+		t.Errorf("blank = %+v", got)
+	}
+}

@@ -89,3 +89,59 @@ func Near(lat, lon, maxNM float64) []Hit {
 	sort.Slice(out, func(i, j int) bool { return out[i].DistNM < out[j].DistNM })
 	return out
 }
+
+// Search finds airports whose ICAO or IATA code, name or city matches q (case-insensitive), best match
+// first: an exact code, then a code that starts with q, then a name or city that starts with it or has a word
+// that does, then any containing it. At most limit are returned; more says whether there were others.
+func Search(q string, limit int) (out []Airport, more bool) {
+	once.Do(load)
+	q = strings.ToLower(strings.TrimSpace(q))
+	if q == "" {
+		return nil, false
+	}
+	type scored struct {
+		Airport
+		score int
+	}
+	var hits []scored
+	for _, a := range all {
+		s := 99
+		icao, iata := strings.ToLower(a.ICAO), strings.ToLower(a.IATA)
+		switch {
+		case icao == q || iata == q:
+			s = 0
+		case strings.HasPrefix(icao, q) || (iata != "" && strings.HasPrefix(iata, q)):
+			s = 1
+		default:
+			for _, f := range []string{strings.ToLower(a.Name), strings.ToLower(a.City)} {
+				if strings.HasPrefix(f, q) || strings.Contains(f, " "+q) {
+					s = min(s, 2)
+				} else if strings.Contains(f, q) {
+					s = min(s, 3)
+				}
+			}
+		}
+		if s < 99 {
+			hits = append(hits, scored{a, s})
+		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].score != hits[j].score {
+			return hits[i].score < hits[j].score
+		}
+		return hits[i].ICAO < hits[j].ICAO
+	})
+	for i, h := range hits {
+		if i == limit {
+			return out, true
+		}
+		out = append(out, h.Airport)
+	}
+	return out, false
+}
+
+// Count is how many airports the data holds.
+func Count() int {
+	once.Do(load)
+	return len(all)
+}

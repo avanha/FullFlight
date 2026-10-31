@@ -51,6 +51,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/flights/{hex}", s.flights)
 	mux.HandleFunc("GET /api/plan/{hex}", s.plans)
 	mux.HandleFunc("GET /api/fixes", s.fixes)
+	mux.HandleFunc("GET /api/airports", s.airports)
 	return s.auth(mux)
 }
 

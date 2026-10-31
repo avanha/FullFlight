@@ -54,13 +54,13 @@
   #tabs { display: flex; gap: 2px; margin: 0 0 10px; border-bottom: 1px solid #ccc; }
   #tabs button { border: none; background: none; padding: 5px 12px; cursor: pointer; font: inherit; color: #555; border-bottom: 2px solid transparent; margin-bottom: -1px; }
   #tabs button.on { color: #1d3557; border-bottom-color: #1d3557; font-weight: 600; }
-  #fixq { width: 100%; box-sizing: border-box; padding: 6px; }
-  #fixlist li { padding: 6px 8px; }
-  #fixlist li b { font-family: ui-monospace, monospace; }
-  #fixlist li small { color: #555; }
+  #fixq, #aptq { width: 100%; box-sizing: border-box; padding: 6px; }
+  #fixlist li, #aptlist li { padding: 6px 8px; }
+  #fixlist li b, #aptlist li b { font-family: ui-monospace, monospace; }
+  #fixlist li small, #aptlist li small { color: #555; }
   #fixlist li small.dim { color: #999; }
   #fixlist li .kindchip.learned { background: #fde4ee; color: #8a1c46; }
-  #fixlist .sep { cursor: default; color: #666; font-size: 12px; background: #f6f6f6; }
+  #fixlist .sep, #aptlist .sep { cursor: default; color: #666; font-size: 12px; background: #f6f6f6; }
   .fixpin-wrap { background: none; border: none; }
   .fixpin { width: 10px; height: 10px; margin: 3px; transform: rotate(45deg); box-sizing: content-box; }
   .fixpin.learned { background: #c2255c; border: 2px solid #fff; box-shadow: 0 0 0 2px #c2255c; }
@@ -81,7 +81,7 @@
 <body>
 <aside>
   <h3 style="margin-top:0">FullFlight <a href="/airframes.html" class="navlink" title="Every aircraft we know of, with your notes">Airframes</a></h3>
-  <div id="tabs"><button id="tabwatch" class="on">Watches</button><button id="tabfixes" title="Search the waypoints we know">Fixes</button></div>
+  <div id="tabs"><button id="tabwatch" class="on">Watches</button><button id="tabfixes" title="Search the waypoints we know">Fixes</button><button id="tabairports" title="Search airports">Airports</button></div>
   <div id="tab-watch">
   <form id="add">
     <input name="input" placeholder="UA869 2026-10-31 [SFO]   or   CPA113   or   B-LRM   or   780AB8" required autocomplete="off">
@@ -107,6 +107,12 @@
       <label style="margin-left:8px"><input type="checkbox" id="fixall"> all on the map</label></p>
     <div id="fixerr" style="color:#b00"></div>
     <ul id="fixlist"></ul>
+  </div>
+  <div id="tab-airports" hidden>
+    <input id="aptq" placeholder="Airport code, name or city, e.g. NRT or Narita" autocomplete="off" spellcheck="false">
+    <p class="hint" id="aptstat" style="margin:6px 0 4px"></p>
+    <div id="apterr" style="color:#b00"></div>
+    <ul id="aptlist"></ul>
   </div>
 </aside>
 <div id="map"></div>
@@ -1247,15 +1253,98 @@ async function drawAllFixes() {
   } catch (e) { $('#fixerr').textContent = e.message; }
 }
 
+// ---- airport search -------------------------------------------------------------------------
+// Airports by code, name or city (the server ranks them); with nothing typed, the ones your watches use.
+// The one chosen is drawn with the 15 nm circle inside which a low, slow, silent aircraft is taken to have landed.
+const airportGroup = L.layerGroup().addTo(map);
+let airportData = null, airportChosen = null, airportTimer = null, airportSeq = 0;
+const LANDING_RADIUS_NM = 15;
+const airportCodes = a => a.icao + (a.iata ? ' / ' + a.iata : '');
+
+function airportLines(a) {
+  const lines = [[a.name, a.city && !a.name.includes(a.city) ? a.city : ''].filter(Boolean).join(' · ')];
+  lines.push(`${coord(a)}${a.elev_ft != null ? ' · ' + num(a.elev_ft) + ' ft' : ''}`);
+  for (const w of a.why || []) lines.push(w);
+  return lines;
+}
+
+function airportTip(a) {
+  const d = document.createElement('div');
+  const b = document.createElement('b');
+  b.textContent = airportCodes(a);
+  d.append(b);
+  for (const l of airportLines(a)) { const e = document.createElement('div'); e.textContent = l; d.append(e); }
+  return d;
+}
+
+function showAirport(a) {
+  airportChosen = a.icao;
+  airportGroup.clearLayers();
+  const at = ll2(a);
+  L.circle(at, {radius: LANDING_RADIUS_NM * 1852, color: '#1d4ed8', weight: 1, dashArray: '4 6', fillOpacity: .04, interactive: false}).addTo(airportGroup);
+  L.circleMarker(at, {radius: 7, color: '#fff', weight: 2, fillColor: '#1d4ed8', fillOpacity: 1}).addTo(airportGroup)
+    .bindTooltip(airportTip(a), {permanent: true, direction: 'right', offset: [10, 0]});
+  map.setView(at, Math.max(map.getZoom ? map.getZoom() : 0, 10));
+  renderAirports();
+}
+
+function renderAirports() {
+  const all = airportData ? airportData.airports : [];
+  const items = all.map(a => {
+    const li = document.createElement('li');
+    li.className = a.icao === airportChosen ? 'sel' : '';
+    const b = document.createElement('b');
+    b.textContent = airportCodes(a);
+    li.append(b);
+    airportLines(a).forEach((l, i) => { const s = document.createElement('small'); s.textContent = l; if (i === 0) s.className = 'lastpos'; li.append(s); });
+    li.onclick = () => showAirport(a);
+    return li;
+  });
+  if (!items.length) {
+    const e = document.createElement('li');
+    e.className = 'sep';
+    e.textContent = $('#aptq').value.trim() ? 'No airport matches.' : 'Type a code, name or city. (None of your watches use an airport yet.)';
+    items.push(e);
+  } else if (airportData.more) {
+    const e = document.createElement('li');
+    e.className = 'sep';
+    e.textContent = `The first ${all.length}: type more to narrow it down.`;
+    items.push(e);
+  }
+  $('#aptlist').replaceChildren(...items);
+  if (airportData) {
+    $('#aptstat').textContent = airportData.watched
+      ? `Airports your watches use · ${airportData.total.toLocaleString()} airports to search`
+      : `${all.length}${airportData.more ? '+' : ''} match${all.length === 1 ? '' : 'es'} of ${airportData.total.toLocaleString()} airports`;
+  }
+}
+
+async function loadAirports() {
+  const seq = ++airportSeq;
+  try {
+    const d = await api('/api/airports?q=' + encodeURIComponent($('#aptq').value.trim()));
+    if (seq !== airportSeq || !d) return;   // a newer search is under way
+    airportData = d;
+    $('#apterr').textContent = '';
+    renderAirports();
+  } catch (e) { $('#apterr').textContent = e.message; }
+}
+$('#aptq').oninput = () => { clearTimeout(airportTimer); airportTimer = setTimeout(loadAirports, 200); };
+$('#aptq').onkeydown = e => {   // Enter goes to the first match
+  if (e.key === 'Enter' && airportData && airportData.airports.length) { e.preventDefault(); showAirport(airportData.airports[0]); }
+};
+
 function showTab(name) {
-  $('#tab-watch').hidden = name !== 'watch';
-  $('#tab-fixes').hidden = name !== 'fixes';
-  $('#tabwatch').classList.toggle('on', name === 'watch');
-  $('#tabfixes').classList.toggle('on', name === 'fixes');
+  for (const t of ['watch', 'fixes', 'airports']) {
+    $('#tab-' + t).hidden = name !== t;
+    $('#tab' + t).classList.toggle('on', name === t);
+  }
   if (name === 'fixes') { loadFixes(); drawAllFixes(); }
+  if (name === 'airports') loadAirports();
 }
 $('#tabwatch').onclick = () => showTab('watch');
 $('#tabfixes').onclick = () => showTab('fixes');
+$('#tabairports').onclick = () => showTab('airports');
 $('#fixq').oninput = () => { clearTimeout(fixTimer); fixTimer = setTimeout(loadFixes, 200); };
 $('#fixq').onkeydown = e => {   // Enter goes to the first match
   if (e.key === 'Enter' && fixData && fixData.fixes.length) { e.preventDefault(); showFix(fixData.fixes[0]); }
