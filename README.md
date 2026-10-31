@@ -503,8 +503,15 @@ track crossing the date line continues from 179 to 181 instead of drawing a line
 
 ## Status
 
-Done: watchlist, ADS-B poller with source fallback, SQLite track log, permanent
-hex/tail table, message fetcher and decoder, web UI with map, message timeline
-and UTC clock. Not yet: CPDLC reports that name a fix instead of coordinates, flight segmentation
-by tail/flight/date, MIAM continuation blocks (shown as "not decoded"),
-ADS-C predicted-vs-actual ETA error, SSE live updates, systemd/reverse-proxy docs.
+Done: the watchlist (tails, hex codes, flights and dates), the ADS-B poller with source fallback, the SQLite track log,
+the message fetcher and decoder (ADS-C, CPDLC, AFN, REP081 and other position report formats, airline satellite
+headers), the web page (map, message timeline, UTC clock), the waypoints and fixes named in CPDLC reports, the division
+of an aircraft's history into flights, flight plans, predictions and the projection, estimated paths, weather radar and
+satellite overlays, wind barbs, the unified track, airframe notes, and fix and airport search.
+
+Not yet:
+
+- MIAM messages other than the Cathay REP081 report, including MIAM continuation blocks (shown as "not decoded").
+- Comparing an ADS-C report's predicted ETA with the actual passage of the waypoint, and showing the error.
+- Live updates pushed to the page (it polls; SSE would replace that).
+- Deployment docs: a systemd unit and a reverse proxy example. (HTTP basic auth is built in; see `config.example.yaml`.)
