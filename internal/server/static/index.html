@@ -33,7 +33,11 @@
   input[name=input] { flex: 1 1 100%; padding: 6px; }
   input[name=until] { flex: 1; padding: 6px; }
   .hint { color: #666; font-size: 12px; margin: 0 0 12px; }
-  #err { color: #b00; min-height: 1.2em; }
+  #err { color: #b00; }
+  #err:empty, #note:empty { display: none; }   /* only take room when there is something to say */
+  #acc-targets .acccontrols form { margin-bottom: 2px; }
+  #acc-targets .accbody { padding-top: 2px; }
+  #note.hint { margin: 2px 0 4px; }
   ul { list-style: none; padding: 0; margin: 0; }
   li { padding: 8px; border-bottom: 1px solid #eee; cursor: pointer; }
   li.sel { background: #eef4ff; }
