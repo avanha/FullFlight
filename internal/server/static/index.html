@@ -572,7 +572,7 @@ function drawPlan(plan) {
     const last = i === plan.points.length - 1;
     L.circleMarker(ll(p.lat, p.lon), {radius: p.kind === 'airport' ? 5 : 3, color: PLAN_COLOR, weight: 1.5, fillColor: '#fff', fillOpacity: 1}).addTo(planGroup)
       .bindTooltip(tip(p.name, p.via && !last ? `then ${p.via}` : '', `planned route ${head}`, `filed ${fmt(plan.t)}`,
-        p.kind === 'fix' ? 'position from the navigation database' : '', plan.missing && plan.missing.length && i === 0 ? `not placed: ${plan.missing.join(', ')}` : ''));
+        p.kind === 'fix' ? 'position from nav db (2013 src)' : '', plan.missing && plan.missing.length && i === 0 ? `not placed: ${plan.missing.join(', ')}` : ''));
   });
 }
 
@@ -909,7 +909,7 @@ function drawPredictions() {
     for (const p of route) {
       L.circleMarker(ll(p.lat, p.lon), {radius: 5, color: c, weight: 2, fillColor: '#fff', fillOpacity: 1}).addTo(predGroup).bindTooltip(tip(
         `${p.name ? p.name + ' \u2014 ' : ''}predicted ${p.kind === 'next' ? 'next waypoint' : 'waypoint after next'}`, etaText(m, p.eta_sec),
-        p.name ? (p.name_src === 'learned' ? 'name matched from CPDLC reports' : 'name from the 2013 navigation database') : '(coordinates only)',
+        p.name ? (p.name_src === 'learned' ? 'name from nav db (learned)' : 'name from nav db (2013 src)') : '(coordinates only)',
         `predicted by the report of ${fmt(m.pos_t || m.t)}`));
     }
   }
@@ -1096,13 +1096,13 @@ const coord = f => `${Math.abs(f.lat).toFixed(3)}°${f.lat < 0 ? 'S' : 'N'} ${Ma
 function fixLines(f) {
   const lines = [coord(f)];
   if (f.kind !== 'learned') {
-    lines.push(`navigation database${fixData && fixData.database_cycle ? ' ' + fixData.database_cycle : ''} (${f.kind})`);
+    lines.push(`nav db (${fixData && fixData.database_cycle ? fixData.database_cycle.slice(0, 4) : 'downloaded'} src) · ${f.kind}`);
     return lines;
   }
-  lines.push(`${f.n} message${f.n === 1 ? '' : 's'} · ${(f.sources || []).map(x => FIX_HOW[x] || x).join(', ')}`);
+  lines.push(`learned from ${f.n} message${f.n === 1 ? '' : 's'} · ${(f.sources || []).map(x => FIX_HOW[x] || x).join(', ')}`);
   lines.push(f.first ? `first heard ${fmt(f.first)} · last confirmed ${fmt(f.last)} (${ago(f.last)})` : 'the messages that taught it are no longer stored');
-  if (f.db_nm != null) lines.push(`navigation database: ${f.db_nm < 0.1 ? 'same place' : f.db_nm.toFixed(1) + ' nm away'}`);
-  else if (fixData && fixData.database_names) lines.push('not in the navigation database');
+  if (f.db_nm != null) lines.push(`nav db: ${f.db_nm < 0.1 ? 'same place' : f.db_nm.toFixed(1) + ' nm away'}`);
+  else if (fixData && fixData.database_names) lines.push('not in nav db');
   return lines;
 }
 

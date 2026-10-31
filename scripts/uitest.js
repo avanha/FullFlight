@@ -497,7 +497,7 @@ highlightGroup = null;
   assert.strictEqual(lines(r.circles.find(c => c.o.radius === 4).tooltip).length, 2, 'summary and time only when there is nothing else');
 
   // ===== 8m. waypoints named in CPDLC reports ====================================================
-  const wp = (name, exact, role = 'next', extra = {}) => ({name, role, lat: 5 + name.length, lon: 120, exact, source: exact ? 'database' : 'projected', how: exact ? 'from the navigation database (cycle 2013.10)' : 'estimated: 61 nm ahead on track 122° at 520 kt, by its ETA', t: '2026-10-30T18:55:00Z', ...extra});
+  const wp = (name, exact, role = 'next', extra = {}) => ({name, role, lat: 5 + name.length, lon: 120, exact, source: exact ? 'database' : 'projected', how: exact ? 'from nav db (2013 src)' : 'estimated: 61 nm ahead on track 122° at 520 kt, by its ETA', t: '2026-10-30T18:55:00Z', ...extra});
   const cm = (id, hh, wps, extra = {}) => ({id, t: `2026-10-30T${hh}:00Z`, pos_t: `2026-10-30T${hh}:00Z`, kind: 'cpdlc', summary: 's', raw: 'r', label: 'BA', rx_count: 1, lat: 6, lon: 119, waypoints: wps, ...extra});
   r = await draw([], [
       cm(50, '17:00', [wp('EXACTX', true), wp('NEWEST', false, 'next', {lat: 1})]),   // older report
@@ -511,7 +511,7 @@ highlightGroup = null;
   assert.ok(/class="wpt"/.test(byName('EXACTX').o.icon.html) && /class="wpt est"/.test(byName('NEWEST').o.icon.html), 'exact is solid, an estimate dashed');
   assert.strictEqual(byName('NEWEST').ll[0], 3, 'of two estimates, the newest report');
   assert.strictEqual(JSON.stringify(lines(byName('NEWEST').tooltip).slice(0, 2)), JSON.stringify(['NEWEST — next fix, ETA 18:55:00Z', '⚠ estimated: 61 nm ahead on track 122° at 520 kt, by its ETA']));
-  assert.ok(lines(byName('EXACTX').tooltip)[1].startsWith('from the navigation database'));
+  assert.ok(lines(byName('EXACTX').tooltip)[1].startsWith('from nav db'));
   assert.strictEqual(lines(byName('EXACTX').tooltip)[0], 'EXACTX — next fix, ETA 18:55:00Z');
   const passed = (await draw([], [cm(53, '18:00', [wp('PASSEDX', true, 'passed', {alt_ft: 34300})])], false)).markers.find(m => m.o.icon && /wpt-wrap/.test(m.o.icon.className));
   assert.ok(lines(passed.tooltip)[0].includes('passed 18:55:00Z at 34,300 ft'), lines(passed.tooltip)[0]);
@@ -597,8 +597,8 @@ highlightGroup = null;
     assert.strictEqual(dots.length, 4);
     const tipLines = el => el.children.map(c => c.textContent);
     assert.deepEqual(tipLines(dots[2].tooltip)[0], 'TUNTO'); assert.ok(tipLines(dots[2].tooltip).includes('then Q13'));
-    assert.ok(tipLines(dots[2].tooltip).includes('position from the navigation database'));
-    assert.ok(!tipLines(dots[1].tooltip).includes('position from the navigation database'), 'given coordinates need no caveat');
+    assert.ok(tipLines(dots[2].tooltip).includes('position from nav db (2013 src)'));
+    assert.ok(!tipLines(dots[1].tooltip).includes('position from nav db (2013 src)'), 'given coordinates need no caveat');
     assert.ok(tipLines(dots[0].tooltip).some(l => l.includes('not placed: XYZ')));
     t.drawPlan(null);
     assert.strictEqual(t.planGroup.items.length, 0);
@@ -830,9 +830,9 @@ highlightGroup = null;
   const pdots = predDots();
   const t1 = lines(pdots[0].tooltip), t2 = lines(pdots[1].tooltip), tf = lines(pdots[2].tooltip);
   assert.strictEqual(t1[0], 'OLGAN — predicted next waypoint');
-  assert.ok(t1.includes('ETA 18:10:00Z (+10 min)') && t1.includes('name matched from CPDLC reports'), t1.join(' | '));
+  assert.ok(t1.includes('ETA 18:10:00Z (+10 min)') && t1.includes('name from nav db (learned)'), t1.join(' | '));
   assert.strictEqual(t2[0], 'KAPPU — predicted waypoint after next');
-  assert.ok(t2.includes('name from the 2013 navigation database'), t2.join(' | '));
+  assert.ok(t2.includes('name from nav db (2013 src)'), t2.join(' | '));
   assert.ok(tf[0].startsWith('Where the flight computer expects it to be in 37 min') && tf.includes('ETA 18:37:00Z (+37 min)'), tf.join(' | '));
   // a nameless waypoint says why
   t.rows.get(71).onclick();

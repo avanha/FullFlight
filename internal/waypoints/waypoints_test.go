@@ -144,6 +144,7 @@ func TestLearnedBeatsDatabaseAndMustAgreeWithTheFlight(t *testing.T) {
 	st := open(t)
 	m := cpdlc(t, st, 1, -5.46, 141.742, store.FixEntry{Name: "NEXTX", Role: "next", T: at(18, 55)}, store.FixEntry{Name: "THENX", Role: "then"})
 	nav := navdata.New()
+	nav.Cycle = "2013.10"
 	nav.Add("NEXTX", navdata.Point{Lat: -6.0, Lon: 142.7, Kind: "fix"})
 	nav.Add("THENX", navdata.Point{Lat: -6.8, Lon: 144.2, Kind: "fix"})
 	// A learned position slightly different from the database one wins, and is marked as from ADS-C.
@@ -157,6 +158,10 @@ func TestLearnedBeatsDatabaseAndMustAgreeWithTheFlight(t *testing.T) {
 	}
 	if th := find(ws, "THENX"); th == nil || th.Source != "database" {
 		t.Errorf("THENX should fall through the unreachable learned fix to the database: %+v", th)
+	}
+	// The hover says which: our learned data, or the downloaded database and its year.
+	if n, th := find(ws, "NEXTX"), find(ws, "THENX"); n == nil || th == nil || n.How != "from nav db (learned)" || th.How != "from nav db (2013 src)" {
+		t.Errorf("how: %+v %+v", n, th)
 	}
 	// A learned position that contradicts the estimate for a fix with a time (a reused name) is rejected.
 	st2 := open(t)

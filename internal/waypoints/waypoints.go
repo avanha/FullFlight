@@ -107,7 +107,7 @@ func (r *Resolver) learned(w *Waypoint, name string, ref [2]float64, est *[2]flo
 		return false
 	}
 	w.Lat, w.Lon, w.Exact, w.Source = best[0], best[1], true, "ADS-C"
-	w.How = "position matched from the aircraft's own ADS-C predicted route"
+	w.How = "from nav db (learned)"
 	return true
 }
 
@@ -130,15 +130,16 @@ func (r *Resolver) database(w *Waypoint, e store.FixEntry, ref [2]float64, fl st
 		return false
 	}
 	w.Lat, w.Lon, w.Exact, w.Source = best[0], best[1], true, "database"
-	w.How = fmt.Sprintf("from the navigation database (cycle %s)", cycle(r.Nav))
+	w.How = fmt.Sprintf("from nav db (%s src)", srcYear(r.Nav))
 	return true
 }
 
-func cycle(d *navdata.DB) string {
-	if d == nil || d.Cycle == "" {
-		return "unknown"
+// srcYear is the year of the downloaded database, as the hover names it ("2013 src").
+func srcYear(d *navdata.DB) string {
+	if d == nil || len(d.Cycle) < 4 {
+		return "downloaded"
 	}
-	return d.Cycle
+	return d.Cycle[:4]
 }
 
 // nearest picks, from the candidates a callback yields, the one nearest the aircraft within
