@@ -207,6 +207,11 @@ but not where they are. Each name gets coordinates from the most trustworthy sou
 
 1. **Learned from the aircraft's own ADS-C** (exact): an ADS-C report lists its next waypoint with
    coordinates and an ETA; a CPDLC fix whose time matches that ETA to within 90 s is that waypoint.
+   The fixes after it in the CPDLC list are the waypoints that follow it in that same ADS-C report
+   (so the "fix after next", which has no time, is learned too), and a fix passed with no ETA match
+   is taken from an ADS-C waypoint change event at that time, a few miles from the waypoint (the
+   flight computer sequences it early). Learned positions persist (the `fix` table, with where each
+   came from) and name bare ADS-C coordinates later; `fullflight -redecode` learns from stored messages.
 2. **The navigation database** (exact), if it fits the flight: not behind the aircraft, no nearer than
    the next fix, within 60 nm of our own estimate. `scripts/fetch-navdata.sh` downloads FlightGear's
    X-Plane-format `fix.dat.gz`/`nav.dat.gz` into `data/navdata/`. It is GPL data from **2013**, so it

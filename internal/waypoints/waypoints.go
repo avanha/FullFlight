@@ -227,57 +227,159 @@ func angleDiff(a, b float64) float64 {
 type routeWaypoint struct {
 	Lat, Lon float64
 	ETASec   *float64
+	Kind     string // "next", "next+1" or "fixed"; empty in rows stored before it existed
+}
+
+type latLon struct{ lat, lon float64 }
+
+// anchor is a waypoint position known exactly, and when the aircraft reached or will reach it.
+type anchor struct {
+	t         time.Time
+	pos       latLon
+	source    string
+	following []latLon // the waypoints after this one, in order, as the same ADS-C report listed them
+}
+
+// routeChain is a stored route's waypoints in order, without the flight computer's fixed-time projection.
+func routeChain(wp []routeWaypoint) []routeWaypoint {
+	var out []routeWaypoint
+	for i, w := range wp {
+		if w.Kind == "fixed" || w.Kind == "" && i >= 2 {
+			continue
+		}
+		out = append(out, w)
+	}
+	return out
+}
+
+// wptChangeEvent returns the position an ADS-C waypoint change event reported: the aircraft was at the
+// waypoint it had just sequenced. It is only used when it is the position the message was stored with,
+// because that is what carries its time.
+func wptChangeEvent(m store.Message) (latLon, bool) {
+	var d struct {
+		Tree struct {
+			Arinc622 struct {
+				Adsc struct {
+					Tags []struct {
+						Event *struct{ Lat, Lon *float64 } `json:"wpt_change_event"`
+					} `json:"tags"`
+				} `json:"adsc"`
+			} `json:"arinc622"`
+		} `json:"tree"`
+	}
+	if m.Lat == nil || m.Lon == nil || m.PosT == nil || json.Unmarshal([]byte(m.Decoded), &d) != nil {
+		return latLon{}, false
+	}
+	for _, t := range d.Tree.Arinc622.Adsc.Tags {
+		if e := t.Event; e != nil && e.Lat != nil && e.Lon != nil &&
+			math.Abs(*e.Lat-*m.Lat) < 1e-4 && math.Abs(*e.Lon-*m.Lon) < 1e-4 {
+			return latLon{*e.Lat, *e.Lon}, true
+		}
+	}
+	return latLon{}, false
+}
+
+// anchors collects what the aircraft's ADS-C reports say exactly: each predicted waypoint that came
+// with an ETA, and each waypoint it reported sequencing.
+func anchors(ms []store.Message) (eta, passed []anchor) {
+	for _, m := range ms {
+		if m.Kind != "adsc" || m.PosT == nil || m.Suspect != "" {
+			continue
+		}
+		var chain []routeWaypoint
+		var wp []routeWaypoint
+		if m.Route != "" && json.Unmarshal([]byte(m.Route), &wp) == nil {
+			chain = routeChain(wp)
+		}
+		after := func(from int) (out []latLon) {
+			for _, w := range chain[from:] {
+				out = append(out, latLon{w.Lat, w.Lon})
+			}
+			return
+		}
+		for k, w := range chain {
+			if w.ETASec != nil {
+				eta = append(eta, anchor{m.PosT.Add(time.Duration(*w.ETASec * float64(time.Second))), latLon{w.Lat, w.Lon}, "adsc-eta", after(k + 1)})
+			}
+		}
+		if p, ok := wptChangeEvent(m); ok {
+			passed = append(passed, anchor{*m.PosT, p, "adsc-wpt", after(0)})
+		}
+	}
+	return
 }
 
 // Learn matches the waypoint names in an aircraft's CPDLC position reports to the exact
-// coordinates in its ADS-C predicted routes, by time: a CPDLC fix passed (or due) at a given
-// minute is the ADS-C waypoint whose ETA is that minute. It returns how many matches it made;
-// running it again over the same messages changes nothing.
+// coordinates in its ADS-C reports, by time: a CPDLC fix passed (or due) at a given minute is the
+// ADS-C waypoint whose ETA is that minute, or, for a fix passed, the waypoint an ADS-C waypoint
+// change event reported sequencing then (a few miles from the waypoint itself, so used only when no
+// predicted waypoint has that ETA). The fixes after a matched one in the CPDLC list are the
+// waypoints that follow it in that same ADS-C report. It returns how many matches it made; running
+// it again over the same messages changes nothing.
 func Learn(st *store.Store, hexAddr string, since time.Time) (int, error) {
 	ms, err := st.Messages(hexAddr, since, time.Now().Add(48*time.Hour), 100000)
 	if err != nil {
 		return 0, err
 	}
-	type eta struct {
-		t        time.Time
-		lat, lon float64
-	}
-	var etas []eta
-	for _, m := range ms {
-		if m.Kind != "adsc" || m.Route == "" || m.PosT == nil || m.Suspect != "" {
-			continue
-		}
-		var wp []routeWaypoint
-		if json.Unmarshal([]byte(m.Route), &wp) != nil || len(wp) == 0 || wp[0].ETASec == nil {
-			continue
-		}
-		etas = append(etas, eta{m.PosT.Add(time.Duration(*wp[0].ETASec * float64(time.Second))), wp[0].Lat, wp[0].Lon})
-	}
+	etas, events := anchors(ms)
 	n := 0
 	for _, m := range ms {
 		fl, ok := parseFixes(m)
 		if !ok {
 			continue
 		}
-		for _, e := range fl.List {
+		reachable := func(p latLon) bool {
+			return m.Lat == nil || m.Lon == nil || geo.DistNM(*m.Lat, *m.Lon, p.lat, p.lon) <= MaxRefDistNM
+		}
+		type learnt struct {
+			pos    latLon
+			source string
+		}
+		got := map[int]learnt{}
+		chained := map[int]learnt{}
+		for i, e := range fl.List {
 			if e.T == 0 || e.Role == "then" {
 				continue
 			}
 			t := time.Unix(e.T, 0).UTC()
-			var best *eta
-			for i := range etas {
-				d := etas[i].t.Sub(t).Abs()
-				if d <= MatchWindow && (best == nil || d < best.t.Sub(t).Abs()) {
-					best = &etas[i]
+			var best *anchor
+			pools := [][]anchor{etas}
+			if e.Role == "passed" {
+				// An event puts the aircraft where it sequenced the waypoint, a few miles from it: used
+				// only when no predicted waypoint has that ETA.
+				pools = append(pools, events)
+			}
+			for _, pool := range pools {
+				for k := range pool {
+					d := pool[k].t.Sub(t).Abs()
+					if d <= MatchWindow && (best == nil || d < best.t.Sub(t).Abs()) {
+						best = &pool[k]
+					}
+				}
+				if best != nil {
+					break
 				}
 			}
-			if best == nil {
+			if best == nil || !reachable(best.pos) {
 				continue
 			}
-			if m.Lat != nil && m.Lon != nil && geo.DistNM(*m.Lat, *m.Lon, best.lat, best.lon) > MaxRefDistNM {
-				continue
+			got[i] = learnt{best.pos, best.source}
+			for j, f := range best.following {
+				if i+1+j >= len(fl.List) {
+					break
+				}
+				if reachable(f) {
+					chained[i+1+j] = learnt{f, "adsc-chain"}
+				}
 			}
-			if err := st.AddFix(e.Name, m.ID, best.lat, best.lon, "adsc-eta"); err != nil {
+		}
+		for i, l := range chained {
+			if _, direct := got[i]; !direct {
+				got[i] = l
+			}
+		}
+		for i, l := range got {
+			if err := st.AddFix(fl.List[i].Name, m.ID, l.pos.lat, l.pos.lon, l.source); err != nil {
 				return n, err
 			}
 			n++

@@ -3,6 +3,7 @@ package waypoints
 import (
 	"encoding/json"
 	"math"
+	"strconv"
 	"testing"
 	"time"
 
@@ -276,5 +277,96 @@ func TestAcrossTheDateLine(t *testing.T) {
 	nx := find((&Resolver{Store: st}).Resolve(m2), "NXT")
 	if nx == nil || nx.Lon < -180 || nx.Lon > 180 {
 		t.Errorf("projected fix longitude %+v", nx)
+	}
+}
+
+// adscRoute stores an ADS-C report at (lat, lon), pos, with a predicted route and optionally a
+// waypoint change event at that position.
+func adscRoute(t *testing.T, st *store.Store, id int64, pos time.Time, lat, lon float64, event bool, route ...map[string]any) {
+	t.Helper()
+	r, _ := json.Marshal(route)
+	decoded := `{"tree":null}`
+	if event {
+		decoded = `{"tree":{"arinc622":{"adsc":{"tags":[{"wpt_change_event":{"lat":` + strconv.FormatFloat(lat, 'f', 6, 64) + `,"lon":` + strconv.FormatFloat(lon, 'f', 6, 64) + `,"ts_sec":1}}]}}}}`
+	}
+	m := store.Message{ID: id, Hex: hex, T: pos, Label: "B6", Text: "adsc" + strconv.Itoa(int(id)), Kind: "adsc", Lat: &lat, Lon: &lon, PosT: &pos, Route: string(r), Decoded: decoded}
+	if _, err := st.AddMessage(m); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func wp(lat, lon float64, eta float64, kind string) map[string]any {
+	m := map[string]any{"Lat": lat, "Lon": lon, "Kind": kind}
+	if eta > 0 {
+		m["ETASec"] = eta
+	}
+	return m
+}
+
+func learned(t *testing.T, st *store.Store, name string, lat, lon float64) {
+	t.Helper()
+	l := st.LearnedFixes(name)
+	if len(l) != 1 || math.Abs(l[0].Lat-lat) > 1e-6 || math.Abs(l[0].Lon-lon) > 1e-6 {
+		t.Errorf("%s learned %+v, want %v,%v", name, l, lat, lon)
+	}
+}
+
+// The waypoint after a matched one in a CPDLC list is the next one in the same ADS-C report.
+func TestLearnFollowsTheRoute(t *testing.T) {
+	st := open(t)
+	// ADS-C at 18:34:31: next (-5.233, 140.798) due in 443 s (18:41:54), after it (-5.9, 141.5); then the projection.
+	adscRoute(t, st, 1, time.Date(2026, 10, 30, 18, 34, 31, 0, time.UTC), -4.5, 140.2, false,
+		wp(-5.233, 140.798, 443, "next"), wp(-5.9, 141.5, 0, "next+1"), wp(-9, 144, 900, "fixed"))
+	// Passed at 18:42 = the ADS-C next waypoint, so the CPDLC next fix is the one after it. The fix
+	// after next is not in the ADS-C report, and the fixed-time projection is not a waypoint.
+	cpdlc(t, st, 2, -5.46, 141.742,
+		store.FixEntry{Name: "PASSED", Role: "passed", T: at(18, 42)},
+		store.FixEntry{Name: "NEXT", Role: "next", T: at(18, 55)},
+		store.FixEntry{Name: "THEN", Role: "then"})
+	if n, err := Learn(st, hex, t0.Add(-24*time.Hour)); err != nil || n != 2 {
+		t.Fatalf("learned %d, err %v", n, err)
+	}
+	learned(t, st, "PASSED", -5.233, 140.798)
+	learned(t, st, "NEXT", -5.9, 141.5)
+	if l := st.LearnedFixes("THEN"); l != nil {
+		t.Errorf("THEN learned %+v", l)
+	}
+	// The same pass again changes nothing.
+	if n, _ := Learn(st, hex, t0.Add(-24*time.Hour)); n != 2 || st.LearnedFixes("NEXT")[0].N != 1 {
+		t.Errorf("second pass: n=%d", n)
+	}
+	// A route that cannot be this flight's (the other side of the world) is not believed.
+	st2 := open(t)
+	adscRoute(t, st2, 1, time.Date(2026, 10, 30, 18, 34, 31, 0, time.UTC), -4.5, 140.2, false,
+		wp(-5.233, 140.798, 443, "next"), wp(50, 10, 0, "next+1"))
+	cpdlc(t, st2, 2, -5.46, 141.742, store.FixEntry{Name: "PASSED", Role: "passed", T: at(18, 42)}, store.FixEntry{Name: "NEXT", Role: "next", T: at(18, 55)})
+	Learn(st2, hex, t0.Add(-24*time.Hour))
+	if l := st2.LearnedFixes("NEXT"); l != nil {
+		t.Errorf("NEXT learned %+v", l)
+	}
+}
+
+// A waypoint change event is the aircraft sequencing a waypoint; the route in the same report is what follows.
+func TestLearnFromWaypointChangeEvent(t *testing.T) {
+	st := open(t)
+	adscRoute(t, st, 1, time.Date(2026, 10, 30, 18, 42, 20, 0, time.UTC), -5.30, 140.85, true,
+		wp(-5.9, 141.5, 300, "next"), wp(-6.4, 142.1, 0, "next+1"))
+	cpdlc(t, st, 2, -5.46, 141.742,
+		store.FixEntry{Name: "PASSED", Role: "passed", T: at(18, 42)},
+		store.FixEntry{Name: "NEXT", Role: "next", T: at(18, 55)},
+		store.FixEntry{Name: "THEN", Role: "then"})
+	if n, err := Learn(st, hex, t0.Add(-24*time.Hour)); err != nil || n != 3 {
+		t.Fatalf("learned %d, err %v", n, err)
+	}
+	learned(t, st, "PASSED", -5.30, 140.85)
+	learned(t, st, "NEXT", -5.9, 141.5)
+	learned(t, st, "THEN", -6.4, 142.1)
+
+	// An earlier prediction of that waypoint, with an ETA that matches, is the better position: the
+	// event is where the aircraft sequenced it, a few miles off.
+	adscRoute(t, st, 3, time.Date(2026, 10, 30, 18, 35, 0, 0, time.UTC), -4.5, 140.2, false, wp(-5.233, 140.798, 420, "next"))
+	Learn(st, hex, t0.Add(-24*time.Hour))
+	if l := st.LearnedFixes("PASSED"); len(l) != 1 || l[0].Lat != -5.233 {
+		t.Errorf("PASSED after an ETA match = %+v", l)
 	}
 }
