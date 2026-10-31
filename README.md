@@ -107,6 +107,11 @@ re-decode every stored message from its raw text (idempotent).
 
 ## Destination from the aircraft
 
+Boeing 787 ACMF reports (label H1, header `EB0116AB_9 ,333, N24993,UAL143 , 87,301026,22:53:35,KDEN,RJAA,16591`)
+carry a fix every 3 minutes (1 in descent): `N5810.2,W14513.5,302238, 35998,-49.5,215,079,ER,…` is position,
+DDHHMM, altitude, temperature, wind from/knots, phase (ER, CL, DC). Only the first block of a long report has
+the header, and the message's one position is its newest fix; the others are listed in its detail. Fix times are
+whole minutes. The header's trailing number counts seconds (zero point unknown) and a few fields are unexplained.
 Cathay A350 REP081 reports name the flight's origin and destination (`VHHH YSSY`).
 The newest one is shown on the watch (`VHHH → YSSY (REP081 12m ago)`) and in the plane's
 hover, for tail and hex watches as well as flights. REP081 goes out about every 20
@@ -277,9 +282,9 @@ is the selector under the watch list. It does not know about turns or weather de
 
 Choosing a watch centres the map (zoom 7) on that aircraft's newest trustworthy
 fix, from ADS-B or a datalink message, whichever is later. Each position source has its own track
-and colour (ADS-B blue, ADS-C orange, CPDLC purple, REP081 teal, FMS green) with a
+and colour (ADS-B blue, ADS-C orange, CPDLC purple, REP081 teal, FMS green, ACMF crimson) with a
 legend to switch them on and off. A track is broken, not bridged, across a long
-silence (ADS-B 20 min, ADS-C 90, CPDLC 150, REP081 90, FMS 60) or an impossible
+silence (ADS-B 20 min, ADS-C 90, CPDLC 150, REP081 90, FMS 60, ACMF 40) or an impossible
 jump (over 700 kt), and positions flagged impossible are left out. Click a dot on the map and its message is selected in the list (and scrolled to); click a message that
 has a position (orange bar on its left) to ring it on the map and show its popup
 (only one popup is ever open); the map pans only if it is out of view. Position messages are listed at the time the report carries, with a dotted underline, and the list is ordered by the time shown; hover for both times and the gap between them (one station logs about 3 minutes before the time inside its messages). Other messages show when they arrived. Hover any message time for its age.
