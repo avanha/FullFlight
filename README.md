@@ -51,6 +51,15 @@ Each has its field elevation (used to judge height above the field when inferrin
 Every hex/tail pairing ever seen (from ADS-B or airframes.io) is kept in the
 `airframe` table forever, independent of watches; see `GET /api/airframes`.
 
+**Pausing.** Each watch has a Pause button (`PATCH /api/watches/{id} {"paused": true}`; `false` resumes). A paused
+watch is not polled at all (no ADS-B request, no airframes.io fetch, no flight-number lookups), does not run out at
+its end time, and stays in the list with its track, messages and everything else we hold, which you can still select and
+look at; the plane shows the age of its last position and no projection is drawn. The button is outlined in green once
+we have inferred that the aircraft landed, which is the moment to use it. Resume starts polling again (a tail or hex
+watch gets its usual 36 hours from then; a flight watch keeps its dated window and cannot be resumed after it). Watching
+the same aircraft again resumes the paused entry instead of adding a second. Pausing does not protect the data from
+`-purge-older-than`: give the airframe a note for that.
+
 ## Finding a flight ADS-B cannot see
 
 With an AeroDataBox key (`aerodatabox.api_key` in `config.yaml`; `config.example.yaml` has the placeholder,

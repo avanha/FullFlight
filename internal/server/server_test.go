@@ -993,3 +993,53 @@ func TestPlanUsesLearnedFixes(t *testing.T) {
 		t.Errorf("missing = %v", plans[0].Missing)
 	}
 }
+
+func TestPauseAndResumeAPI(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 31, 6, 0, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("tail:JA826J", now.Add(-time.Hour), time.Time{})
+	e.Hex, e.Status = "86D646", watchlist.StatusTracking
+	e, _ = st.AddWatch(e)
+	f := func(v float64) *float64 { return &v }
+	st.AddPosition(store.Position{Hex: "86D646", T: now.Add(-time.Hour), Lat: 35.7, Lon: 140.4, AltFt: f(400), GS: f(147), Track: f(330), Source: "adsb.lol"})
+	lat, lon := 28.7, 173.8
+	st.AddMessage(store.Message{ID: 1, Hex: "86D646", T: now.Add(-5 * time.Hour), Label: "83", Text: "x", Kind: "aoc_position", Lat: &lat, Lon: &lon, PosT: &now})
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	url := fmt.Sprintf("%s/api/watches/%d", ts.URL, e.ID)
+
+	code, body := do(t, "PATCH", url, `{"paused":true}`)
+	if code != 200 || !strings.Contains(body, `"status":"paused"`) {
+		t.Fatalf("pause: %d %s", code, body)
+	}
+	// Still in the list, and everything stored about the aircraft is still served.
+	_, body = do(t, "GET", ts.URL+"/api/watches", "")
+	if !strings.Contains(body, `"status":"paused"`) || !strings.Contains(body, `"ident":"JA826J"`) {
+		t.Errorf("list = %s", body)
+	}
+	if _, body = do(t, "GET", ts.URL+"/api/track/86D646", ""); !strings.Contains(body, `"alt_ft":400`) {
+		t.Errorf("track = %s", body)
+	}
+	if _, body = do(t, "GET", ts.URL+"/api/messages/86D646", ""); !strings.Contains(body, `"kind":"aoc_position"`) {
+		t.Errorf("messages = %s", body)
+	}
+	if code, _ = do(t, "PATCH", url, `{"paused":true}`); code != 409 {
+		t.Errorf("pausing twice: %d", code)
+	}
+	if code, body = do(t, "PATCH", url, `{"paused":false}`); code != 200 || !strings.Contains(body, `"status":"tracking"`) {
+		t.Errorf("resume: %d %s", code, body)
+	}
+	if code, _ = do(t, "PATCH", url, `{"paused":false}`); code != 409 {
+		t.Errorf("resuming a running watch: %d", code)
+	}
+	if code, _ = do(t, "PATCH", url, `{}`); code != 400 {
+		t.Errorf("no body: %d", code)
+	}
+	if code, _ = do(t, "PATCH", ts.URL+"/api/watches/999", `{"paused":true}`); code != 404 {
+		t.Errorf("missing: %d", code)
+	}
+	if code, _ = do(t, "PATCH", ts.URL+"/api/watches/x", `{"paused":true}`); code != 400 {
+		t.Errorf("bad id: %d", code)
+	}
+}

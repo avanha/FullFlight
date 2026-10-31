@@ -210,3 +210,43 @@ func TestExplicitPrefixes(t *testing.T) {
 		}
 	}
 }
+
+func TestPauseAndResume(t *testing.T) {
+	now := time.Date(2026, 10, 31, 6, 0, 0, 0, time.UTC)
+	tail, _ := Parse("B-LRD", now, time.Time{})
+	tail.Status, tail.Hex = StatusTracking, "780AA4"
+	if err := tail.Pause(); err != nil || tail.Status != StatusPaused || tail.Active(now.Add(time.Minute)) {
+		t.Fatalf("pause: %v %v", err, tail.Status)
+	}
+	if tail.Pause() == nil {
+		t.Error("pausing a paused watch should say so")
+	}
+	// Paused for two days: it comes back for the usual 36 h from now, not already expired, and is tracking (it has an aircraft).
+	later := now.Add(48 * time.Hour)
+	if err := tail.Resume(later); err != nil || tail.Status != StatusTracking || !tail.End.Equal(later.Add(TailDuration)) || !tail.Active(later) {
+		t.Errorf("resume: %v %v end %v", err, tail.Status, tail.End)
+	}
+	// A longer end the user chose is kept.
+	long, _ := Parse("B-LRD", now, now.Add(10*24*time.Hour))
+	long.Status = StatusPaused
+	if long.Resume(now.Add(time.Hour)); !long.End.Equal(now.Add(10 * 24 * time.Hour)) {
+		t.Errorf("end = %v", long.End)
+	}
+	// Not matched to an aircraft yet: waiting.
+	w, _ := Parse("UA869 2026-10-31", now, time.Time{})
+	w.Status = StatusWaiting
+	w.Pause()
+	if err := w.Resume(now.Add(time.Hour)); err != nil || w.Status != StatusWaiting {
+		t.Errorf("flight resume: %v %v", err, w.Status)
+	}
+	// A flight's window is fixed: once it has passed there is nothing to resume.
+	w.Status = StatusPaused
+	if err := w.Resume(w.End.Add(time.Minute)); err == nil {
+		t.Error("resumed a flight whose window had ended")
+	}
+	// Only open entries pause, only paused ones resume.
+	done := Entry{Status: StatusDone}
+	if done.Pause() == nil || done.Resume(now) == nil {
+		t.Error("a finished watch can be neither paused nor resumed")
+	}
+}

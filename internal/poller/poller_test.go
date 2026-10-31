@@ -748,3 +748,39 @@ func TestQuietAircraftArePolledLess(t *testing.T) {
 		t.Errorf("after being heard it was polled only %d times in 8 s", b)
 	}
 }
+
+// A paused watch costs no requests at all.
+func TestPausedWatchIsNotPolled(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 31, 4, 0, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("hex:AAAAAA", now, time.Time{})
+	e, _ = st.AddWatch(e)
+	live := ac(41)
+	live.Hex = "AAAAAA"
+	f := &fake{byHex: map[string][]adsb.Aircraft{"AAAAAA": {live}}}
+	p := &Poller{Store: st, ADSB: f, Now: func() time.Time { return now }, TrackingEvery: time.Second}
+	p.Once(context.Background())
+	if len(f.calls) != 1 {
+		t.Fatalf("calls = %v", f.calls)
+	}
+	e, _ = st.GetWatch(e.ID)
+	e.Pause()
+	st.UpdateWatch(e)
+	f.calls = nil
+	for i := 0; i < 5; i++ {
+		now = now.Add(time.Minute)
+		p.Once(context.Background())
+	}
+	if len(f.calls) != 0 {
+		t.Errorf("a paused watch was polled: %v", f.calls)
+	}
+	e, _ = st.GetWatch(e.ID)
+	e.Resume(now)
+	st.UpdateWatch(e)
+	now = now.Add(time.Minute)
+	p.Once(context.Background())
+	if len(f.calls) != 1 {
+		t.Errorf("after resuming: %v", f.calls)
+	}
+}

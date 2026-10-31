@@ -22,8 +22,12 @@
   li small.lastpos { color: #333; }
   li small.route, li small.flight { color: #333; }
   li small.route.stale, li small.flight.stale { color: #999; font-style: italic; }
-  .waiting { color: #a60; } .tracking { color: #070; } .done, .expired { color: #888; }
+  .waiting { color: #a60; } .tracking { color: #070; } .done, .expired { color: #888; } .paused { color: #888; font-style: italic; }
   button.del { float: right; }
+  button.pause { float: right; margin-right: 4px; font-size: 11px; cursor: pointer; border: 1px solid #ccc; background: #fff; border-radius: 3px; padding: 0 6px; }
+  button.pause:hover { background: #f0f0f0; }
+  button.pause.suggest { border-color: #2b8a3e; color: #2b8a3e; font-weight: 600; }
+  button.pause[hidden] { display: none; }
   button.copy { border: none; background: none; cursor: pointer; padding: 0 3px; font-size: 11px; vertical-align: baseline; }
   button.copy:hover { background: #e8eefc; border-radius: 3px; }
   h4 { margin: 14px 0 4px; }
@@ -246,7 +250,7 @@ async function refresh() {
     // A tail or hex watch follows the aircraft from flight to flight, so its callsign is shown on its own
     // line, with an age; only a flight watch has a fixed callsign. On a flight or hex watch the tail gets a
     // copy button, so an aircraft first followed by callsign can be re-added by registration.
-    li.innerHTML = `<button class="del" title="Remove">✕</button><button class="notebtn"></button><b></b> <span class="${w.status}">${w.status}</span><small></small>`;
+    li.innerHTML = `<button class="del" title="Remove">✕</button><button class="pause"></button><button class="notebtn"></button><b></b> <span class="${w.status}">${w.status}</span><small></small>`;
     li.querySelector('b').textContent = title;
     // Notes about the aircraft: a faint icon when there are none, a count when there are. Needs a hex (an aircraft).
     const nb = li.querySelector('.notebtn');
@@ -255,6 +259,25 @@ async function refresh() {
     nb.textContent = w.notes ? `\u{1F4DD} ${w.notes}` : '\u{1F4DD}';
     nb.title = w.notes ? `${w.last_note}\n\n(${w.notes} note${w.notes > 1 ? 's' : ''}: click to read, add or edit)` : 'Add a note about this airframe';
     nb.onclick = e => { e.stopPropagation(); openNotes(w); };
+    // Pause stops everything being fetched for the aircraft while it stays in the list with all its data. Offered
+    // most plainly once it has landed.
+    const pb = li.querySelector('.pause');
+    const isOpen = w.status === 'waiting' || w.status === 'tracking', isPaused = w.status === 'paused';
+    pb.hidden = !(isOpen || isPaused);
+    pb.textContent = isPaused ? '\u25b6 Resume' : '\u23f8 Pause';
+    pb.className = 'pause' + (w.landing && isOpen ? ' suggest' : '');
+    pb.title = isPaused ? 'Resume tracking' : w.landing ? `It has landed at ${w.landing.code}: pause to stop polling for it. It stays in the list with everything we hold about it.`
+      : 'Stop polling for it. It stays in the list with everything we hold about it.';
+    pb.onclick = async e => {
+      e.stopPropagation();
+      try {
+        await api('/api/watches/' + w.id, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({paused: !isPaused})});
+        $('#err').textContent = '';
+      } catch (err) { $('#err').textContent = err.message; }
+      await refresh();
+      const cur = watches.find(x => x.id === selected);
+      if (cur) showTrack(cur, false);   // the plane and the projection follow the new state
+    };
     // How the app read what was typed, so a misreading (a callsign taken for a registration) shows at a glance.
     const chip = document.createElement('span');
     chip.className = 'kindchip';
@@ -462,7 +485,7 @@ const ageStep = ageMs => AGE_STEPS.filter(s => ageMs >= s.min * 60000).pop() || 
 const staleNote = ageMs => (ageStep(ageMs) || {}).note || '';
 // The server's inference that the aircraft landed (its last fix was low, near an airport, and nothing followed).
 const landingNote = l => `landed at ${l.name} (${l.code}), inferred, about ${fmtTime(l.at)}: ${l.basis}`;
-const fixNote = (w, ageMs) => w.landing ? landingNote(w.landing) : staleNote(ageMs);
+const fixNote = (w, ageMs) => w.landing ? landingNote(w.landing) : w.status === 'paused' ? 'tracking is paused: no newer positions are being fetched' : staleNote(ageMs);
 let planeMark = null;   // the plane at the newest fix: {marker, track, t, html}
 // Put the plane on the map at a fix of time t (ms).
 function placePlane(lat, lon, track, t, landed = false) {
@@ -571,7 +594,7 @@ function patchPlan(plan, msgs, L0, trk, nowMs) {
 }
 
 function projection(w, pts, msgs, nowMs, ahead = aheadMin, plan = null) {
-  if (!ahead || w.landing) return null;   // an aircraft that has landed is not flying on
+  if (!ahead || w.landing || w.status === 'paused') return null;   // not for one that has landed, or that we are not following
   const cands = [
     ...pts.map(p => ({lat: p.lat, lon: p.lon, t: Date.parse(p.t), gs: p.gs, trk: p.track, ground: !!p.on_ground, src: p.source || 'ADS-B'})),
     ...msgs.filter(m => m.lat != null && !m.suspect && !m.time_unverified).map(m =>

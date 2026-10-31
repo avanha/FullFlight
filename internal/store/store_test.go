@@ -869,3 +869,50 @@ func TestFixSummaries(t *testing.T) {
 		t.Errorf("DLINE = %+v", d)
 	}
 }
+
+func TestPausedWatchIsKeptNotPolledNotExpired(t *testing.T) {
+	s := open(t)
+	e, _ := watchlist.Parse("B-LRD", now, time.Time{})
+	e.Status, e.Hex = watchlist.StatusTracking, "780AA4"
+	e, _ = s.AddWatch(e)
+	s.AddPosition(Position{Hex: "780AA4", T: now, Lat: 1, Lon: 2, Source: "adsb.lol"})
+	e.Pause()
+	if err := s.UpdateWatch(e); err != nil {
+		t.Fatal(err)
+	}
+	if open, _ := s.ListWatches(true); len(open) != 0 {
+		t.Errorf("a paused watch is still polled: %+v", open)
+	}
+	if all, _ := s.ListWatches(false); len(all) != 1 || all[0].Status != watchlist.StatusPaused {
+		t.Errorf("a paused watch is not listed: %+v", all)
+	}
+	// It does not run out while paused, and its data is untouched.
+	if n, _ := s.ExpireWatches(now.Add(30 * 24 * time.Hour)); n != 0 {
+		t.Errorf("expired %d paused watches", n)
+	}
+	if tr, _ := s.Track("780AA4", now.Add(-time.Hour), now.Add(time.Hour)); len(tr) != 1 {
+		t.Errorf("track = %v", tr)
+	}
+	// Not "watched" on the airframes page: nothing is polled for it.
+	as, _ := s.KnownAirframes()
+	for _, a := range as {
+		if a.Hex == "780AA4" && a.Watched {
+			t.Error("a paused watch counts as watched")
+		}
+	}
+	// Watching it again (by registration, or by hex: the same aircraft) resumes the one in the list, not a second.
+	again, _ := watchlist.Parse("hex:780AA4", now, time.Time{})
+	got, err := s.AddWatch(again)
+	if err != nil || got.ID != e.ID || got.Status != watchlist.StatusTracking {
+		t.Errorf("re-added = %+v %v", got, err)
+	}
+	if all, _ := s.ListWatches(false); len(all) != 1 {
+		t.Errorf("%d watches after re-adding", len(all))
+	}
+	if g, err := s.GetWatch(e.ID); err != nil || g.Ident != "B-LRD" {
+		t.Errorf("GetWatch = %+v %v", g, err)
+	}
+	if _, err := s.GetWatch(999); err == nil {
+		t.Error("GetWatch of a missing id")
+	}
+}

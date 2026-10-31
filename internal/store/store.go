@@ -212,21 +212,22 @@ func (s *Store) Close() error { return s.db.Close() }
 
 func ts(t time.Time) int64 { return t.Unix() }
 
-// AddWatch adds an entry and returns it with its ID. If an open (waiting or
-// tracking) entry for the same kind, identifier and date already exists, that
-// one is updated instead: it takes the destination if the new entry has one and
-// the later of the two end times. Finished entries do not count, so watching
-// the same flight again starts a new one. A tail and a hex that are the same aircraft count as the same
+// AddWatch adds an entry and returns it with its ID. If an open (waiting, tracking or paused) entry for the same
+// kind, identifier and date already exists, that one is updated instead: it takes the destination if the new entry
+// has one and the later of the two end times, and a paused one is resumed. Finished entries do not count, so
+// watching the same flight again starts a new one. A tail and a hex that are the same aircraft count as the same
 // watch (see sameAircraftWatch).
 func (s *Store) AddWatch(e watchlist.Entry) (watchlist.Entry, error) {
 	var id int64
-	err := s.db.QueryRow(`SELECT id FROM watch WHERE kind=? AND ident=? AND date=? AND status IN ('waiting','tracking')
+	err := s.db.QueryRow(`SELECT id FROM watch WHERE kind=? AND ident=? AND date=? AND status IN ('waiting','tracking','paused')
 		ORDER BY id DESC LIMIT 1`, e.Kind, e.Ident, e.Date).Scan(&id)
 	if err == sql.ErrNoRows {
 		id, err = s.sameAircraftWatch(e)
 	}
 	if err == nil {
-		if _, err := s.db.Exec(`UPDATE watch SET dest = CASE WHEN ? != '' THEN ? ELSE dest END, end_ts = MAX(end_ts, ?) WHERE id=?`,
+		// Watching again something that is paused resumes it.
+		if _, err := s.db.Exec(`UPDATE watch SET dest = CASE WHEN ? != '' THEN ? ELSE dest END, end_ts = MAX(end_ts, ?),
+			status = CASE WHEN status='paused' THEN (CASE WHEN hex != '' THEN 'tracking' ELSE 'waiting' END) ELSE status END WHERE id=?`,
 			e.Dest, e.Dest, ts(e.End), id); err != nil {
 			return e, err
 		}
@@ -262,7 +263,7 @@ func (s *Store) sameAircraftWatch(e watchlist.Entry) (int64, error) {
 		return 0, sql.ErrNoRows
 	}
 	var id int64
-	err := s.db.QueryRow(`SELECT id FROM watch WHERE kind IN ('tail','hex') AND status IN ('waiting','tracking')
+	err := s.db.QueryRow(`SELECT id FROM watch WHERE kind IN ('tail','hex') AND status IN ('waiting','tracking','paused')
 		AND (hex=? OR (kind='hex' AND ident=?) OR (kind='tail' AND ident IN (SELECT tail FROM airframe WHERE hex=?)))
 		ORDER BY id DESC LIMIT 1`, hex, hex, hex).Scan(&id)
 	return id, err
@@ -320,6 +321,11 @@ func (s *Store) UpdateWatch(e watchlist.Entry) error {
 	_, err := s.db.Exec(`UPDATE watch SET status=?, end_ts=?, dest=?, hex=?, tail=?, callsign=?, airborne=?, landed_ts=? WHERE id=?`,
 		e.Status, ts(e.End), e.Dest, e.Hex, e.Tail, e.Callsign, airborne, landed, e.ID)
 	return err
+}
+
+// GetWatch returns one entry, or sql.ErrNoRows.
+func (s *Store) GetWatch(id int64) (watchlist.Entry, error) {
+	return scanWatch(s.db.QueryRow(watchSelect+` WHERE id=?`, id))
 }
 
 func (s *Store) DeleteWatch(id int64) error {

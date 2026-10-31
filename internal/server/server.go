@@ -3,6 +3,7 @@ package server
 
 import (
 	"crypto/subtle"
+	"database/sql"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -41,6 +42,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/watches", s.listWatches)
 	mux.HandleFunc("POST /api/watches", s.addWatch)
 	mux.HandleFunc("DELETE /api/watches/{id}", s.deleteWatch)
+	mux.HandleFunc("PATCH /api/watches/{id}", s.patchWatch)
 	mux.HandleFunc("GET /api/track/{hex}", s.track)
 	mux.HandleFunc("GET /api/airframes", s.airframes)
 	mux.HandleFunc("GET /api/airframes/{hex}/notes", s.listNotes)
@@ -346,6 +348,45 @@ func (s *Server) addWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 201, s.withAircraft(toJSON(e)))
+}
+
+// patchWatch pauses or resumes a watch: {"paused": true} stops polling for it while keeping it, and everything
+// stored about its aircraft, in the list; {"paused": false} carries on.
+func (s *Server) patchWatch(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		fail(w, 400, "bad id")
+		return
+	}
+	var in struct {
+		Paused *bool `json:"paused"`
+	}
+	if json.NewDecoder(r.Body).Decode(&in) != nil || in.Paused == nil {
+		fail(w, 400, `expected {"paused": true} or {"paused": false}`)
+		return
+	}
+	e, err := s.Store.GetWatch(id)
+	if errors.Is(err, sql.ErrNoRows) {
+		fail(w, 404, "no such watch")
+		return
+	} else if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	if *in.Paused {
+		err = e.Pause()
+	} else {
+		err = e.Resume(s.now())
+	}
+	if err != nil {
+		fail(w, 409, err.Error())
+		return
+	}
+	if err := s.Store.UpdateWatch(e); err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, s.withAircraft(toJSON(e)))
 }
 
 func (s *Server) deleteWatch(w http.ResponseWriter, r *http.Request) {

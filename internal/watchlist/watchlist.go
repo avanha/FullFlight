@@ -26,6 +26,9 @@ const (
 	StatusTracking Status = "tracking"
 	StatusDone     Status = "done"
 	StatusExpired  Status = "expired"
+	// StatusPaused keeps an entry in the list, with everything stored about its aircraft, but nothing is polled
+	// for it and it does not expire. Resume it to carry on.
+	StatusPaused Status = "paused"
 )
 
 const (
@@ -218,6 +221,36 @@ func parseAircraft(ident string, force Kind, now, until time.Time) (Entry, error
 func (e Entry) Active(t time.Time) bool {
 	return (e.Status == StatusWaiting || e.Status == StatusTracking) &&
 		!t.Before(e.Start) && t.Before(e.End)
+}
+
+// Pause stops an open entry being polled. It stays in the list, and its data is kept, until it is resumed or removed.
+func (e *Entry) Pause() error {
+	if e.Status != StatusWaiting && e.Status != StatusTracking {
+		return fmt.Errorf("only a watch that is waiting or tracking can be paused, not one that is %s", e.Status)
+	}
+	e.Status = StatusPaused
+	return nil
+}
+
+// Resume restarts a paused entry: tracking if it is matched to an aircraft, else waiting. A tail or hex watch
+// gets the usual TailDuration from now if it would end sooner (it was paused, so it never ran down); a flight
+// watch keeps its window, and cannot be resumed once that has passed.
+func (e *Entry) Resume(now time.Time) error {
+	if e.Status != StatusPaused {
+		return fmt.Errorf("only a paused watch can be resumed, not one that is %s", e.Status)
+	}
+	if e.Kind == KindFlight {
+		if !now.Before(e.End) {
+			return fmt.Errorf("the window for this flight has ended: watch it again")
+		}
+	} else if end := now.Add(TailDuration); e.End.Before(end) {
+		e.End = end
+	}
+	e.Status = StatusWaiting
+	if e.Hex != "" {
+		e.Status = StatusTracking
+	}
+	return nil
 }
 
 // Expired reports whether an open entry has passed its end.
