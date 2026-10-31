@@ -32,8 +32,9 @@ aircraft probably is when ADS-B has gone quiet, for example in mid-ocean or afte
   polled about every 45 seconds while it is being followed.
 - If your server answers 401, 403 or 429, it stops asking for an hour (30 seconds for 429, or longer if you send
   `Retry-After`) instead of retrying.
-- It sends the User-Agent `FullFlight/0.1 (personal flight tracker)`. I can change that to anything you would like me
-  to use, and add a contact address to it.
+- It sends the User-Agent `FullFlight/<version> (personal flight tracker; +https://github.com/avanha/FullFlight)`, with the
+  version of the build (for example `v0.5.0`). I can change that to anything you would like me to use, and add a
+  contact address to it.
 
 **What I am asking for**
 

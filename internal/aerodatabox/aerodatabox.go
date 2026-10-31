@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/avanha/fullflight/internal/version"
 )
 
 const host = "aerodatabox.p.rapidapi.com"
@@ -95,6 +97,7 @@ func (c *Client) ByNumber(ctx context.Context, number, date string) ([]Flight, e
 	if err != nil {
 		return nil, err
 	}
+	req.Header.Set("User-Agent", version.UserAgent())
 	req.Header.Set("X-RapidAPI-Key", c.Key)
 	req.Header.Set("X-RapidAPI-Host", host)
 	resp, err := c.HTTP.Do(req)

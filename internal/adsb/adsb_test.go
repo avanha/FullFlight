@@ -338,3 +338,21 @@ func TestSpreadRotatesTheFirstSource(t *testing.T) {
 		t.Errorf("no spread: %v", hits)
 	}
 }
+
+// Every request says who is asking, with the version.
+func TestUserAgent(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Get("User-Agent")
+		w.Write([]byte(`{"ac":[]}`))
+	}))
+	defer srv.Close()
+	c := NewClient(Source{Name: "x", BaseURL: srv.URL, RegPath: "reg"})
+	c.MinSpacing = time.Millisecond
+	if _, err := c.Reg(context.Background(), "B-LRM"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(got, "FullFlight/") || !strings.Contains(got, "github.com/avanha/FullFlight") {
+		t.Errorf("User-Agent = %q", got)
+	}
+}

@@ -14,6 +14,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/avanha/fullflight/internal/version"
 )
 
 type Source struct {
@@ -158,7 +160,7 @@ func NewClient(sources ...Source) *Client {
 		sources = []Source{ADSBLol, ADSBFi}
 	}
 	return &Client{Sources: sources, HTTP: &http.Client{Timeout: 15 * time.Second},
-		UserAgent: "FullFlight/0.1 (personal flight tracker)"}
+		UserAgent: version.UserAgent()}
 }
 
 func (c *Client) Hex(ctx context.Context, hex string) ([]Aircraft, error) {

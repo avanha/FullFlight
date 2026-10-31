@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/avanha/fullflight/internal/version"
 )
 
 type Airframe struct {
@@ -28,7 +30,7 @@ type Client struct {
 
 func NewClient() *Client {
 	return &Client{BaseURL: "https://api.airframes.io/v1", HTTP: &http.Client{Timeout: 15 * time.Second},
-		UserAgent: "FullFlight/0.1 (personal flight tracker)"}
+		UserAgent: version.UserAgent()}
 }
 
 // ByTail returns nil, nil if airframes.io does not know the registration.

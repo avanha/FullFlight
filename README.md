@@ -254,6 +254,12 @@ been heard from for 5 minutes is polled every 3 minutes instead of every 45 s, a
 (not allowed) is left alone for an hour, 429 (slow down) for 30 s or its `Retry-After`. Each pause is logged once
 with the HTTP status.
 
+Every request to a service (the ADS-B sources, airframes.io, AeroDataBox) carries the User-Agent
+`FullFlight/<version> (personal flight tracker; +https://github.com/avanha/FullFlight)`, so an operator can see what is
+calling and where to find us. `make build` puts the git tag in it (`v0.5.0`, or `v0.5.0-3-gabc123-dirty` between
+tags); a binary built any other way names its commit, or says `dev`. The weather imagery (RainViewer, NASA GIBS) is
+fetched by your browser, which sends its own.
+
 ## Airframes and notes
 
 `/airframes.html` lists every aircraft we know of (searchable, sortable, filterable to those with notes):
