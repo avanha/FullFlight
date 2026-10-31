@@ -980,3 +980,89 @@ func TestChinaCargoVariants(t *testing.T) {
 		t.Errorf("short number: %q %v", r.Kind, r.Fields)
 	}
 }
+
+// A350 MIAM reports: the REP081 position in a compressed message, the header of the other ACMS reports, the XML
+// maintenance report, the takeoff report and the acknowledgements.
+func TestA350Reports(t *testing.T) {
+	// REP081 with several samples (the newer software): the newest is the position, the others are kept
+	_, r := load(t, "real_rep081_edr_3_samples")
+	rep, ok := r.Fields["rep081"].(REP081Report)
+	if !ok || r.Pos == nil || len(rep.Samples) < 2 {
+		t.Fatalf("rep081 = %+v pos = %+v", rep, r.Pos)
+	}
+	if rep.Origin != "VHHH" || rep.Dest != "EGCC" || r.Identity.Tail == "" {
+		t.Errorf("rep081 = %+v tail %q", rep, r.Identity.Tail)
+	}
+	for i := 1; i < len(rep.Samples); i++ {
+		if rep.Samples[i].SecsInMonth <= rep.Samples[i-1].SecsInMonth {
+			t.Errorf("samples not in time order: %+v", rep.Samples)
+		}
+	}
+	if last := rep.Samples[len(rep.Samples)-1]; r.Pos.Lat != last.Lat || r.Pos.Secs != float64(last.SecsInMonth) {
+		t.Errorf("the position is not the newest sample: %+v vs %+v", r.Pos, last)
+	}
+	near(t, "first sample lat", rep.Samples[0].Lat, 52.724, 1e-3)
+	near(t, "first sample lon", rep.Samples[0].Lon, 4.299, 1e-3)
+	if !strings.Contains(r.Summary, "REP081 VHHH→EGCC") || !strings.Contains(r.Summary, "newest of") {
+		t.Errorf("summary = %q", r.Summary)
+	}
+	// ... and the same report as the single-sample form in a compressed message
+	if _, r = load(t, "real_rep081_edr_sq"); r.Pos == nil || r.Fields["rep081"].(REP081Report).Dest != "WSSS" {
+		t.Errorf("SQ rep081 pos = %+v", r.Pos)
+	}
+
+	// another A350 report: no position, but the aircraft, flight, route and what raised it
+	_, r = load(t, "real_a350_rep216")
+	a, ok := r.Fields["a350"].(A350Report)
+	if !ok || r.Pos != nil {
+		t.Fatalf("a350 = %+v pos = %+v", a, r.Pos)
+	}
+	if a.Number != "216" || a.Tail != "9V-SGC" || a.Callsign != "SIA23" || a.Origin != "KJFK" || a.Dest != "WSSS" ||
+		a.Trigger != "INTEGRATED REFUEL PANEL DOOR OPEN" || !a.Time.Equal(time.Date(2026, 10, 26, 3, 28, 14, 0, time.UTC)) {
+		t.Errorf("a350 = %+v", a)
+	}
+	if r.Identity.Callsign != "SIA23" || r.Identity.Tail != "9V-SGC" {
+		t.Errorf("identity = %+v", r.Identity)
+	}
+	if want := "A350 report 216: INTEGRATED REFUEL PANEL DOOR OPEN (SIA23 KJFK→WSSS)"; r.Summary != want {
+		t.Errorf("summary = %q, want %q", r.Summary, want)
+	}
+
+	// the XML maintenance report
+	_, r = load(t, "real_a350_rtr_xml")
+	x, ok := r.Fields["rtr"].(RTRReport)
+	if !ok || x.Tail != "DQ-FAM" || x.Callsign != "FJI910" || x.Origin != "YSSY" || x.Dest != "NFFN" || !strings.Contains(x.Message, "Lavatory water faucet") {
+		t.Fatalf("rtr = %+v", x)
+	}
+	if !strings.HasPrefix(r.Summary, "A350 maintenance report: ") || !strings.HasSuffix(r.Summary, "(FJI910 YSSY→NFFN)") {
+		t.Errorf("summary = %q", r.Summary)
+	}
+
+	// the takeoff report
+	_, r = load(t, "real_takeoff_report")
+	tk, ok := r.Fields["takeoff"].(TakeoffReport)
+	if !ok || tk.Origin != "KEWR" || tk.Dest != "WSSS" || tk.Tail != "9V-SGC" || tk.Out != "1539" || tk.Off != "1556" || tk.ETA != "1017" || tk.Runway != "22R" || tk.TOWkg != 273552 {
+		t.Fatalf("takeoff = %+v", tk)
+	}
+	if want := "Takeoff report KEWR→WSSS at 15:56Z, runway 22R, ETA 10:17Z"; r.Summary != want {
+		t.Errorf("summary = %q, want %q", r.Summary, want)
+	}
+
+	// an acknowledgement PDU has no body, and so no "|": it used to be read as a 10 character prefix
+	_, r = load(t, "real_miam_ack")
+	if r.Kind != KindMIAM || r.Tree == nil || r.Prefix != "" || r.Identity.Tail != "B-LRM" || !strings.HasPrefix(r.Summary, "MIAM acknowledgement of message ") {
+		t.Errorf("ack: kind %v prefix %q tail %q summary %q", r.Kind, r.Prefix, r.Identity.Tail, r.Summary)
+	}
+
+	// headers that say nothing are not taken for a route or a flight
+	h, ok := ParseA350("A350,000001,1,1,TB000000/REP048,01,02;H01,048,01,02,5100,00024,.N515DN,3,0,25,10,26,06,47,36,010/H02,---------,----------,S0285,S0685,CDAU041024/H03,RAT Shedding/")
+	if !ok || h.Origin != "" || h.Callsign != "" || h.Tail != "N515DN" || h.Trigger != "RAT Shedding" {
+		t.Errorf("a350 without a route = %+v", h)
+	}
+
+	// a later block of a long message has no frame header: it is a piece, not an undecodable message
+	_, r = load(t, "real_miam_block")
+	if r.Kind != KindMIAM || r.Tree != nil || r.Summary != SummaryMIAMBlock || r.Identity.Flight != "SQ23" {
+		t.Errorf("block: kind %v tree %v summary %q flight %q", r.Kind, r.Tree != nil, r.Summary, r.Identity.Flight)
+	}
+}

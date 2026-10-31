@@ -2,6 +2,7 @@ package decoder
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -220,8 +221,27 @@ func summarize(r Result) string {
 		return "CPDLC message"
 	case KindMIAM:
 		if rep, ok := r.Fields["rep081"].(REP081Report); ok {
-			return fmt.Sprintf("REP081 %s→%s %s FL%03d, OAT %.1f°C, wind %03d°/%dkt",
+			s := fmt.Sprintf("REP081 %s→%s %s FL%03d, OAT %.1f°C, wind %03d°/%dkt",
 				rep.Origin, rep.Dest, latlon(rep.Lat, rep.Lon), rep.AltFt/100, rep.TempC, rep.WindDirDeg, rep.WindKt)
+			if n := len(rep.Samples); n > 1 {
+				s += fmt.Sprintf(" (newest of %d fixes over %d s)", n, rep.Samples[n-1].SecsInMonth-rep.Samples[0].SecsInMonth)
+			}
+			return s
+		}
+		if a, ok := r.Fields["a350"].(A350Report); ok {
+			return a.summary()
+		}
+		if x, ok := r.Fields["rtr"].(RTRReport); ok {
+			return x.summary()
+		}
+		if x, ok := r.Fields["takeoff"].(TakeoffReport); ok {
+			return x.summary()
+		}
+		if strings.Contains(r.Text, "MIAM CORE Ack") {
+			if n, ok := findNum(r.Tree, "msg_ack_num"); ok {
+				return fmt.Sprintf("MIAM acknowledgement of message %.0f", n)
+			}
+			return "MIAM acknowledgement"
 		}
 		if t, ok := findString(r.Tree, "text"); ok {
 			if len(t) > 70 {
@@ -229,7 +249,11 @@ func summarize(r Result) string {
 			}
 			return "MIAM: " + t
 		}
-		return "MIAM (not decoded)"
+		if !miamFrame.MatchString(r.Body) {
+			// no frame header: a later block of a message too long for one, whose first block holds the header
+			return SummaryMIAMBlock
+		}
+		return SummaryMIAMUndecoded
 	case KindAFN:
 		parts := []string{"AFN"}
 		if r.Fields["afn"] == "contact_advisory" {
@@ -288,6 +312,14 @@ func undecodedSummary(r Result) string {
 	}
 	return fmt.Sprintf("Undecoded %s message: %s", label, snippet)
 }
+
+// What a MIAM message we can say nothing about is called; the page lists these with the undecoded messages.
+const (
+	SummaryMIAMUndecoded = "MIAM (not decoded)"
+	SummaryMIAMBlock     = "MIAM data block (part of a longer message)"
+)
+
+var miamFrame = regexp.MustCompile(`^[TFKSAXY][-.0-3][0-3]`)
 
 // Weather is the wind (direction it blows FROM, true) and temperature a report carries.
 type Weather struct {

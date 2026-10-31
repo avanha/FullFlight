@@ -300,12 +300,11 @@ func boolInt(b bool) int {
 type Route struct {
 	From, To string // ICAO codes
 	T        time.Time
-	Source   string // "REP081", "ACMF", "airline report" or "flight plan"
+	Source   string // "REP081", "A350 report", "ACMF", "airline report" or "flight plan"
 }
 
 // LastRoute returns the newest origin/destination reported by the aircraft in a
-// REP081 message, with the time of that report. (Only the Cathay A350 report
-// carries one.)
+// message that names one, with the time of that report.
 func (s *Store) LastRoute(hexAddr string) (Route, bool) {
 	var r Route
 	var t int64
@@ -532,13 +531,18 @@ func (s *Store) PositionTimes(hexAddr string, since, until time.Time) ([]time.Ti
 }
 
 // routeReportsSQL selects (t, origin, dest, source) from the kinds of message that say where a flight is going: a
-// REP081 report, a 787 ACMF report, an airline (label 83) position report and a filed flight plan (arguments:
+// REP081 report, another A350 report (or its XML maintenance report, or a takeoff report) that names the route, a 787 ACMF report, an airline (label 83) position report and a filed flight plan (arguments:
 // hex, from, to).
 const routeReportsSQL = `
 	SELECT COALESCE(pos_ts, ts) AS t, COALESCE(json_extract(decoded, '$.fields.rep081.Origin'), '') AS origin,
 		json_extract(decoded, '$.fields.rep081.Dest') AS dest, 'REP081' AS src
 	FROM message WHERE hex=?1 AND kind='miam' AND COALESCE(pos_ts, ts) BETWEEN ?2 AND ?3 AND time_flag=0
 	  AND json_extract(decoded, '$.fields.rep081.Dest') IS NOT NULL AND json_extract(decoded, '$.fields.rep081.Dest') != ''
+	UNION ALL
+	SELECT ts, COALESCE(json_extract(decoded, '$.fields.a350.Origin'), json_extract(decoded, '$.fields.rtr.Origin'), json_extract(decoded, '$.fields.takeoff.Origin'), ''),
+		COALESCE(json_extract(decoded, '$.fields.a350.Dest'), json_extract(decoded, '$.fields.rtr.Dest'), json_extract(decoded, '$.fields.takeoff.Dest')), 'A350 report'
+	FROM message WHERE hex=?1 AND kind='miam' AND ts BETWEEN ?2 AND ?3 AND time_flag=0
+	  AND COALESCE(json_extract(decoded, '$.fields.a350.Dest'), json_extract(decoded, '$.fields.rtr.Dest'), json_extract(decoded, '$.fields.takeoff.Dest'), '') != ''
 	UNION ALL
 	SELECT COALESCE(pos_ts, ts), COALESCE(json_extract(decoded, '$.fields.origin'), ''), json_extract(decoded, '$.fields.dest'),
 		CASE kind WHEN 'acmf_report' THEN 'ACMF' ELSE 'airline report' END

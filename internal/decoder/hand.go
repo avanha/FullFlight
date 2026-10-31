@@ -2,6 +2,7 @@ package decoder
 
 import (
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -13,8 +14,11 @@ var (
 	afnRe   = regexp.MustCompile(`^/([A-Z0-9]{7})\.AFN/(.*)$`)
 	datisRe = regexp.MustCompile(`^/([A-Z0-9]{4,7})\.TI2/\d{3}([A-Z0-9]{4})([A-Z])`)
 	mediaRe = regexp.MustCompile(`^0([EL])([A-Z0-9])(\d{6})([A-Z0-9]*)/?$`)
-	rep081  = regexp.MustCompile(`REP081,\d+,\d+;[A-Z0-9]+/NX,([A-Z]{4}) ([A-Z]{4})/0,7,([+-]\d+),([+-]\d+),(\d+),(\d+),([+-]\d+),(\d+),(\d+)`)
-	counter = regexp.MustCompile(`\|A350,(\d+),`)
+	// REP081 has a header naming the route and then one sample per minute or so: the older form carries one (A06/NX), the
+	// newer one several (EDR06/03/NX), each as index, flag, lat, lon (arc-seconds), seconds in the month, altitude/10, OAT/10, wind.
+	rep081Head   = regexp.MustCompile(`(?s)REP081,\d+,\d+;(?:[A-Z]\d+|EDR\d+/\d+)/NX,([A-Z]{4}) ([A-Z]{4})/(.*)`)
+	rep081Sample = regexp.MustCompile(`^\d+,\d+,([+-]\d{1,7}),([+-]\d{1,7}),(\d+),(\d+),([+-]\d+),(\d+),(\d+)`)
+	counter      = regexp.MustCompile(`A350,(\d+),`)
 )
 
 var linkNames = map[byte]string{
@@ -97,35 +101,62 @@ func linkName(c byte) string {
 	return string(c)
 }
 
-// REP081Report is the partially decoded Cathay A350 MIAM report.
+// REP081Sample is one position in a REP081 report.
+type REP081Sample struct {
+	Lat, Lon    float64
+	SecsInMonth int64 // seconds since 00:00 UTC on the 1st; see ResolveMonthSeconds
+	AltFt       int
+	TempC       float64
+	WindDirDeg  int
+	WindKt      int
+}
+
+// REP081Report is the partially decoded Cathay A350 MIAM report. Its position, time, altitude and weather are those of
+// the newest sample; a report from the newer software carries several, oldest first in Samples.
 type REP081Report struct {
 	Origin, Dest string
 	Counter      string
 	Lat, Lon     float64
-	SecsInMonth  int64 // seconds since 00:00 UTC on the 1st; see ResolveMonthSeconds
+	SecsInMonth  int64
 	AltFt        int
 	TempC        float64
 	WindDirDeg   int
 	WindKt       int
+	Samples      []REP081Sample
 }
 
-// ParseREP081 extracts the validated fields of a REP081 report from raw text.
+// ParseREP081 extracts the validated fields of a REP081 report from text: the raw message, or what libacars made of
+// a compressed one.
 func ParseREP081(text string) (REP081Report, bool) {
-	m := rep081.FindStringSubmatch(text)
+	m := rep081Head.FindStringSubmatch(text)
 	if m == nil {
 		return REP081Report{}, false
 	}
 	atoi := func(s string) int { n, _ := strconv.Atoi(s); return n }
-	secs, _ := strconv.ParseInt(m[5], 10, 64)
+	var samples []REP081Sample
+	for _, part := range strings.Split(m[3], "/") {
+		g := rep081Sample.FindStringSubmatch(part)
+		if g == nil {
+			continue
+		}
+		secs, _ := strconv.ParseInt(g[3], 10, 64)
+		sm := REP081Sample{
+			Lat: float64(atoi(g[1])) / 3600, Lon: float64(atoi(g[2])) / 3600, SecsInMonth: secs,
+			AltFt: atoi(g[4]) * 10, TempC: float64(atoi(g[5])) / 10, WindDirDeg: atoi(g[6]), WindKt: atoi(g[7]),
+		}
+		if sm.Lat < -90 || sm.Lat > 90 || sm.Lon < -180 || sm.Lon > 180 {
+			continue
+		}
+		samples = append(samples, sm)
+	}
+	if len(samples) == 0 {
+		return REP081Report{}, false
+	}
+	sort.SliceStable(samples, func(i, j int) bool { return samples[i].SecsInMonth < samples[j].SecsInMonth })
+	n := samples[len(samples)-1]
 	rep := REP081Report{
-		Origin: m[1], Dest: m[2],
-		Lat:         float64(atoi(m[3])) / 3600,
-		Lon:         float64(atoi(m[4])) / 3600,
-		SecsInMonth: secs,
-		AltFt:       atoi(m[6]) * 10,
-		TempC:       float64(atoi(m[7])) / 10,
-		WindDirDeg:  atoi(m[8]),
-		WindKt:      atoi(m[9]),
+		Origin: m[1], Dest: m[2], Lat: n.Lat, Lon: n.Lon, SecsInMonth: n.SecsInMonth,
+		AltFt: n.AltFt, TempC: n.TempC, WindDirDeg: n.WindDirDeg, WindKt: n.WindKt, Samples: samples,
 	}
 	if c := counter.FindStringSubmatch(text); c != nil {
 		rep.Counter = c[1]

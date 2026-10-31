@@ -702,7 +702,7 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	res := &waypoints.Resolver{Store: s.Store, Nav: s.Nav}
 	out := make([]messageJSON, 0, len(ms))
 	for _, m := range ms {
-		j := messageJSON{Undecoded: m.Kind == "unknown" || m.Summary == "MIAM (not decoded)", ID: m.ID, T: m.T, Label: m.Label, Kind: m.Kind, Direction: m.Direction, Summary: m.Summary,
+		j := messageJSON{Undecoded: m.Kind == "unknown" || m.Summary == "MIAM (not decoded)" || strings.HasPrefix(m.Summary, "MIAM data block"), ID: m.ID, T: m.T, Label: m.Label, Kind: m.Kind, Direction: m.Direction, Summary: m.Summary,
 			Detail: m.Detail, Raw: m.Text, Tail: m.Tail, Flight: m.Flight, Callsign: m.Callsign, Station: m.Station,
 			RxCount: m.RxCount, Lat: m.Lat, Lon: m.Lon, AltFt: m.AltFt, PosT: m.PosT, Suspect: m.Suspect, TimeNote: m.TimeNote, TimeUnverified: m.TimeFlag,
 			Mismatch: m.Mismatch, AFTail: m.AFTail, AFFlight: m.AFFlight}

@@ -196,7 +196,16 @@ DDHHMM, position in signed decimal degrees, altitude, the direction the wind blo
 (positive a tailwind), and a number we have not explained. They, the 787 ACMF reports, REP081 and filed flight
 plans all say where a flight is going, so any of them gives a watch its route, and a destination to stop the
 projection at.
-Cathay A350 REP081 reports name the flight's origin and destination (`VHHH YSSY`).
+A350 REP081 reports name the flight's origin and destination (`VHHH YSSY`). They come from Cathay and Singapore and
+carry one position, or on newer software several a minute apart (the newest is the report's position, the rest are
+listed in its detail), in a message that is often compressed. The A350's other MIAM reports have a header with the
+tail, the aircraft's own time, the flight and the route, and what raised the report: `A350 report 216: INTEGRATED
+REFUEL PANEL DOOR OPEN (SIA23 KJFK→WSSS)`. What they say about the systems (engine and fuel data, parameters) is not
+decoded, but the flight and route are used like any other: they count as sightings of the flight and as route reports
+(shown as "A350 report"). The XML maintenance report (`<RTR>`) and the takeoff report (`3S06 TAKOFF ...`, with
+out, off and ETA times) are read the same way. MIAM acknowledgements are named, and a block that continues a message
+too long for one is listed as a data block, with the undecoded messages: its start, with the header, is in an earlier
+block (or the whole message in one that airframes.io joined).
 The newest one is shown on the watch (`VHHH → YSSY (REP081 12m ago)`) and in the plane's
 hover, for tail and hex watches as well as flights. REP081 goes out about every 20
 minutes in flight, so a report older than 90 minutes is shown greyed with "may be out
@@ -504,14 +513,14 @@ track crossing the date line continues from 179 to 181 instead of drawing a line
 ## Status
 
 Done: the watchlist (tails, hex codes, flights and dates), the ADS-B poller with source fallback, the SQLite track log,
-the message fetcher and decoder (ADS-C, CPDLC, AFN, REP081 and other position report formats, airline satellite
-headers), the web page (map, message timeline, UTC clock), the waypoints and fixes named in CPDLC reports, the division
+the message fetcher and decoder (ADS-C, CPDLC, AFN, REP081 and the other A350 MIAM reports, other position report
+formats, airline satellite headers), the web page (map, message timeline, UTC clock), the waypoints and fixes named in CPDLC reports, the division
 of an aircraft's history into flights, flight plans, predictions and the projection, estimated paths, weather radar and
 satellite overlays, wind barbs, the unified track, airframe notes, and fix and airport search.
 
 Not yet:
 
-- MIAM messages other than the Cathay REP081 report, including MIAM continuation blocks (shown as "not decoded").
+- The contents of the A350 engine, fuel and parameter reports (only their headers are read), the compressed engine files (`EXW…`), and putting continuation blocks of a MIAM message back together (the whole is usually in the message airframes.io joined).
 - Comparing an ADS-C report's predicted ETA with the actual passage of the waypoint, and showing the error.
 - Live updates pushed to the page (it polls; SSE would replace that).
 - Deployment docs: a systemd unit and a reverse proxy example. (HTTP basic auth is built in; see `config.example.yaml`.)

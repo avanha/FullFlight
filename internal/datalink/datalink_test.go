@@ -941,3 +941,28 @@ func TestPOSRPTIsPlacedAtItsOwnTime(t *testing.T) {
 		t.Errorf("on time: %q %v", ms[0].TimeNote, ms[0].TimeFlag)
 	}
 }
+
+// The other A350 reports name the route and the flight too: a destination and a flight number for an aircraft that
+// has sent no REP081 and no ADS-B.
+func TestRouteAndFlightFromA350Reports(t *testing.T) {
+	st := newStore(t)
+	f := fixture(t, "real_a350_rep216") // SIA23 KJFK -> WSSS
+	if _, err := Ingest(st, "76CCE3", msg(1, f)); err != nil {
+		t.Fatal(err)
+	}
+	r, ok := st.LastRoute("76CCE3")
+	if !ok || r.From != "KJFK" || r.To != "WSSS" || r.Source != "A350 report" {
+		t.Fatalf("route = %+v %v", r, ok)
+	}
+	if fl, ok := st.LastFlight("76CCE3"); !ok || fl.Callsign != "SIA23" {
+		t.Errorf("flight = %+v %v", fl, ok)
+	}
+	// the XML maintenance report does the same
+	st2 := newStore(t)
+	if _, err := Ingest(st2, "C880A8", msg(1, fixture(t, "real_a350_rtr_xml"))); err != nil {
+		t.Fatal(err)
+	}
+	if r, ok := st2.LastRoute("C880A8"); !ok || r.From != "YSSY" || r.To != "NFFN" {
+		t.Errorf("rtr route = %+v %v", r, ok)
+	}
+}

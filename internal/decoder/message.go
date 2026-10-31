@@ -67,9 +67,11 @@ type Result struct {
 
 var (
 	// bodyAnchor matches text that is already a bare application body.
-	bodyAnchor = regexp.MustCompile(`^(/|T[-0-9]|0[EL][A-Z0-9])`)
+	bodyAnchor = regexp.MustCompile(`^(/|T[-.0-9]|0[EL][A-Z0-9])`)
 	flightID   = regexp.MustCompile(`^([A-Z0-9]{2})(\d{1,4})[A-Z]?$`)
-	ownerAddr  = regexp.MustCompile(`^/[A-Z0-9]{7}\.([A-Z0-9]{3})\.`)
+	// a 10 character prefix: message number (a letter, two digits, a letter) and flight (airline and four digits)
+	msgNumFlight = regexp.MustCompile(`^[A-Z]\d{2}[A-Z][A-Z0-9]{2}\d{4}`)
+	ownerAddr    = regexp.MustCompile(`^/[A-Z0-9]{7}\.([A-Z0-9]{3})\.`)
 	// Some VDL2 traffic arrives with the leading "/" missing.
 	noSlashARINC = regexp.MustCompile(`^[A-Z0-9]{7}\.(ADS|AT1|CR1|CC1|DR1|AFN|TI2)[./]`)
 )
@@ -140,7 +142,7 @@ func classify(label, body string) (Kind, string, Direction) {
 		k, defLabel = KindDATIS, "B9"
 	case label == "SA" || strings.HasPrefix(body, "0E") || strings.HasPrefix(body, "0L"):
 		k, defLabel = KindMedia, "SA"
-	case label == "MA" || (len(body) > 1 && body[0] == 'T' && (body[1] == '-' || body[1] >= '0' && body[1] <= '9')):
+	case label == "MA" || (len(body) > 1 && body[0] == 'T' && (body[1] == '-' || body[1] == '.' || body[1] >= '0' && body[1] <= '9')):
 		k, defLabel = KindMIAM, "MA"
 	default:
 		k = KindUnknown
@@ -174,6 +176,9 @@ func Decode(m Message) (Result, error) {
 	if strings.HasPrefix(m.Text, "POSA1") || strings.HasPrefix(m.Text, "SB0122BA_") {
 		prefix, body = "", m.Text // the latitude digits after POSA1N look like a message number
 	}
+	if prefix == "" && m.Label == "MA" && msgNumFlight.MatchString(m.Text) {
+		prefix, body = m.Text[:10], m.Text[10:] // a later block of a long MIAM message: its start is not a frame header
+	}
 	body = strings.TrimRight(body, "\r\n")
 	if noSlashARINC.MatchString(body) {
 		body = "/" + body
@@ -199,6 +204,13 @@ func Decode(m Message) (Result, error) {
 		if err != nil {
 			return r, err
 		}
+		if d == nil && r.Kind == KindMIAM && !strings.Contains(body, "|") {
+			// A MIAM PDU with no body, an acknowledgement for one, is sent without the "|" that ends its header.
+			d, err = DecodeAppsFull(r.Label, strings.TrimRight(body, " \r\n")+"|", r.Dir)
+			if err != nil {
+				return r, err
+			}
+		}
 		if m.Dir == Unknown && (r.Kind == KindADSC || r.Kind == KindCPDLC) && parseFailed(d) {
 			// The direction was a guess and the text does not parse that way: try the other.
 			other := map[Direction]Direction{Uplink: Downlink, Downlink: Uplink}[r.Dir]
@@ -223,12 +235,47 @@ func Decode(m Message) (Result, error) {
 					r.Identity.Tail = strings.TrimLeft(a, ".")
 				}
 			}
-			if rep, ok := ParseREP081(body); ok {
-				r.Fields["rep081"] = rep
-				alt := float64(rep.AltFt)
-				r.Pos = &Pos{Lat: rep.Lat, Lon: rep.Lon, AltFt: &alt, Secs: float64(rep.SecsInMonth), Basis: BasisMonth}
-				dir, kt, temp := float64(rep.WindDirDeg), float64(rep.WindKt), rep.TempC
-				r.Wx = &Weather{WindDirDeg: &dir, WindKt: &kt, TempC: &temp}
+			inner, _ := findString(r.Tree, "text") // what libacars made of a compressed message
+			for _, txt := range []string{body, inner} {
+				if rep, ok := ParseREP081(txt); ok {
+					r.Fields["rep081"] = rep
+					alt := float64(rep.AltFt)
+					r.Pos = &Pos{Lat: rep.Lat, Lon: rep.Lon, AltFt: &alt, Secs: float64(rep.SecsInMonth), Basis: BasisMonth}
+					dir, kt, temp := float64(rep.WindDirDeg), float64(rep.WindKt), rep.TempC
+					r.Wx = &Weather{WindDirDeg: &dir, WindKt: &kt, TempC: &temp}
+					break
+				}
+			}
+			if r.Pos == nil {
+				for _, txt := range []string{body, inner} {
+					if a, ok := ParseA350(txt); ok {
+						r.Fields["a350"] = a
+						if r.Identity.Tail == "" {
+							r.Identity.Tail = a.Tail
+						}
+						if r.Identity.Callsign == "" {
+							r.Identity.Callsign = a.Callsign
+						}
+						break
+					}
+					if x, ok := ParseRTR(txt); ok {
+						r.Fields["rtr"] = x
+						if r.Identity.Tail == "" {
+							r.Identity.Tail = x.Tail
+						}
+						if r.Identity.Callsign == "" {
+							r.Identity.Callsign = x.Callsign
+						}
+						break
+					}
+					if x, ok := ParseTakeoff(txt); ok {
+						r.Fields["takeoff"] = x
+						if r.Identity.Tail == "" {
+							r.Identity.Tail = x.Tail
+						}
+						break
+					}
+				}
 			}
 		}
 		if r.Kind == KindCPDLC && r.Tree != nil {
@@ -305,4 +352,26 @@ func parseFailed(d *Decoded) bool {
 		}
 	}
 	return false
+}
+
+// findNum is findString for a number.
+func findNum(v any, key string) (float64, bool) {
+	switch t := v.(type) {
+	case map[string]any:
+		if n, ok := t[key].(float64); ok {
+			return n, true
+		}
+		for _, c := range t {
+			if n, ok := findNum(c, key); ok {
+				return n, true
+			}
+		}
+	case []any:
+		for _, c := range t {
+			if n, ok := findNum(c, key); ok {
+				return n, true
+			}
+		}
+	}
+	return 0, false
 }
