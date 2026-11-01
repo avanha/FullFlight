@@ -19,6 +19,7 @@ import (
 	"github.com/avanha/fullflight/internal/airframes"
 	"github.com/avanha/fullflight/internal/config"
 	"github.com/avanha/fullflight/internal/datalink"
+	"github.com/avanha/fullflight/internal/history"
 	"github.com/avanha/fullflight/internal/navdata"
 	"github.com/avanha/fullflight/internal/poller"
 	"github.com/avanha/fullflight/internal/server"
@@ -32,6 +33,7 @@ func main() {
 	purgeDays := flag.Float64("purge-older-than", 0, "delete positions, messages and finished watches older than this many days, then exit; airframes with notes keep all their data. Only reports what it would do unless -confirm is given")
 	confirm := flag.Bool("confirm", false, "with -purge-older-than: really delete")
 	redecode := flag.Bool("redecode", false, "re-decode all stored messages with the current decoder, then exit")
+	backfillDay := flag.String("backfill", "", "read the cached adsb.lol archive of this day (YYYY-MM-DD) and add the positions of every aircraft we hold anything for, then exit; stop the app first")
 	fetchNav := flag.Bool("fetch-navdata", false, "download the optional waypoint database (FlightGear's, GPL, from 2013) into the navdata directory, then exit")
 	flag.Parse()
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -109,6 +111,26 @@ func main() {
 			os.Exit(1)
 		}
 		log.Info("redecoded", "changed", n)
+		return
+	}
+
+	if *backfillDay != "" {
+		if !cfg.Backfill.Enabled {
+			fmt.Fprintln(os.Stderr, "backfill is off: set backfill.enabled and backfill.cache_dir in the config")
+			os.Exit(2)
+		}
+		hexes, err := st.TrackedHexes()
+		if err != nil {
+			log.Error("listing the aircraft", "err", err)
+			os.Exit(1)
+		}
+		res, err := history.ImportDay(st, history.Cache{Dir: cfg.Backfill.CacheDir}, *backfillDay, hexes, time.Now())
+		if err != nil {
+			log.Error("backfill", "day", *backfillDay, "err", err)
+			os.Exit(1)
+		}
+		fmt.Printf("%s: looked for %d aircraft (%d already done), %d had a trace, %d positions added\n",
+			res.Day, res.Searched, res.Skipped, res.Found, res.Total())
 		return
 	}
 

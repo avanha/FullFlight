@@ -410,6 +410,30 @@ shows its latest flight the same way. The month's list is asked for apart and ke
 `/api/track`, `/api/messages` and `/api/plan` take `until` (RFC 3339) beside `hours` for such a window; `/api/flights?hours=`
 goes back up to 30 days.
 
+## Backfilling a track from adsb.lol's archive
+
+ADS-B polling only records what is in the air while an aircraft is being followed. adsb.lol also publishes every day's
+tracking data as an archive (<https://github.com/adsblol/globe_history_2026>, one release a day, available from about
+03:30Z the next day), and the app can read the track of the aircraft it holds anything for from there.
+
+A day is 3 to 4 GB, in two or three tar parts (`v2026.10.31-planes-readsb-prod-0.tar.aa`, `.ab`, ...). The app never
+downloads them: put them, with those names, in `adsblol/` under the cache directory, and ask for the day to be read.
+
+    backfill:
+      enabled: true
+      cache_dir: /Volumes/External/FullFlightCache   # holds adsblol/v2026.10.31-planes-readsb-prod-0.tar.aa ...
+      cache_max_gib: 100                             # not enforced yet
+
+    fullflight -backfill 2026-10-31          # stop the app first
+
+It reads the day once for every aircraft with a watch, a position or a message (about ten seconds for a day), and adds
+each one's points as positions marked `adsb.lol-hist`. A point within ten seconds of a position we already hold is
+left out, so overlap with polling is not doubled; points the archive marks stale are left out too. The database
+remembers which aircraft were looked for in which day (including those with no trace), so running it again reads nothing
+for them, and only an aircraft added since needs the day's files again. A day that is incomplete (a part missing or cut
+short) is refused and nothing is marked. The flights then divide on the new positions as for any others: a flight no
+message mentioned now starts where the aircraft really took off.
+
 ## Waypoints named in CPDLC reports
 
 A CPDLC position report names the fix just passed, the next fix (with its ETA) and the one after,

@@ -44,3 +44,20 @@ func TestSpreadDefaultsOn(t *testing.T) {
 		t.Errorf("spread: false not honoured: %v %v", c.ADSB.Spread, err)
 	}
 }
+
+func TestBackfillConfig(t *testing.T) {
+	c, err := load(t, "{}")
+	if err != nil || c.Backfill.Enabled || c.Backfill.CacheMaxGiB != 20 {
+		t.Fatalf("%+v %v", c.Backfill, err)
+	}
+	if _, err := load(t, "backfill: {enabled: true}"); err == nil {
+		t.Error("backfill on without a cache directory")
+	}
+	c, err = load(t, "backfill: {enabled: true, cache_dir: /Volumes/External/FullFlightCache, cache_max_gib: 100}")
+	if err != nil || c.Backfill.CacheDir != "/Volumes/External/FullFlightCache" || c.Backfill.CacheMaxGiB != 100 {
+		t.Errorf("%+v %v", c.Backfill, err)
+	}
+	if _, err := load(t, "backfill: {cache_max_gib: -1}"); err == nil {
+		t.Error("a negative limit")
+	}
+}

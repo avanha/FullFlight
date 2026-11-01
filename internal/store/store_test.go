@@ -1070,3 +1070,29 @@ func TestFlightJoins(t *testing.T) {
 		t.Errorf("after taking one away: %v", got)
 	}
 }
+
+func TestHistoryIsNotDoubledAndSearchesAreRemembered(t *testing.T) {
+	st, _ := Open(":memory:")
+	defer st.Close()
+	t0 := time.Date(2026, 10, 31, 1, 0, 0, 0, time.UTC)
+	st.AddPosition(Position{Hex: "7C4926", T: t0, Lat: 1, Lon: 1, Source: "adsb.lol"})
+	var ps []Position
+	for _, d := range []int{-30, -5, 4, 12, 40} { // seconds from the stored one
+		ps = append(ps, Position{Hex: "7C4926", T: t0.Add(time.Duration(d) * time.Second), Lat: 2 + float64(d), Lon: 2, Source: "adsb.lol-hist"})
+	}
+	n, err := st.AddHistory("7C4926", ps)
+	if err != nil || n != 3 { // -5 and 4 are within HistoryNear of the stored point
+		t.Fatalf("wrote %d, %v", n, err)
+	}
+	if n, _ = st.AddHistory("7C4926", ps); n != 0 {
+		t.Errorf("the same history twice wrote %d", n)
+	}
+
+	now := time.Now()
+	st.MarkBackfill("2026-10-31", "7C4926", 3, now)
+	done, _ := st.BackfillScanned("2026-10-31")
+	other, _ := st.BackfillScanned("2026-10-30")
+	if !done["7C4926"] || len(done) != 1 || len(other) != 0 {
+		t.Errorf("%v %v", done, other)
+	}
+}

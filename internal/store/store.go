@@ -189,6 +189,14 @@ var migrations = []string{
 		created  INTEGER NOT NULL,
 		PRIMARY KEY (hex, start_ts)
 	 );`,
+	// Which aircraft have been looked for in which day of the downloaded ADS-B history, so a day is never read twice for one.
+	`CREATE TABLE IF NOT EXISTS backfill_day (
+		day        TEXT NOT NULL,
+		hex        TEXT NOT NULL,
+		positions  INTEGER NOT NULL,
+		scanned_at INTEGER NOT NULL,
+		PRIMARY KEY (day, hex)
+	 );`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.

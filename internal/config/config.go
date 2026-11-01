@@ -38,6 +38,14 @@ type Config struct {
 		Dir string `yaml:"dir"` // default data/navdata
 	} `yaml:"navdata"`
 
+	// Backfill is the optional history of an aircraft's track from before we followed it, from the daily archives adsb.lol
+	// publishes. The days are downloaded by hand into CacheDir and read from there; nothing is fetched unless Enabled.
+	Backfill struct {
+		Enabled     bool   `yaml:"enabled"`
+		CacheDir    string `yaml:"cache_dir"`     // where the downloaded days are kept
+		CacheMaxGiB int    `yaml:"cache_max_gib"` // the cache's limit, default 20; nothing enforces it yet, as days are put there by hand
+	} `yaml:"backfill"`
+
 	Poll struct {
 		Waiting  time.Duration `yaml:"waiting"`  // unmatched flight entries; default 3m
 		Tracking time.Duration `yaml:"tracking"` // followed aircraft; default 45s
@@ -69,6 +77,9 @@ func Load(path string) (*Config, error) {
 		on := true
 		c.ADSB.Spread = &on
 	}
+	if c.Backfill.CacheMaxGiB == 0 {
+		c.Backfill.CacheMaxGiB = 20
+	}
 	if len(c.ADSB.Sources) == 0 {
 		c.ADSB.Sources = []string{"adsb.lol", "adsb.fi"}
 	}
@@ -79,6 +90,12 @@ func Load(path string) (*Config, error) {
 func (c *Config) validate() error {
 	if c.Auth.Password != "" && c.Auth.Username == "" {
 		return fmt.Errorf("auth.username is required when auth.password is set")
+	}
+	if c.Backfill.Enabled && c.Backfill.CacheDir == "" {
+		return fmt.Errorf("backfill.cache_dir is required when backfill.enabled is set")
+	}
+	if c.Backfill.CacheMaxGiB < 0 {
+		return fmt.Errorf("backfill.cache_max_gib must not be negative")
 	}
 	host, _, err := net.SplitHostPort(c.Listen)
 	if err != nil {
