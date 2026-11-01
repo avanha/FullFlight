@@ -300,7 +300,7 @@ fetched by your browser, which sends its own.
 
 ## Airframes and notes
 
-`/airframes.html` lists every aircraft we know of (searchable, sortable, filterable to those with notes):
+`/airframes.html`, from the hamburger menu at the top right of the map's left panel, lists every aircraft we know of (searchable, sortable, filterable to those with notes):
 its current registration and any earlier ones, hex, type, when first and last heard from, whether it is on a
 watch, its **last flight** (`SQ23 KJFK → WSSS`, with when it left, or when it was last heard on that flight; hover for the
 callsign and airport names), and a preview of its newest note. An aircraft known only from a watch or a note is listed too. An aircraft that is not being watched has a **Watch**

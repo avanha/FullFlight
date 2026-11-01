@@ -1258,6 +1258,8 @@ highlightGroup = null;
     document.querySelector('#menu').hidden = true;   // as the page's HTML has it
     assert.strictEqual(byId['#menu'].hidden, true, 'the menu starts closed');
     byId['#menubtn'].onclick(); assert.strictEqual(byId['#menu'].hidden, false, 'the hamburger opens it');
+    assert.match(html, /<div id="menu"[^>]*><a id="menu-airframes" href="\/airframes\.html"/, 'Airframes is in the menu');
+    assert.ok(!/class="navlink"/.test(html), 'and no longer beside the title');
     assert.strictEqual(byId['#menu-backfill'].href, '/backfill.html?hex=780AB8', 'the backfill screen opens on the selected aircraft');
     byId['#menubtn'].onclick(); assert.strictEqual(byId['#menu'].hidden, true, 'and closes it');
     const prevSelected = vm.runInContext('selected', ctx);
