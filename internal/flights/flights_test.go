@@ -690,3 +690,37 @@ func TestAStaleCallsignAtPowerUpIsTheNextFlights(t *testing.T) {
 		t.Errorf("a lone sighting after a silence is the flight's: %+v", segs)
 	}
 }
+
+// an A350 report that names a route and the aircraft's own time for it, received at t (which may be long after)
+func (r *rig) a350(t, happened time.Time, from, to string) {
+	r.msg(store.Message{T: t, Kind: "miam", Decoded: `{"fields":{"a350":{"Kind":"REP216","Time":"` + happened.Format("2006-01-02T15:04:05Z") + `","Origin":"` + from + `","Dest":"` + to + `"}}}`})
+}
+
+// An A350 keeps its reports and delivers them late. A report from the flight before, delivered during this one, says where that
+// flight went: it must not give this one its route (CX833 from Seattle showed Hong Kong to Munich, after CX301's route arrived
+// two days late). A report from a moment with no flight of ours is still the flight it arrived in.
+func TestLateReportsKeepToTheFlightTheyHappenedIn(t *testing.T) {
+	r := newRig(t)
+	// CX301, Hong Kong to Munich, flies 04:00-12:00; CX833, Seattle to Hong Kong, 20:00 to 06:00 the next day
+	spread(at(0, 4, 0), 8*time.Hour, 10*time.Minute, func(x time.Time) { r.adscAt(x, "CX301", 30, 60, 38000) })
+	spread(at(0, 20, 0), 10*time.Hour, 10*time.Minute, func(x time.Time) { r.adscAt(x, "CX833", 40, -150, 38000) })
+	// this flight's own reports, on time
+	r.a350(at(0, 21, 0), at(0, 21, 0), "KSEA", "VHHH")
+	r.a350(at(1, 2, 0), at(1, 2, 0), "KSEA", "VHHH")
+	// the other flight's, received during this one
+	for _, m := range []int{0, 5, 10, 15} {
+		r.a350(at(1, 3, m), at(0, 5, m), "VHHH", "EDDM")
+	}
+	segs := r.segments()
+	if len(segs) != 2 || segs[0].From != "VHHH" || segs[0].To != "EDDM" || segs[1].From != "KSEA" || segs[1].To != "VHHH" {
+		t.Errorf("each flight keeps its own route: %+v", segs)
+	}
+
+	// a flight whose reports all came late, with nothing of ours at the time they happened: they count where they arrived
+	r2 := newRig(t)
+	spread(at(1, 4, 0), 4*time.Hour, 10*time.Minute, func(x time.Time) { r2.adscAt(x, "SQ23", 40, -70, 38000) })
+	r2.a350(at(1, 5, 0), at(0, 3, 0), "KJFK", "WSSS")
+	if segs := r2.segments(); len(segs) != 1 || segs[0].From != "KJFK" || segs[0].To != "WSSS" {
+		t.Errorf("a late report with no flight of ours where it happened: %+v", segs)
+	}
+}

@@ -302,7 +302,27 @@ func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 	if err != nil {
 		return nil, err
 	}
-	setRoute := func(s *Segment) { s.From, s.To = modalRoute(routes, s.Start.Add(-RouteSlack), s.End.Add(RouteSlack)) }
+	// A report belongs to the flight it happened during. One that reached us long after (an A350 keeps its reports and delivers them
+	// later) counts for the flight it arrived in only if no flight of ours holds the moment it happened.
+	holds := func(s Segment, t time.Time) bool {
+		return !t.Before(s.Start.Add(-RouteSlack)) && !t.After(s.End.Add(RouteSlack))
+	}
+	setRoute := func(s *Segment) {
+		var mine []store.RouteReport
+		for _, r := range routes {
+			happened := false
+			for _, o := range segs {
+				if holds(o, r.T) {
+					happened = true
+					break
+				}
+			}
+			if holds(*s, r.T) || (!happened && holds(*s, r.Rx)) {
+				mine = append(mine, r)
+			}
+		}
+		s.From, s.To = modalRoute(mine, time.Time{}, time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC))
+	}
 	for i := range segs {
 		setRoute(&segs[i])
 	}

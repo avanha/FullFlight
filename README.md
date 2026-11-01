@@ -411,6 +411,13 @@ the next flight's data) can name the next flight while the aircraft is still fly
 aircraft itself named another flight within two hours before it and again within two hours after; it counts as before at either end
 of a flight (the flight just finished, the one about to start).
 
+**Reports delivered late.** An A350 keeps its reports and sends them later: of the ones that name a route, about half reach us
+more than a day after the event. Each counts for the flight it happened during, by the time the aircraft put in it. One that
+happened at a moment none of our flights holds (the flight itself is only known from the messages that arrived late) counts for
+the flight it arrived in. Without this, a route report for one flight, delivered during the next, gave the next the wrong
+route (CX833 from Seattle labelled with CX301's Hong Kong to Munich). Flights known only from late messages, with few or no
+positions, can therefore show no route; backfilling their day gives them positions, and their reports their route.
+
 **A stale callsign at power-up.** An aircraft that has sat for hours sends its last callsign again when it wakes, and changes it
 to the next flight's a couple of seconds later (ZIPAIR's TZP1, then TZP22). Those first sightings, after an hour's silence
 and under the old number, are the next flight's when it carries on under the new one at least five times in the next ten

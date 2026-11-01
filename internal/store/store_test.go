@@ -1116,3 +1116,25 @@ func TestProviderHold(t *testing.T) {
 		t.Error("another service held")
 	}
 }
+
+// An A350 report counts from the time the aircraft put in it, not from when it arrived; one with no time (the zero time) from
+// when it arrived. The window finds a report by either time, and the report says both.
+func TestA350RouteReportsCountFromTheirOwnTime(t *testing.T) {
+	s := open(t)
+	rx := time.Date(2026, 10, 29, 2, 21, 0, 0, time.UTC)
+	s.AddMessage(Message{ID: 1, Hex: "780AA4", T: rx, Label: "H1", Text: "a", Kind: "miam",
+		Decoded: `{"fields":{"rtr":{"Time":"2026-10-27T04:53:20Z","Origin":"VHHH","Dest":"EDDM"}}}`})
+	s.AddMessage(Message{ID: 2, Hex: "780AA4", T: rx.Add(time.Minute), Label: "H1", Text: "b", Kind: "miam",
+		Decoded: `{"fields":{"a350":{"Time":"0001-01-01T00:00:00Z","Origin":"KSEA","Dest":"VHHH"}}}`})
+
+	// looked for where it happened: found, and said to have arrived two days after
+	rs, err := s.RouteReports("780AA4", time.Date(2026, 10, 27, 4, 0, 0, 0, time.UTC), time.Date(2026, 10, 27, 5, 30, 0, 0, time.UTC))
+	if err != nil || len(rs) != 1 || rs[0].To != "EDDM" || !rs[0].T.Equal(time.Date(2026, 10, 27, 4, 53, 20, 0, time.UTC)) || !rs[0].Rx.Equal(rx) {
+		t.Fatalf("%+v %v", rs, err)
+	}
+	// looked for where it arrived: found too, for the flights code to decide whose it is; the one with no time counts from arrival
+	rs, _ = s.RouteReports("780AA4", rx.Add(-time.Hour), rx.Add(time.Hour))
+	if len(rs) != 2 || rs[0].To != "EDDM" || rs[1].To != "VHHH" || !rs[1].T.Equal(rx.Add(time.Minute)) {
+		t.Errorf("%+v", rs)
+	}
+}
