@@ -667,7 +667,7 @@ highlightGroup = null;
   }
   {
     // through the page: showTrack fetches the plans and draws the one for the flight
-    planData.push({id: 7, t: '2026-10-30T15:50:00Z', callsign: 'CPA843', from: 'KLAX', to: 'VHHH', points: [
+    planData.push({id: 7, t: new Date(Date.now() - 3600e3).toISOString(), callsign: 'CPA843', from: 'KLAX', to: 'VHHH', points: [
       {name: 'KLAX', lat: 33.9, lon: -118.4, kind: 'airport'}, {name: 'FIX1', lat: 40, lon: -105, kind: 'fix'}, {name: 'VHHH', lat: 22.3, lon: 113.9, kind: 'airport'}]});
     await t.showTrack(t.watches()[0], false);
     assert.ok(fetchLog.some(u => u.startsWith('/api/plan/780AB8')), 'asked for the plans');
@@ -1209,6 +1209,48 @@ highlightGroup = null;
       assert.strictEqual(byId['#flightsel'].disabled, false);
     });
     forgetOlder();   // so later sections see a page with no month of history
+  }
+
+  // ===== 8r6. joining a flight to the one before it, by hand ===========================================
+  {
+    const hoursAgo = h => new Date(Date.now() - h * 3600e3).toISOString();
+    const A = seg('QF8@1', 'QF8', hoursAgo(20), hoursAgo(19), {from: 'KDFW', to: 'YSSY'});
+    const B = seg('QF8@2', 'QF8', hoursAgo(10), hoursAgo(8), {latest: true});
+    await withFlights([A, B], async () => {
+      lastPut = null;
+      t.chooseFlight('QF8@2'); await settle();
+      assert.strictEqual(byId['#joinedit'].hidden, false, 'a single flight chosen: the join controls are there');
+      assert.strictEqual(byId['#joinbtn'].hidden, false, 'with a flight before it to join to');
+      assert.strictEqual(byId['#splitbtn'].hidden, true, 'and nothing joined to split');
+      assert.ok(/QF8/.test(byId['#joinbtn'].title), byId['#joinbtn'].title);
+      await byId['#joinbtn'].onclick(); await settle();
+      assert.ok(lastPut && /\/api\/flights\/780AB8\/join$/.test(lastPut.url) && lastPut.body.join === true && lastPut.body.start === Math.floor(Date.parse(B.start) / 1000), JSON.stringify(lastPut));
+      assert.strictEqual(t.flightChoice, 'QF8@1', 'the joined flight starts where the earlier piece did: that is the one to show');
+
+      t.chooseFlight('QF8@1'); await settle();
+      assert.strictEqual(byId['#joinbtn'].hidden, true, 'the first flight has nothing before it');
+      t.chooseFlight('all'); await settle();
+      assert.strictEqual(byId['#joinedit'].hidden, true, 'nor does the all-flights view');
+    });
+    // a flight made of joined pieces can be split
+    const J = seg('QF8@1', 'QF8', hoursAgo(20), hoursAgo(8), {latest: true, joined: [Math.floor((Date.now() - 10 * 3600e3) / 1000)]});
+    await withFlights([J], async () => {
+      lastPut = null;
+      t.chooseFlight('QF8@1'); await settle();
+      assert.strictEqual(byId['#splitbtn'].hidden, false);
+      await byId['#splitbtn'].onclick(); await settle();
+      assert.ok(lastPut && lastPut.body.join === false && lastPut.body.start === Math.floor(Date.parse(J.start) / 1000), JSON.stringify(lastPut));
+      assert.strictEqual(t.flightChoice, 'QF8@1');
+    });
+    // a refusal is shown
+    await withFlights([A, B], async () => {
+      putReply = {status: 400, body: {error: 'there is no earlier flight to join it to'}};
+      t.chooseFlight('QF8@2'); await settle();
+      await byId['#joinbtn'].onclick(); await settle();
+      assert.strictEqual(byId['#joinmsg'].textContent, 'there is no earlier flight to join it to');
+      putReply = {status: 200, body: {}};
+    });
+    vm.runInContext('olderAt = 0; olderSegs = []; olderFor = null; olderPending = null;', ctx);   // the month's list, kept for ten minutes, is not for later sections
   }
 
   // ===== 8s. how what was typed is read ===========================================================

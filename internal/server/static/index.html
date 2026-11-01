@@ -166,6 +166,11 @@
   <button class="acchead" id="acchead-msgs" title="Fold the messages away"><span class="chev" id="chev-msgs">&#9662;</span> Messages <span class="count" id="msgcount"></span></button>
   <div class="acccontrols">
   <p class="hint" style="margin:8px 0 0"><label>Flights: <select id="flightsel" style="max-width:100%"><option value="recent">no flights identified yet</option></select></label></p>
+  <p class="hint" id="joinedit" style="margin:4px 0 0" hidden>
+    <button type="button" id="joinbtn" title="">Join with the flight before</button>
+    <button type="button" id="splitbtn" title="Take the join made by hand away: this goes back to being separate flights">Split the joined flights</button>
+    <span id="joinmsg" style="color:#b00"></span>
+  </p>
   <p class="hint" id="routeedit" style="margin:4px 0 0" hidden>
     <button type="button" id="routebtn" title="This flight's messages did not say where it went. Enter the origin and destination yourself; anything the messages do say wins.">Set route</button>
     <span id="routeform" hidden>
@@ -1299,6 +1304,30 @@ function syncFlightSelector() {
   sel.value = opts.some(([v]) => v === flightChoice) ? flightChoice : 'recent';
   sel.disabled = !flightSegs.length;
   syncRouteEditor();
+  syncJoinEditor();
+}
+
+// ---- two pieces of one flight ------------------------------------------------------------------
+// The rules join a flight's pieces when the evidence says they are one; when it does not (a long silence with nothing in the air to
+// show it), the flight can be joined to the one before it here (PUT /api/flights/{hex}/join), and split again.
+function syncJoinEditor() {
+  const sg = chosenFlight();
+  const i = sg ? flightSegs.indexOf(sg) : -1;
+  $('#joinedit').hidden = !sg;
+  $('#joinbtn').hidden = !(i > 0);
+  if (i > 0) $('#joinbtn').title = `Make this and ${segLabel(flightSegs[i - 1])} one flight`;
+  $('#splitbtn').hidden = !(sg && sg.joined && sg.joined.length);
+  $('#joinmsg').textContent = '';
+}
+async function setJoin(join) {
+  const sg = chosenFlight(), w = watches.find(x => x.id === selected);
+  const i = sg ? flightSegs.indexOf(sg) : -1;
+  if (!sg || !w || (join && i < 1)) return;
+  const stay = join ? flightSegs[i - 1].id : sg.id;   // a joined flight starts where the earlier piece did
+  try {
+    await api(`/api/flights/${w.hex}/join`, {method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({start: Math.floor(sg.startMs / 1000), join})});
+    chooseFlight(stay);
+  } catch (e) { $('#joinmsg').textContent = e.message; }
 }
 
 // ---- a route entered by hand -----------------------------------------------------------
@@ -1412,6 +1441,8 @@ function routeKey(e) {
   }
 }
 $('#routebtn').onclick = () => { hideSuggestions(); openRouteEditor(); };
+$('#joinbtn').onclick = () => setJoin(true);
+$('#splitbtn').onclick = () => setJoin(false);
 $('#routesave').onclick = () => { hideSuggestions(); saveRoute(false); };
 $('#routeclear').onclick = () => { hideSuggestions(); saveRoute(true); };
 $('#routecancel').onclick = () => { hideSuggestions(); $('#routeform').hidden = true; $('#routemsg').textContent = ''; };

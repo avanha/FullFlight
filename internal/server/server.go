@@ -58,6 +58,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/messages/{hex}", s.messages)
 	mux.HandleFunc("GET /api/flights/{hex}", s.flights)
 	mux.HandleFunc("PUT /api/flights/{hex}/route", s.setFlightRoute)
+	mux.HandleFunc("PUT /api/flights/{hex}/join", s.setFlightJoin)
 	mux.HandleFunc("GET /api/plan/{hex}", s.plans)
 	mux.HandleFunc("GET /api/fixes", s.fixes)
 	mux.HandleFunc("GET /api/airports", s.airports)
@@ -1035,4 +1036,73 @@ func (s *Server) window(r *http.Request, defHours, maxHours int) (since, until t
 		until = u
 	}
 	return until.Add(-time.Duration(hours) * time.Hour), until
+}
+
+// setFlightJoin joins the flight that started at {"start": unix seconds} to the flight before it ({"join": true}), or takes
+// the joins made inside it away ({"join": false}), and answers with the flight as it now is: the joined one, starting where
+// the earlier piece started. For when two pieces are one flight and the rules could not tell.
+func (s *Server) setFlightJoin(w http.ResponseWriter, r *http.Request) {
+	hex, ok := noteHex(w, r)
+	if !ok {
+		return
+	}
+	var raw struct {
+		Start int64 `json:"start"`
+		Join  bool  `json:"join"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&raw); err != nil {
+		fail(w, 400, "bad JSON")
+		return
+	}
+	now := s.now()
+	at := time.Unix(raw.Start, 0)
+	find := func(t time.Time) (segs []flights.Segment, i int, err error) {
+		segs, err = flights.Segments(s.Store, hex, now.Add(-720*time.Hour), now.Add(time.Minute))
+		for i = range segs {
+			if !t.Before(segs[i].Start) && !t.After(segs[i].End) {
+				return segs, i, err
+			}
+		}
+		return segs, -1, err
+	}
+	segs, i, err := find(at)
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	if i < 0 {
+		fail(w, 404, "that aircraft has no flight at that time (within the last 30 days)")
+		return
+	}
+	sg := segs[i]
+	if raw.Join {
+		if i == 0 {
+			fail(w, 400, "there is no earlier flight to join it to")
+			return
+		}
+		err = s.Store.SetFlightJoin(hex, sg.Start, true, now)
+	} else {
+		if len(sg.Joined) == 0 {
+			fail(w, 400, "that flight was not joined by hand")
+			return
+		}
+		for _, j := range sg.Joined {
+			if err = s.Store.SetFlightJoin(hex, time.Unix(j, 0), false, now); err != nil {
+				break
+			}
+		}
+	}
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	s.flightMu.Lock()
+	delete(s.flightCache, hex)
+	s.flightMu.Unlock()
+	segs, i, err = find(sg.Start)
+	if err != nil || i < 0 {
+		fail(w, 500, "the flight could not be found after the change")
+		return
+	}
+	writeJSON(w, 200, toFlightJSON(segs[i]))
 }

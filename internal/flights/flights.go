@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/avanha/fullflight/internal/airlines"
+	"github.com/avanha/fullflight/internal/geo"
 	"github.com/avanha/fullflight/internal/store"
 )
 
@@ -50,6 +51,21 @@ const (
 	// A departure up to DepartureSlack before a flight's first sighting is that flight's: the aircraft may be
 	// first heard some time after it left.
 	DepartureSlack = 2 * time.Hour
+	// A sighting from an airline's operations message (store.Evidence.Weak) that falls between two sightings of one other
+	// flight by the aircraft itself, each within WeakWithin, is about the next flight, not this one, and is set aside.
+	WeakWithin = 2 * time.Hour
+	// Over a long silence, two pieces of one flight number are one flight if the aircraft was airborne at the end of the
+	// first and at the start of the second and the speed it would have needed between them is that of a flight, not of a
+	// turnaround or a stop: a day later the same number is a flight from the other end of the route, which would take the
+	// speed far above BridgeMaxKt, or from the same place, far below BridgeMinKt.
+	BridgeMaxGap    = 20 * time.Hour
+	BridgeMaxFlight = 26 * time.Hour
+	BridgeMinKt     = 300.0
+	BridgeMaxKt     = 650.0
+	BridgeMinAltFt  = 10000.0
+	// ...and it must match the speed the aircraft was measured flying just before the silence or just after it, to within this.
+	BridgeSpeedTolerance = 0.3
+	manualJoinSlack      = 90 * time.Second // the start a join was made at, give or take
 )
 
 type Segment struct {
@@ -68,6 +84,8 @@ type Segment struct {
 	DepartedHow string    `json:"departed_how,omitempty"` // "takeoff", "adsb", "pushback" or "taxi": see store.Departure
 	Identified  bool      `json:"identified"`             // false: a flight whose number we never saw
 	Latest      bool      `json:"latest"`                 // the most recent flight
+
+	Joined []int64 `json:"joined,omitempty"` // when the pieces joined to this flight by hand started (unix seconds)
 
 	stopAfter bool // the aircraft stopped on the ground after this flight, and the next piece is another leg: never joined
 }
@@ -169,6 +187,7 @@ func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 	if err != nil {
 		return nil, err
 	}
+	ev = setAsideWeak(ev)
 
 	// 1. runs of one flight number
 	var runs []*run
@@ -205,6 +224,13 @@ func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 			}
 		}
 	}
+
+	// 2b. over a long silence, the same flight number is one flight if the aircraft was in the air at both ends of it
+	fixes, err := st.AirFixes(hexAddr, since.Add(-BridgeMaxGap), until.Add(BridgeMaxGap))
+	if err != nil {
+		return nil, err
+	}
+	runs = bridgeSilences(runs, fixes)
 
 	// 3. positions go to the run they are in or nearest to (within AttachSlack)
 	var orphans []time.Time
@@ -301,6 +327,12 @@ func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 	for i := range segs {
 		segs[i].Departed, segs[i].DepartedHow = departureOf(segs[i], deps)
 	}
+	// 9. flights joined by hand
+	joins, err := st.FlightJoins(hexAddr, since.Add(-MaxFlight), until)
+	if err != nil {
+		return nil, err
+	}
+	segs = applyJoins(segs, joins)
 	for i := range segs {
 		segs[i].Messages = st.CountMessages(hexAddr, segs[i].Start, segs[i].End)
 		segs[i].ID = segID(segs[i])
@@ -494,4 +526,164 @@ func maxTime(a, b time.Time) time.Time {
 		return a
 	}
 	return b
+}
+
+// setAsideWeak drops the weak sightings that are inside another flight: the aircraft itself named a different flight within
+// WeakWithin before and again within WeakWithin after. A cockpit asking for the weather along the next flight's route, or the
+// airline sending that flight's data, while the aircraft is still flying this one, does not start the next flight; it starts
+// when the aircraft itself says so. A weak sighting at either end of a flight, after the last thing the aircraft said or before
+// the first, is left: that is the flight just finished or the one about to start.
+func setAsideWeak(ev []store.Evidence) []store.Evidence {
+	var strong []store.Evidence
+	for _, e := range ev {
+		if !e.Weak {
+			strong = append(strong, e)
+		}
+	}
+	if len(strong) == len(ev) {
+		return ev
+	}
+	out := make([]store.Evidence, 0, len(ev))
+	for _, e := range ev {
+		if e.Weak && insideAnother(e, strong) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// insideAnother reports whether the weak sighting w falls inside a flight the aircraft itself named otherwise: a strong
+// sighting of one flight just before it and another of the same flight just after.
+func insideAnother(w store.Evidence, strong []store.Evidence) bool {
+	id, ok := parse(w.ID)
+	if !ok {
+		return false
+	}
+	i := sort.Search(len(strong), func(i int) bool { return !strong[i].T.Before(w.T) }) // the first at or after w
+	for k := i - 1; k >= 0 && w.T.Sub(strong[k].T) <= WeakWithin; k-- {
+		before, bok := parse(strong[k].ID)
+		if !bok || same(id, before) {
+			continue
+		}
+		for j := i; j < len(strong) && strong[j].T.Sub(w.T) <= WeakWithin; j++ {
+			if after, aok := parse(strong[j].ID); aok && same(before, after) {
+				return true
+			}
+		}
+		return false // the nearest strong sighting before is another flight, and that flight is not heard from afterwards
+	}
+	return false
+}
+
+// bridgeSilences joins neighbouring runs of one flight number that are further apart than MaxGap, when the fixes either
+// side of the silence show the aircraft airborne and the speed it would have flown across it is the speed it was flying:
+// the average over the silence is within BridgeSpeedTolerance of the speed measured between the last fixes before it, or the
+// first after it. (A stop on the ground in the middle averages far slower than the aircraft flew.)
+func bridgeSilences(runs []*run, fixes []store.AirFix) []*run {
+	airborne := func(f store.AirFix) bool { return !f.OnGround && f.AltFt != nil && *f.AltFt >= BridgeMinAltFt }
+	// the speed between fix k and the nearest fix at least two minutes before it (delta -1) or after it (delta 1), if there
+	// is one within half an hour: the speed the aircraft was flying there
+	speedAt := func(k, delta int) float64 {
+		for j := k + delta; j >= 0 && j < len(fixes); j += delta {
+			dt := fixes[k].T.Sub(fixes[j].T)
+			if dt < 0 {
+				dt = -dt
+			}
+			if dt < 2*time.Minute {
+				continue
+			}
+			if dt > 30*time.Minute {
+				return 0
+			}
+			return geo.DistNM(fixes[k].Lat, fixes[k].Lon, fixes[j].Lat, fixes[j].Lon) / dt.Hours()
+		}
+		return 0
+	}
+	for again := true; again; {
+		again = false
+		for i := 0; i+1 < len(runs); i++ {
+			a, b := runs[i], runs[i+1]
+			gap := b.first.Sub(a.last)
+			if !same(a.id, b.id) || gap <= MaxGap || gap > BridgeMaxGap || b.last.Sub(a.first) > BridgeMaxFlight {
+				continue
+			}
+			// the fixes from the last that belongs to a to the first that belongs to b, and the longest silence between two of them:
+			// that is the stretch to account for
+			k1, k2 := -1, -1
+			for k := range fixes {
+				f := fixes[k]
+				if !f.T.After(a.last.Add(AttachSlack)) && !f.T.Before(a.first.Add(-AttachSlack)) {
+					k1 = k
+				}
+				if k2 < 0 && !f.T.Before(b.first.Add(-AttachSlack)) && !f.T.After(b.last.Add(AttachSlack)) {
+					k2 = k
+				}
+			}
+			if k1 < 0 || k2 <= k1 {
+				continue
+			}
+			p := k1
+			for k := k1; k < k2; k++ {
+				if fixes[k+1].T.Sub(fixes[k].T) > fixes[p+1].T.Sub(fixes[p].T) {
+					p = k
+				}
+			}
+			f1, f2 := fixes[p], fixes[p+1]
+			if !f2.T.After(f1.T) || !airborne(f1) || !airborne(f2) {
+				continue
+			}
+			kt := geo.DistNM(f1.Lat, f1.Lon, f2.Lat, f2.Lon) / f2.T.Sub(f1.T).Hours()
+			ok := false
+			for _, ref := range []float64{speedAt(p, -1), speedAt(p+1, 1)} {
+				if ref > 0 && kt >= ref*(1-BridgeSpeedTolerance) && kt <= ref*(1+BridgeSpeedTolerance) {
+					ok = true
+				}
+			}
+			if !ok || kt < BridgeMinKt || kt > BridgeMaxKt {
+				continue
+			}
+			a.last, a.n = b.last, a.n+b.n
+			for f, c := range b.forms {
+				a.forms[f] += c
+			}
+			runs = append(runs[:i+1], runs[i+2:]...)
+			again = true
+			break
+		}
+	}
+	return runs
+}
+
+// applyJoins merges each flight that was joined by hand with the flight before it. A join is remembered by when the later
+// piece started; it applies to the flight that covers that moment.
+func applyJoins(segs []Segment, joins []time.Time) []Segment {
+	for k := len(joins) - 1; k >= 0; k-- { // latest first, so earlier positions stay where they were
+		at := joins[k]
+		for i := 1; i < len(segs); i++ {
+			if at.Before(segs[i].Start.Add(-manualJoinSlack)) || at.After(segs[i].End) {
+				continue
+			}
+			a, b := segs[i-1], segs[i]
+			m := a
+			m.End = b.End
+			m.Positions += b.Positions
+			if m.From == "" {
+				m.From, m.FromManual = b.From, b.FromManual
+			}
+			if b.To != "" {
+				m.To, m.ToManual = b.To, b.ToManual
+			}
+			if !m.Identified && b.Identified {
+				m.Identified, m.Flight, m.Callsign = true, b.Flight, b.Callsign
+			}
+			m.Latest = false
+			m.stopAfter = b.stopAfter
+			m.Joined = append(append([]int64{}, a.Joined...), b.Start.Unix())
+			m.Joined = append(m.Joined, b.Joined...)
+			segs = append(segs[:i-1], append([]Segment{m}, segs[i+1:]...)...)
+			break
+		}
+	}
+	return segs
 }

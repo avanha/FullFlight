@@ -1047,3 +1047,26 @@ func TestExactTakeoffTimeFromALateReport(t *testing.T) {
 		t.Errorf("departures = %+v %v", ds, err)
 	}
 }
+
+func TestFlightJoins(t *testing.T) {
+	s := open(t)
+	a, b := time.Date(2026, 11, 1, 4, 15, 0, 0, time.UTC), time.Date(2026, 11, 1, 12, 46, 0, 0, time.UTC)
+	for _, st := range []time.Time{b, a} {
+		if err := s.SetFlightJoin("7C4927", st, true, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.SetFlightJoin("7C4927", b, true, now) // again: still one
+	s.SetFlightJoin("7C4926", a, true, now) // another aircraft
+	got, err := s.FlightJoins("7C4927", a.Add(-time.Hour), b.Add(time.Hour))
+	if err != nil || len(got) != 2 || !got[0].Equal(a) || !got[1].Equal(b) {
+		t.Fatalf("joins = %v %v", got, err)
+	}
+	if got, _ = s.FlightJoins("7C4927", a.Add(time.Hour), b.Add(time.Hour)); len(got) != 1 {
+		t.Errorf("a window: %v", got)
+	}
+	s.SetFlightJoin("7C4927", a, false, now)
+	if got, _ = s.FlightJoins("7C4927", a.Add(-time.Hour), b.Add(time.Hour)); len(got) != 1 || !got[0].Equal(b) {
+		t.Errorf("after taking one away: %v", got)
+	}
+}

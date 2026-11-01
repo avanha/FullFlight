@@ -387,6 +387,21 @@ number and date, and the message list has a heading above each flight's messages
 a flag shows just that flight and fits the map to it. The plane and the projection appear only for the
 flight in progress. The choice of most recent / all is remembered; a particular flight is not.
 
+**A flight that broke in two.** Sightings of one flight number more than six hours apart are normally two flights (the same number
+a day later). But a long crossing can be silent for longer, so over a silence of up to 20 hours the pieces are joined if
+the aircraft was airborne (above 10,000 ft) at the last fix before it and the first after it, and the speed it would have needed
+between them matches the speed it was measured flying, either just before or just after, within 30%, and is between 300 and 650 kt.
+(QF8's Pacific crossing on 1 November: 3,960 nm in 8.1 hours is 489 kt, and it was doing 490 kt.) A stop on the ground in the middle
+averages far slower than the flying, so two legs, such as UPS81 through Anchorage, are not joined. If the rules cannot tell, choose
+the flight and press **Join with the flight before** under the Flights selector; the pieces then show as one flight (starting where the
+earlier piece started), and **Split the joined flights** undoes it. A join is kept (`PUT /api/flights/{hex}/join`
+with `{"start": unix seconds, "join": true|false}`) against when the later piece started, and goes with it if that flight changes.
+
+**Next-flight chatter.** Airline operations messages (a cockpit asking for the weather along the next route, the airline sending
+the next flight's data) can name the next flight while the aircraft is still flying this one. Such a sighting is set aside when the
+aircraft itself named another flight within two hours before it and again within two hours after; it counts as before at either end
+of a flight (the flight just finished, the one about to start).
+
 The page loads the last four days (96 hours) of track, messages and plans with the flight list. The selector also lists
 the flights of the last 30 days: those older than four days are in it as well, and choosing one fetches just that flight
 (its own hours, from half a day before its start to a few hours after its end, with up to 1000 messages), so a flight from

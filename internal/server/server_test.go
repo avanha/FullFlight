@@ -1393,3 +1393,64 @@ func TestWindowUntil(t *testing.T) {
 		t.Errorf("until in the future: %s", body)
 	}
 }
+
+// Two pieces of a flight that the rules could not tell are one are joined by hand, and taken apart again.
+func TestJoinFlightsByHand(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 11, 1, 18, 0, 0, 0, time.UTC)
+	air := func(at time.Time, cs string, lat float64) {
+		alt := 36000.0
+		st.AddPosition(store.Position{Hex: "7C4927", T: at, Lat: lat, Lon: 100, AltFt: &alt, Callsign: cs, Source: "x"})
+	}
+	for i := 0; i < 6; i++ { // two flights with different numbers, 8 hours apart
+		air(now.Add(-14*time.Hour).Add(time.Duration(i)*10*time.Minute), "QFA8", 10+float64(i)*0.3)
+		air(now.Add(-5*time.Hour).Add(time.Duration(i)*10*time.Minute), "QFA9", -20+float64(i)*0.3)
+	}
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	list := func() []struct {
+		ID     string  `json:"id"`
+		Joined []int64 `json:"joined"`
+	} {
+		_, body := do(t, "GET", ts.URL+"/api/flights/7C4927?hours=72", "")
+		var l []struct {
+			ID     string  `json:"id"`
+			Joined []int64 `json:"joined"`
+		}
+		if err := json.Unmarshal([]byte(body), &l); err != nil {
+			t.Fatalf("%v: %s", err, body)
+		}
+		return l
+	}
+	before := list()
+	if len(before) != 2 {
+		t.Fatalf("two flights to begin with: %+v", before)
+	}
+	second := now.Add(-5 * time.Hour).Unix()
+	put := func(body string) (int, string) { return do(t, "PUT", ts.URL+"/api/flights/7C4927/join", body) }
+
+	if code, body := put(fmt.Sprintf(`{"start":%d,"join":true}`, now.Add(-14*time.Hour).Unix())); code != 400 {
+		t.Errorf("nothing before the first flight to join it to: %d %s", code, body)
+	}
+	if code, _ := put(fmt.Sprintf(`{"start":%d,"join":true}`, now.Add(-30*time.Hour).Unix())); code != 404 {
+		t.Errorf("no flight then: %d", code)
+	}
+	if code, body := put(fmt.Sprintf(`{"start":%d,"join":false}`, second)); code != 400 {
+		t.Errorf("not joined yet: %d %s", code, body)
+	}
+	code, body := put(fmt.Sprintf(`{"start":%d,"join":true}`, second))
+	if code != 200 || !strings.Contains(body, fmt.Sprintf(`"joined":[%d]`, second)) {
+		t.Fatalf("join: %d %s", code, body)
+	}
+	after := list()
+	if len(after) != 1 || len(after[0].Joined) != 1 || after[0].ID != before[0].ID {
+		t.Errorf("one flight, starting where the first started: %+v", after)
+	}
+	if code, body = put(fmt.Sprintf(`{"start":%d,"join":false}`, now.Add(-14*time.Hour).Unix())); code != 200 {
+		t.Fatalf("split: %d %s", code, body)
+	}
+	if again := list(); len(again) != 2 {
+		t.Errorf("two again: %+v", again)
+	}
+}

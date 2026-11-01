@@ -511,3 +511,155 @@ func TestLateReportsCountFromTheirEventTime(t *testing.T) {
 		t.Fatalf("segments: %s %+v", names(segs), segs)
 	}
 }
+
+// an ADS-B position with a callsign, a place and an altitude, so that the flight can be judged airborne
+func (r *rig) air(t time.Time, callsign string, lat, lon, alt float64, ground bool) {
+	r.st.AddPosition(store.Position{Hex: hex, T: t, Lat: lat, Lon: lon, AltFt: &alt, OnGround: ground, Callsign: callsign, Source: "x"})
+}
+
+// a position carried by a message (ADS-C), with the flight number the aircraft gave
+func (r *rig) adscAt(t time.Time, flight string, lat, lon, alt float64) {
+	pt := t
+	r.msg(store.Message{T: t, Kind: "adsc", Flight: flight, Lat: &lat, Lon: &lon, AltFt: &alt, PosT: &pt})
+}
+
+// VH-OQH's QF8 on 1 November: ADS-B saw it climb out over Mexico until 04:49Z, then nothing for 8 hours, then an ADS-C
+// report from the South Pacific. Nearly 4,000 nm in 8.1 hours is 489 kt, the speed it had been flying: one flight.
+func TestAirborneSilenceIsBridged(t *testing.T) {
+	r := newRig(t)
+	for i := 0; i <= 16; i++ { // 480 kt: 0.4 degrees of latitude every 3 minutes
+		r.air(at(0, 4, 1).Add(time.Duration(i)*3*time.Minute), "QFA8", 25.19-0.4*float64(16-i), -104.93, 32000, false)
+	}
+	r.said(at(0, 12, 46), "QF8") // a weather request, with no position
+	r.adscAt(at(0, 12, 55), "QF8", -10.25, -162.13, 38000)
+	r.adscAt(at(0, 13, 5), "QF8", -11.2, -163.2, 38000)
+	segs := r.segments()
+	if len(segs) != 1 || segs[0].Flight != "QF8" || segs[0].Start.After(at(0, 4, 2)) || segs[0].End.Before(at(0, 13, 5)) {
+		t.Fatalf("segments: %s %+v", names(segs), segs)
+	}
+}
+
+// UPS81 stopped at Anchorage for hours: across the stop the average speed (about 310 kt) is a flight's, but the aircraft
+// had been flying at 570 kt, and the pieces are two legs.
+func TestAStopOnTheWayIsNotBridged(t *testing.T) {
+	r := newRig(t)
+	r.air(at(0, 18, 55), "UPS81", 55.13, 178.1, 31000, false)
+	r.air(at(0, 19, 18), "UPS81", 56.72, -176.3, 31000, false) // 570 kt towards Anchorage
+	r.air(at(1, 0, 9), "", 60.25, -148.25, 34800, false)       // leaving Anchorage, hours on (positions the number is not on)
+	r.air(at(1, 4, 4), "", 34.62, -118.03, 20900, false)       // 2,700 nm and 8.8 hours from the last fix: 310 kt
+	r.said(at(1, 3, 10), "UPS81")                              // the first mention of the number since 19:18: 7 hours 52 minutes
+	if segs := r.segments(); len(segs) != 2 {
+		t.Errorf("two legs, not one: %s %+v", names(segs), segs)
+	}
+}
+
+// The same number a day later must not be joined to it: from the other end of the route, the speed needed would be
+// far beyond a flight's (or, on a short route, far below).
+func TestTheSameNumberTheNextDayIsNotBridged(t *testing.T) {
+	r := newRig(t)
+	// day one ends near Sydney; day two starts at Dallas eight hours later, both in the air
+	for i := 0; i < 10; i++ {
+		r.air(at(0, 8, 0).Add(time.Duration(i)*10*time.Minute), "QFA8", -30.0, 150.0, 35000, false)
+	}
+	for i := 0; i < 10; i++ {
+		r.air(at(0, 18, 0).Add(time.Duration(i)*10*time.Minute), "QFA8", 32.9, -97.0, 20000, false)
+	}
+	if segs := r.segments(); len(segs) != 2 {
+		t.Errorf("a turnaround is two flights: %s %+v", names(segs), segs)
+	}
+	// and a silence in which the second piece starts low (still near the ground) is not bridged either
+	r2 := newRig(t)
+	for i := 0; i < 10; i++ {
+		r2.air(at(0, 1, 0).Add(time.Duration(i)*10*time.Minute), "QFA8", 25.0, -105.0, 32000, false)
+	}
+	for i := 0; i < 10; i++ {
+		r2.air(at(0, 10, 0).Add(time.Duration(i)*10*time.Minute), "QFA8", -10.0, -162.0, 3000, false) // 489 kt, but not in the air up high
+	}
+	if segs := r2.segments(); len(segs) != 2 {
+		t.Errorf("not high at the far end: %s", names(segs))
+	}
+}
+
+// Qantas's cockpit asks for the weather along the next flight's route, and the airline sends that flight's data, while
+// the aircraft is still flying this one (30 October: QF8 across the Pacific, QF63's requests all through it).
+func TestNextFlightsRequestsDoNotInterleaveTheCurrentOne(t *testing.T) {
+	r := newRig(t)
+	spread(at(0, 0, 0), 6*time.Hour, 20*time.Minute, func(x time.Time) { r.adscAt(x, "QF8", 10, 100+float64(x.Sub(at(0, 0, 0))/time.Minute)/60, 38000) })
+	weak := func(x time.Time) {
+		r.msg(store.Message{T: x, Kind: "ops_report", Flight: "QF63", Callsign: "QFA63", Label: "5U"})
+	}
+	for _, m := range []int{70, 130, 190, 250, 310} { // bursts of them all through the flight: more than a stray
+		for k := 0; k < 4; k++ {
+			weak(at(0, 0, 0).Add(time.Duration(m+3*k) * time.Minute))
+		}
+	}
+	if segs := r.segments(); len(segs) != 1 || segs[0].Flight != "QF8" {
+		t.Fatalf("one flight, QF8: %s %+v", names(segs), segs)
+	}
+	// with nothing of the aircraft's own near them they are the evidence there is
+	r2 := newRig(t)
+	for _, m := range []int{0, 10, 20} {
+		r2.msg(store.Message{T: at(1, 0, 0).Add(time.Duration(m) * time.Minute), Kind: "ops_report", Flight: "QF63", Callsign: "QFA63", Label: "5U"})
+	}
+	spread(at(1, 0, 0), 30*time.Minute, 10*time.Minute, func(x time.Time) { r2.adsb(x, "") })
+	if segs := r2.segments(); len(segs) != 1 || segs[0].Flight != "QF63" {
+		t.Errorf("weak evidence alone still names the flight: %s", names(segs))
+	}
+}
+
+// A flight joined to the one before it by hand is one flight; taking the join away puts it back.
+func TestJoinedByHand(t *testing.T) {
+	r := newRig(t)
+	spread(at(0, 2, 0), 2*time.Hour, 20*time.Minute, func(x time.Time) { r.said(x, "CX110"); r.fix(x) })
+	spread(at(0, 12, 0), 2*time.Hour, 20*time.Minute, func(x time.Time) { r.said(x, "CX111"); r.fix(x) }) // another number: two flights
+	r.route(at(0, 3, 0), "VHHH", "EDDM")
+	r.route(at(0, 13, 0), "EDDM", "KJFK")
+	segs := r.segments()
+	if len(segs) != 2 {
+		t.Fatalf("before: %s", names(segs))
+	}
+	second := segs[1].Start
+	if err := r.st.SetFlightJoin(hex, second, true, at(2, 0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	segs = r.segments()
+	if len(segs) != 1 || segs[0].Flight != "CX110" || !segs[0].Start.Equal(at(0, 2, 0)) || !segs[0].End.Equal(at(0, 14, 0)) ||
+		len(segs[0].Joined) != 1 || segs[0].Joined[0] != second.Unix() || segs[0].From != "VHHH" || segs[0].To != "KJFK" || !segs[0].Latest {
+		t.Fatalf("joined: %s %+v", names(segs), segs)
+	}
+	if segs[0].Positions != 14 { // the 7 positions of each piece
+		t.Errorf("positions %d", segs[0].Positions)
+	}
+	if err := r.st.SetFlightJoin(hex, second, false, at(2, 0, 0)); err != nil {
+		t.Fatal(err)
+	}
+	if segs = r.segments(); len(segs) != 2 {
+		t.Errorf("after: %s", names(segs))
+	}
+	// a join made for the first flight has nothing before it to join to
+	r.st.SetFlightJoin(hex, at(0, 2, 0), true, at(2, 0, 0))
+	if segs = r.segments(); len(segs) != 2 {
+		t.Errorf("nothing to join to: %s", names(segs))
+	}
+}
+
+// The weak sightings at the ends of a flight are kept: the arrival traffic of a flight the aircraft hardly spoke on, and the
+// next flight's data once the aircraft has landed. Only those inside another flight are set aside.
+func TestWeakSightingsAtTheEndsOfAFlightAreKept(t *testing.T) {
+	r := newRig(t)
+	weak := func(x time.Time, flight string) {
+		r.msg(store.Message{T: x, Kind: "ops_report", Flight: flight, Callsign: "QFA" + flight[2:], Label: "5U"})
+	}
+	// QF64 flies and lands at 03:50; its arrival traffic follows
+	spread(at(0, 0, 0), 3*time.Hour+50*time.Minute, 10*time.Minute, func(x time.Time) { r.adscAt(x, "QF64", 10, 100+float64(x.Sub(at(0, 0, 0))/time.Minute)/60, 38000) })
+	weak(at(0, 3, 55), "QF64")
+	// the next flight's data after landing, more than a stray, then the aircraft's own sightings of it
+	for _, m := range []int{70, 75, 80, 85} {
+		weak(at(0, 3, 0).Add(time.Duration(m)*time.Minute), "QF1")
+	}
+	spread(at(0, 6, 0), time.Hour, 10*time.Minute, func(x time.Time) { r.adscAt(x, "QF1", 40, -100, 38000) })
+	segs := r.segments()
+	if names(segs) != "QF64|QF1|" || segs[1].Start.After(at(0, 4, 10)) {
+		t.Errorf("QF1 starts with its data after QF64 lands: %s %+v", names(segs), segs)
+	}
+}

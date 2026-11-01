@@ -182,6 +182,13 @@ var migrations = []string{
 		created   INTEGER NOT NULL
 	 );
 	 CREATE INDEX IF NOT EXISTS flight_route_hex ON flight_route (hex, start_ts);`,
+	// Two pieces of a flight joined by hand: the later piece, by when it started, is the continuation of the one before.
+	`CREATE TABLE IF NOT EXISTS flight_join (
+		hex      TEXT NOT NULL,
+		start_ts INTEGER NOT NULL,
+		created  INTEGER NOT NULL,
+		PRIMARY KEY (hex, start_ts)
+	 );`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.

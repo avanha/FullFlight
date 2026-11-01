@@ -486,6 +486,10 @@ func (s *Store) FixNameAt(lat, lon, tolDeg float64) (string, bool) {
 type Evidence struct {
 	T  time.Time
 	ID string // as seen: "CX0113", "CPA113", ...
+	// Weak: a sighting from an airline's operations message. These are typed in or sent by the airline ahead of time
+	// (the weather the crew asks for the next flight, its flight data), so one can name the next flight while the
+	// aircraft is still flying this one. The aircraft's own messages and its ADS-B callsign are not weak.
+	Weak bool
 }
 
 // FlightEvidence returns every sighting of the flight identity in [since, until], oldest first.
@@ -493,12 +497,12 @@ type Evidence struct {
 func (s *Store) FlightEvidence(hexAddr string, since, until time.Time) ([]Evidence, error) {
 	// (a message about a flight that has not left yet counts from its scheduled departure: see atTime)
 	rows, err := s.db.Query(`
-		SELECT t, id FROM (
-			SELECT `+atTime+` AS t, CASE WHEN flight != '' THEN flight ELSE callsign END AS id FROM message
+		SELECT t, id, weak FROM (
+			SELECT `+atTime+` AS t, CASE WHEN flight != '' THEN flight ELSE callsign END AS id, kind = 'ops_report' AS weak FROM message
 			  WHERE hex=?1 AND `+opsWindow+` AND (flight != '' OR callsign != '') AND mismatch NOT LIKE '%which is hex%' AND time_flag=0)
 		  WHERE t BETWEEN ?2 AND ?3
 		UNION ALL
-		SELECT ts, callsign FROM position WHERE hex=?1 AND ts BETWEEN ?2 AND ?3 AND callsign != ''
+		SELECT ts, callsign, 0 FROM position WHERE hex=?1 AND ts BETWEEN ?2 AND ?3 AND callsign != ''
 		ORDER BY 1`, hexAddr, ts(since), ts(until))
 	if err != nil {
 		return nil, err
@@ -508,7 +512,7 @@ func (s *Store) FlightEvidence(hexAddr string, since, until time.Time) ([]Eviden
 	for rows.Next() {
 		var e Evidence
 		var t int64
-		if err := rows.Scan(&t, &e.ID); err != nil {
+		if err := rows.Scan(&t, &e.ID, &e.Weak); err != nil {
 			return nil, err
 		}
 		e.T = time.Unix(t, 0).UTC()
@@ -745,4 +749,37 @@ func (s *Store) Departures(hexAddr string, since, until time.Time) ([]Departure,
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].T.Before(out[j].T) })
 	return out, prows.Err()
+}
+
+// AirFix is where an aircraft was at a moment, from ADS-B or from a message position that is not flagged. AltFt is nil when
+// the source gave none.
+type AirFix struct {
+	T        time.Time
+	Lat, Lon float64
+	AltFt    *float64
+	OnGround bool
+}
+
+// AirFixes returns the aircraft's positions in [since, until], oldest first.
+func (s *Store) AirFixes(hexAddr string, since, until time.Time) ([]AirFix, error) {
+	rows, err := s.db.Query(`
+		SELECT ts, lat, lon, alt_ft, on_ground FROM position WHERE hex=?1 AND ts BETWEEN ?2 AND ?3
+		UNION ALL
+		SELECT pos_ts, lat, lon, alt_ft, 0 FROM message WHERE hex=?1 AND pos_ts BETWEEN ?2 AND ?3 AND lat IS NOT NULL AND suspect = '' AND time_flag = 0
+		ORDER BY 1`, hexAddr, ts(since), ts(until))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AirFix
+	for rows.Next() {
+		var t int64
+		var f AirFix
+		if err := rows.Scan(&t, &f.Lat, &f.Lon, &f.AltFt, &f.OnGround); err != nil {
+			return nil, err
+		}
+		f.T = time.Unix(t, 0).UTC()
+		out = append(out, f)
+	}
+	return out, rows.Err()
 }
