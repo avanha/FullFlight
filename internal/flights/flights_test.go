@@ -716,6 +716,13 @@ func TestLateReportsKeepToTheFlightTheyHappenedIn(t *testing.T) {
 		t.Errorf("each flight keeps its own route: %+v", segs)
 	}
 
+	// the same through a window that begins in the middle of the second flight, as the page's last four days do: the first flight
+	// is before it, and still holds its own late report; the second is whole, with the same identity as in the full list
+	narrow, err := Segments(r.st, hex, at(1, 1, 0), at(5, 0, 0))
+	if err != nil || len(narrow) != 1 || narrow[0].ID != segs[1].ID || narrow[0].From != "KSEA" || narrow[0].To != "VHHH" || !narrow[0].Start.Equal(segs[1].Start) {
+		t.Errorf("a window starting mid-flight: %+v %v", narrow, err)
+	}
+
 	// a flight whose reports all came late, with nothing of ours at the time they happened: they count where they arrived
 	r2 := newRig(t)
 	spread(at(1, 4, 0), 4*time.Hour, 10*time.Minute, func(x time.Time) { r2.adscAt(x, "SQ23", 40, -70, 38000) })

@@ -183,8 +183,28 @@ func (r *run) distance(t time.Time) time.Duration {
 	return 0
 }
 
-// Segments returns the aircraft's flights in [since, until], oldest first.
+// Lookback is how far before a window the flights are worked out, so that a flight which began before it is whole (its start,
+// and so its identity, do not depend on where the window happens to begin) and so that a report delivered late finds the earlier
+// flight it belongs to. An A350 delivers its stored reports up to a few days late.
+const Lookback = 7 * 24 * time.Hour
+
+// Segments returns the aircraft's flights in [since, until], oldest first: those that end in the window or were still going
+// at its start.
 func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segment, error) {
+	segs, err := segments(st, hexAddr, since.Add(-Lookback), until)
+	if err != nil {
+		return nil, err
+	}
+	out := segs[:0]
+	for _, sg := range segs {
+		if !sg.End.Before(since) {
+			out = append(out, sg)
+		}
+	}
+	return out, nil
+}
+
+func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segment, error) {
 	ev, err := st.FlightEvidence(hexAddr, since, until)
 	if err != nil {
 		return nil, err

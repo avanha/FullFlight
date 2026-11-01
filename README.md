@@ -417,6 +417,9 @@ happened at a moment none of our flights holds (the flight itself is only known 
 the flight it arrived in. Without this, a route report for one flight, delivered during the next, gave the next the wrong
 route (CX833 from Seattle labelled with CX301's Hong Kong to Munich). Flights known only from late messages, with few or no
 positions, can therefore show no route; backfilling their day gives them positions, and their reports their route.
+The flights are always worked out from a week before the window asked for, and the ones that end before the window are left out:
+a flight that began before the page's last four days is whole, with the same identity (and so the same entry in the Flights
+selector) as in the month's list, and the earlier flight a late report belongs to is known even when it is outside the window.
 
 **A stale callsign at power-up.** An aircraft that has sat for hours sends its last callsign again when it wakes, and changes it
 to the next flight's a couple of seconds later (ZIPAIR's TZP1, then TZP22). Those first sightings, after an hour's silence
