@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/avanha/fullflight/internal/aerodatabox"
 	"github.com/avanha/fullflight/internal/airlines"
 	"github.com/avanha/fullflight/internal/airports"
 	"github.com/avanha/fullflight/internal/flights"
@@ -123,11 +124,17 @@ type watchJSON struct {
 	Type     string       `json:"type,omitempty"` // aircraft type, e.g. A359
 	LastPos  *lastPos     `json:"last_pos,omitempty"`
 	Route    *routeJSON   `json:"route,omitempty"`
-	Flight   *flightJSON  `json:"flight,omitempty"`    // tail and hex watches only: the flight it is operating
-	Poll     *pollJSON    `json:"poll,omitempty"`      // what the last ADS-B ask for it found
-	Landing  *landingJSON `json:"landing,omitempty"`   // the aircraft has probably landed: its last fix was low, near an airport, and nothing followed
-	Notes    int          `json:"notes,omitempty"`     // notes you have written about this airframe
-	LastNote string       `json:"last_note,omitempty"` // the newest, abbreviated, for a hover
+	Flight   *flightJSON  `json:"flight,omitempty"`      // tail and hex watches only: the flight it is operating
+	Poll     *pollJSON    `json:"poll,omitempty"`        // what the last ADS-B ask for it found
+	Hold     *holdJSON    `json:"lookup_hold,omitempty"` // a flight watch: the flight-number lookup is paused, because the provider refused us
+	Landing  *landingJSON `json:"landing,omitempty"`     // the aircraft has probably landed: its last fix was low, near an airport, and nothing followed
+	Notes    int          `json:"notes,omitempty"`       // notes you have written about this airframe
+	LastNote string       `json:"last_note,omitempty"`   // the newest, abbreviated, for a hover
+}
+
+type holdJSON struct {
+	Until  time.Time `json:"until"`
+	Reason string    `json:"reason"`
 }
 
 // pollJSON is what the last ADS-B ask for a watch found, so the page can say why there is, or is not, a track.
@@ -303,6 +310,11 @@ func (s *Server) withAircraft(j watchJSON) watchJSON {
 			pj.Heard = &h
 		}
 		j.Poll = pj
+	}
+	if j.Kind == string(watchlist.KindFlight) {
+		if until, why, ok := s.Store.ProviderHold(aerodatabox.Source, s.now()); ok {
+			j.Hold = &holdJSON{Until: until, Reason: why}
+		}
 	}
 	if j.Hex != "" {
 		j.Type = s.Store.TypeForHex(j.Hex)

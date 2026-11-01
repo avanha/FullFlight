@@ -1096,3 +1096,23 @@ func TestHistoryIsNotDoubledAndSearchesAreRemembered(t *testing.T) {
 		t.Errorf("%v %v", done, other)
 	}
 }
+
+func TestProviderHold(t *testing.T) {
+	st, _ := Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	if _, _, ok := st.ProviderHold("aerodatabox", now); ok {
+		t.Error("a hold from nowhere")
+	}
+	st.SetProviderHold("aerodatabox", now.Add(time.Hour), "quota")
+	until, why, ok := st.ProviderHold("aerodatabox", now)
+	if !ok || !until.Equal(now.Add(time.Hour)) || why != "quota" {
+		t.Errorf("%v %q %v", until, why, ok)
+	}
+	if _, _, ok := st.ProviderHold("aerodatabox", now.Add(time.Hour)); ok {
+		t.Error("still held when the time is up")
+	}
+	if _, _, ok := st.ProviderHold("other", now); ok {
+		t.Error("another service held")
+	}
+}

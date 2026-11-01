@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -109,6 +111,8 @@ func (c *Client) ByNumber(ctx context.Context, number, date string) ([]Flight, e
 	case http.StatusOK:
 	case http.StatusNoContent, http.StatusNotFound:
 		return nil, nil
+	case http.StatusTooManyRequests:
+		return nil, limitError(resp)
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return nil, fmt.Errorf("aerodatabox: HTTP %d: check aerodatabox.api_key", resp.StatusCode)
 	default:
@@ -167,4 +171,64 @@ func first(ts ...wireTime) time.Time {
 func parseTime(s string) (time.Time, error) {
 	s = strings.TrimSuffix(strings.TrimSpace(s), "Z")
 	return time.ParseInLocation("2006-01-02 15:04", s, time.UTC)
+}
+
+// LimitError is a 429: RapidAPI refusing us, either for asking too fast or because the plan's quota is used up.
+type LimitError struct {
+	Quota   bool          // the plan's monthly (or daily) quota is spent, not just a burst of requests
+	Message string        // what RapidAPI said
+	Headers string        // the rate-limit headers it sent, for the log
+	Retry   time.Duration // how long it told us to wait; 0 if it did not
+}
+
+func (e *LimitError) Error() string {
+	kind := "rate limit"
+	if e.Quota {
+		kind = "quota used up"
+	}
+	return fmt.Sprintf("aerodatabox: HTTP 429 (%s): %s", kind, e.Message)
+}
+
+// Wait is how long to leave the service alone: what it asked for if it did, else a couple of minutes for a burst or six hours
+// for a spent quota, and never less than a minute or more than a day (a quota that resets in weeks is looked at once a day).
+func (e *LimitError) Wait() time.Duration {
+	d := e.Retry
+	if d == 0 {
+		d = 2 * time.Minute
+		if e.Quota {
+			d = 6 * time.Hour
+		}
+	}
+	return min(max(d, time.Minute), 24*time.Hour)
+}
+
+// limitError reads a 429. RapidAPI says which limit it was in the message ("You have exceeded the MONTHLY quota for
+// Requests on your current plan" or "...the rate limit per second..."), and sends X-RateLimit-* headers and sometimes Retry-After.
+func limitError(resp *http.Response) *LimitError {
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+	msg := strings.Join(strings.Fields(string(b)), " ")
+	var j struct {
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(b, &j) == nil && j.Message != "" {
+		msg = j.Message
+	}
+	e := &LimitError{Message: msg}
+	low := strings.ToLower(msg)
+	e.Quota = strings.Contains(low, "quota") || strings.Contains(low, "monthly") || strings.Contains(low, "daily")
+	var hs []string
+	for k, v := range resp.Header {
+		if lk := strings.ToLower(k); strings.HasPrefix(lk, "x-ratelimit") || lk == "retry-after" {
+			hs = append(hs, lk+"="+strings.Join(v, ","))
+		}
+	}
+	sort.Strings(hs)
+	e.Headers = strings.Join(hs, " ")
+	for _, h := range []string{"Retry-After", "X-RateLimit-Requests-Reset"} {
+		if n, err := strconv.Atoi(strings.TrimSpace(resp.Header.Get(h))); err == nil && n > 0 {
+			e.Retry = time.Duration(n) * time.Second
+			break
+		}
+	}
+	return e
 }

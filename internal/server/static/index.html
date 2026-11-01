@@ -542,17 +542,19 @@ function copyButton(text) {
 const POLL_RESULT = {heard: '', not_seen: 'not in the answer', no_position: 'in the answer, no usable position', error: 'the ask failed'};
 function pollText(w) {
   const p = w.poll;
-  if (!p) return '';
+  const hold = w.lookup_hold ? `flight lookup paused until ${fmt(w.lookup_hold.until).slice(11)}` : '';   // the provider refused us (a 429)
+  if (!p) return hold;
   return [`ADS-B ${w.status === 'paused' ? 'paused, last req' : 'req'} ${ago(p.asked)}`, POLL_RESULT[p.outcome] ?? p.outcome,
     p.heard ? `heard ${ago(p.heard)}${p.source ? ' (' + p.source + ')' : ''}` : 'never heard',
-    p.misses > 1 ? `${p.misses} asks without it` : ''].filter(Boolean).join(' \u00b7 ');
+    p.misses > 1 ? `${p.misses} asks without it` : '', hold].filter(Boolean).join(' \u00b7 ');
 }
 function pollLine(w) {
-  if (!w.poll) return null;
+  if (!w.poll && !w.lookup_hold) return null;
   const s = document.createElement('small');
-  s.className = 'adsbpoll' + (w.poll.outcome === 'error' ? ' bad' : '');
+  s.className = 'adsbpoll' + (w.poll && w.poll.outcome === 'error' || w.lookup_hold ? ' bad' : '');
   s.textContent = pollText(w);
-  s.title = [`Asked the ADS-B sources about it at ${fmt(w.poll.asked)}.`, w.poll.detail,
+  if (!w.poll) { s.title = `Lookups of this flight by number are paused: ${w.lookup_hold.reason}`; return s; }
+  s.title = [w.lookup_hold ? `The flight-number lookup is paused until ${fmt(w.lookup_hold.until)}: ${w.lookup_hold.reason}` : '', `Asked the ADS-B sources about it at ${fmt(w.poll.asked)}.`, w.poll.detail,
     w.poll.heard ? `Newest position they ever gave: ${fmt(w.poll.heard)}${w.poll.source ? ' from ' + w.poll.source : ''}.` : 'They have not given a position yet.',
     w.status === 'paused' ? 'Paused: nothing is being asked.' : ''].filter(Boolean).join('\n');
   return s;

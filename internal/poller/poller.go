@@ -4,6 +4,7 @@ package poller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -76,11 +77,13 @@ type Poller struct {
 	// heard from every few minutes, while the same flight number yesterday was another aircraft. Default 3h.
 	TextMatchAge time.Duration
 
-	providerAt map[int64]time.Time
-	searchAt   map[int64]time.Time
-	last       map[int64]time.Time
-	lookedUp   map[string]time.Time
-	noted      map[string]time.Time
+	providerAt   map[int64]time.Time
+	providerDate map[int64]string // the departure date the provider last found a watch's flight under: the only one asked about next time
+	lookups      map[string]int   // requests made to the provider, by UTC day, for the log
+	searchAt     map[int64]time.Time
+	last         map[int64]time.Time
+	lookedUp     map[string]time.Time
+	noted        map[string]time.Time
 }
 
 func (p *Poller) defaults() {
@@ -123,6 +126,8 @@ func (p *Poller) defaults() {
 	if p.last == nil {
 		p.searchAt = map[int64]time.Time{}
 		p.providerAt = map[int64]time.Time{}
+		p.providerDate = map[int64]string{}
+		p.lookups = map[string]int{}
 		p.last = map[int64]time.Time{}
 		p.lookedUp = map[string]time.Time{}
 		p.noted = map[string]time.Time{}
@@ -484,6 +489,16 @@ func (p *Poller) askProvider(ctx context.Context, e *watchlist.Entry, now time.T
 	if p.Flights == nil || now.Sub(p.providerAt[e.ID]) < p.ProviderEvery {
 		return false, false
 	}
+	// The lookup is for a flight ADS-B has lost in the air. A flight that has landed, or whose aircraft is known and has not
+	// yet left, has nothing the provider could add, and each ask costs a request from a small quota.
+	if !e.LandedAt.IsZero() || (e.Hex != "" && !e.Airborne) {
+		return false, false
+	}
+	if until, why, ok := p.Store.ProviderHold(aerodatabox.Source, now); ok {
+		p.providerAt[e.ID] = now // looked at again after the hold, not at every poll
+		p.Log.Debug("flight lookup is on hold", "watch", e.Ident, "until", until.Format("15:04Z"), "why", why)
+		return false, false
+	}
 	_, iata := airlines.Forms(e.Ident)
 	if iata == "" && callsignShape.MatchString(e.Ident) {
 		iata = e.Ident // an airline missing from our table: the provider also takes the ICAO callsign (FJI911)
@@ -493,13 +508,32 @@ func (p *Poller) askProvider(ctx context.Context, e *watchlist.Entry, now time.T
 	}
 	p.providerAt[e.ID] = now
 	dates := []string{e.Date}
-	if e.Date == "" { // the day it left, which may be yesterday for a long flight
+	switch {
+	case e.Date != "":
+	case p.providerDate[e.ID] != "": // found under a date before: that is the one
+		dates = []string{p.providerDate[e.ID]}
+	default: // the day it left, which may be yesterday for a long flight
 		dates = []string{now.UTC().Format("2006-01-02"), now.UTC().AddDate(0, 0, -1).Format("2006-01-02")}
 	}
 	var f *aerodatabox.Flight
 	for _, d := range dates {
+		day := now.UTC().Format("2006-01-02")
+		p.lookups[day]++
+		p.Log.Info("flight lookup", "watch", e.Ident, "number", iata, "date", d, "requests_today", p.lookups[day])
 		fs, err := p.Flights.ByNumber(ctx, iata, d)
 		if err != nil {
+			var lim *aerodatabox.LimitError
+			if errors.As(err, &lim) {
+				until := now.Add(lim.Wait())
+				why := lim.Message
+				if serr := p.Store.SetProviderHold(aerodatabox.Source, until, why); serr != nil {
+					p.Log.Error("record the flight lookup hold", "err", serr)
+				}
+				p.Log.Error("flight lookups refused: leaving the provider alone", "watch", e.Ident, "quota_used_up", lim.Quota,
+					"message", lim.Message, "headers", lim.Headers, "requests_today", p.lookups[day], "until", until.Format("2006-01-02 15:04Z"),
+					"hint", "429 is either a burst (retried soon) or the plan's quota (retried once a day at most); check the usage on rapidapi.com for this key")
+				return false, false
+			}
 			p.Log.Warn("flight lookup failed", "watch", e.Ident, "err", err)
 			return false, false
 		}
@@ -510,10 +544,12 @@ func (p *Poller) askProvider(ctx context.Context, e *watchlist.Entry, now time.T
 			}
 		}
 		if f != nil {
+			p.providerDate[e.ID] = d
 			break
 		}
 	}
 	if f == nil {
+		delete(p.providerDate, e.ID) // not under the remembered date any more: try both next time
 		return false, false
 	}
 	if e.Hex != "" && f.Hex != "" && f.Hex != e.Hex {

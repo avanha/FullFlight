@@ -197,6 +197,12 @@ var migrations = []string{
 		scanned_at INTEGER NOT NULL,
 		PRIMARY KEY (day, hex)
 	 );`,
+	// A service that told us to stop asking for a while (a 429), kept so that a restart does not ask again at once.
+	`CREATE TABLE IF NOT EXISTS provider_hold (
+		name   TEXT PRIMARY KEY,
+		until  INTEGER NOT NULL,
+		reason TEXT NOT NULL
+	 );`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.

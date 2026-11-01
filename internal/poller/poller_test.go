@@ -3,6 +3,7 @@ package poller
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"reflect"
 	"strings"
 	"testing"
@@ -519,10 +520,14 @@ func TestUnknownAirlineCallsignIsNotLookedUpAsATail(t *testing.T) {
 type fakeProvider struct {
 	byDate map[string][]aerodatabox.Flight
 	calls  []string
+	err    error // returned instead of an answer
 }
 
 func (f *fakeProvider) ByNumber(_ context.Context, number, date string) ([]aerodatabox.Flight, error) {
 	f.calls = append(f.calls, number+"/"+date)
+	if f.err != nil {
+		return nil, f.err
+	}
 	return f.byDate[date], nil
 }
 
@@ -904,5 +909,111 @@ func TestPollDiagnostics(t *testing.T) {
 	st.DeleteWatch(e.ID)
 	if all, _ := st.PollStates(); len(all) != 0 {
 		t.Errorf("state outlived its watch: %+v", all)
+	}
+}
+
+type logBuf struct{ strings.Builder }
+
+func newLog() (*slog.Logger, *logBuf) {
+	b := &logBuf{}
+	return slog.New(slog.NewTextHandler(&b.Builder, &slog.HandlerOptions{Level: slog.LevelDebug})), b
+}
+
+// The flight-number lookup is for a flight ADS-B lost in the air: not for one that has landed, nor one whose aircraft is
+// known and has not left, and once it has found the flight under a date it asks only for that date.
+func TestProviderIsAskedOnlyWhereItCanHelp(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 2, 0, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("CKK624", now, time.Time{})
+	st.AddWatch(e)
+	f := &fake{byCallsign: map[string][]adsb.Aircraft{}, byHex: map[string][]adsb.Aircraft{}}
+	pr := &fakeProvider{byDate: map[string][]aerodatabox.Flight{"2026-10-29": {{Status: "EnRoute", Hex: "781D8D", Reg: "B-221W", To: "ZSPD"}}}}
+	p := &Poller{Store: st, ADSB: f, Flights: pr, Now: func() time.Time { return now }, WaitingEvery: time.Second, TrackingEvery: time.Second}
+	p.Once(context.Background())
+	if !reflect.DeepEqual(pr.calls, []string{"CK624/2026-10-30", "CK624/2026-10-29"}) {
+		t.Fatalf("the first look tries both days: %v", pr.calls)
+	}
+	// found under yesterday's date: the next look asks for that one only
+	now = now.Add(31 * time.Minute)
+	p.Once(context.Background())
+	if !reflect.DeepEqual(pr.calls[2:], []string{"CK624/2026-10-29"}) {
+		t.Errorf("the second look: %v", pr.calls[2:])
+	}
+
+	// landed: not asked again, however long it is
+	w, _ := st.ListWatches(true)
+	w[0].LandedAt = now
+	st.UpdateWatch(w[0])
+	n := len(pr.calls)
+	now = now.Add(2 * time.Hour)
+	p.Once(context.Background())
+	if len(pr.calls) != n {
+		t.Errorf("asked about a flight that had landed: %v", pr.calls[n:])
+	}
+
+	// an aircraft known but not yet airborne: not asked either
+	e2, _ := watchlist.Parse("CKK700", now, time.Time{})
+	e2.Hex = "ABCDEF"
+	st.AddWatch(e2)
+	now = now.Add(time.Hour)
+	p.Once(context.Background())
+	for _, c := range pr.calls[n:] {
+		if strings.HasPrefix(c, "CK700") {
+			t.Errorf("asked about a flight still on the ground: %v", pr.calls[n:])
+		}
+	}
+}
+
+// A 429 puts every lookup on hold, for as long as the service asked or, failing that, by the kind of limit; the hold survives
+// a restart (it is in the database), is said in the log with what came back, and ends by itself.
+func TestProviderRefusalPutsLookupsOnHold(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 21, 30, 0, 0, time.UTC)
+	for _, id := range []string{"CKK624", "CKK700"} {
+		e, _ := watchlist.Parse(id, now, time.Time{})
+		st.AddWatch(e)
+	}
+	f := &fake{byCallsign: map[string][]adsb.Aircraft{}, byHex: map[string][]adsb.Aircraft{}}
+	gs := 466.0
+	pr := &fakeProvider{err: &aerodatabox.LimitError{Quota: true, Message: "You have exceeded the MONTHLY quota", Headers: "x-ratelimit-requests-remaining=0"}}
+	log, logs := newLog()
+	p := &Poller{Store: st, ADSB: f, Flights: pr, Log: log, Now: func() time.Time { return now }, WaitingEvery: time.Second, TrackingEvery: time.Second}
+	p.Once(context.Background())
+	if len(pr.calls) != 1 {
+		t.Fatalf("the first refusal stops the others from being asked: %v", pr.calls)
+	}
+	until, why, ok := st.ProviderHold(aerodatabox.Source, now)
+	if !ok || !until.Equal(now.Add(6*time.Hour)) || !strings.Contains(why, "MONTHLY") {
+		t.Errorf("hold = %v %q %v", until, why, ok)
+	}
+	for _, want := range []string{"leaving the provider alone", "quota_used_up=true", "x-ratelimit-requests-remaining=0", "hint=", "requests_today=1"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("the log does not say %q:\n%s", want, logs.String())
+		}
+	}
+
+	// five hours on, still held; after six, asked again, and an answer ends the matter
+	pr.err = nil
+	pr.byDate = map[string][]aerodatabox.Flight{"2026-10-31": {{Status: "EnRoute", Hex: "781D8D", Reg: "B-221W", GS: &gs}}}
+	now = now.Add(5 * time.Hour)
+	p.Once(context.Background())
+	if len(pr.calls) != 1 {
+		t.Errorf("asked during the hold: %v", pr.calls)
+	}
+	now = now.Add(time.Hour + time.Minute)
+	p.Once(context.Background())
+	if len(pr.calls) < 2 {
+		t.Errorf("never asked again: %v", pr.calls)
+	}
+
+	// a restart: the hold is read back from the database
+	pr2 := &fakeProvider{}
+	st.SetProviderHold(aerodatabox.Source, now.Add(time.Hour), "burst")
+	p2 := &Poller{Store: st, ADSB: f, Flights: pr2, Log: log, Now: func() time.Time { return now }, WaitingEvery: time.Second, TrackingEvery: time.Second}
+	p2.Once(context.Background())
+	if len(pr2.calls) != 0 {
+		t.Errorf("a new poller asked during a hold: %v", pr2.calls)
 	}
 }

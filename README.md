@@ -102,6 +102,15 @@ already follows. Each lookup uses your quota, so a watch asks at most every `aer
 Only flights that are airborne are used; an airline missing from the table needs its ICAO callsign and
 cannot be looked up.
 
+The quota is small, so the lookup is spent only where it can help. It is not made for a flight that has landed, nor
+for one whose aircraft is known and has not yet left the ground. Once the flight is found under a date, only that
+date is asked about from then on (two requests became one). Each request is logged (`flight lookup`, with
+`requests_today`), so the log shows what the quota is going on. A 429 from RapidAPI puts every lookup on hold, kept
+in the database so a restart does not ask again: for as long as `Retry-After` or the rate-limit reset header says, else
+two minutes after a burst or six hours after the plan's quota ("MONTHLY quota" in its message) is spent, never under a
+minute or over a day. The log line says whether it was the quota, quotes its message and rate-limit headers, and says
+what to check; the flight watches on the page show "flight lookup paused until ...".
+
 Last resort: a flight watch that ADS-B (and AeroDataBox, if set up) cannot find searches airframes.io for
 the flight's callsign in the text of recent messages (`text=UPS58`), at most every 10 minutes. Flight plans,
 logons and performance reports carry the flight number and name the airframe. The newest message within 3

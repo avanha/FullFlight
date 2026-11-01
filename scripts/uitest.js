@@ -1324,6 +1324,26 @@ highlightGroup = null;
     byId['#bfclose'].onclick();
   }
 
+  // ===== 8r8. the ADS-B line on a card, and a paused flight-number lookup =====================================
+  {
+    const line = w => vm.runInContext(`(w => { const s = pollLine(w); return s && {text: s.textContent, cls: s.className, title: s.title}; })(${JSON.stringify(w)})`, ctx);
+    const poll = {asked: new Date(Date.now() - 5000).toISOString(), outcome: 'not_seen', misses: 3};
+    let l = line({status: 'tracking', poll});
+    assert.match(l.text, /^ADS-B req 5s ago \u00b7 not in the answer \u00b7 never heard \u00b7 3 asks without it$/, l.text);
+    assert.strictEqual(l.cls, 'adsbpoll');
+    assert.match(line({status: 'paused', poll}).text, /^ADS-B paused, last req /);
+    // the provider refused us: said on the line, and in the hover with its reason
+    const hold = {until: '2026-11-01T18:30:00Z', reason: 'You have exceeded the MONTHLY quota'};
+    l = line({status: 'tracking', poll, lookup_hold: hold});
+    assert.match(l.text, /\u00b7 flight lookup paused until 18:30Z$/, l.text);
+    assert.strictEqual(l.cls, 'adsbpoll bad');
+    assert.match(l.title, /paused until 2026-11-01 18:30Z: You have exceeded the MONTHLY quota/);
+    // a watch never asked about ADS-B still says it
+    l = line({status: 'waiting', lookup_hold: hold});
+    assert.match(l.text, /^flight lookup paused until 18:30Z$/); assert.match(l.title, /MONTHLY quota/);
+    assert.strictEqual(line({status: 'waiting'}), null, 'and says nothing when there is nothing to say');
+  }
+
   // ===== 8s. how what was typed is read ===========================================================
   const submit = async (input, reply) => {
     postReply = reply;

@@ -2,6 +2,7 @@ package aerodatabox
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -61,5 +62,46 @@ func TestErrors(t *testing.T) {
 	fs, err := parse([]byte(`[{"number":"CK 624","status":"Expected","aircraft":{}}]`))
 	if err != nil || len(fs) != 1 || fs[0].HasPos || fs[0].Airborne() {
 		t.Errorf("%+v %v", fs, err)
+	}
+}
+
+func TestRefusalsAreToldApart(t *testing.T) {
+	cases := []struct {
+		name    string
+		hdr     map[string]string
+		body    string
+		quota   bool
+		retry   time.Duration
+		wait    time.Duration
+		headers string
+	}{
+		{"quota", map[string]string{"X-RateLimit-Requests-Remaining": "0"}, `{"message":"You have exceeded the MONTHLY quota for Requests on your current plan, BASIC."}`,
+			true, 0, 6 * time.Hour, "x-ratelimit-requests-remaining=0"},
+		{"burst", nil, `{"message":"Too many requests"}`, false, 0, 2 * time.Minute, ""},
+		{"told to wait", map[string]string{"Retry-After": "90"}, `{"message":"slow down"}`, false, 90 * time.Second, 90 * time.Second, "retry-after=90"},
+		{"reset in weeks", map[string]string{"X-RateLimit-Requests-Reset": "2000000"}, `{"message":"You have exceeded the DAILY quota"}`, true, 2000000 * time.Second, 24 * time.Hour,
+			"x-ratelimit-requests-reset=2000000"},
+		{"not json", nil, `Too Many Requests`, false, 0, 2 * time.Minute, ""},
+	}
+	for _, c := range cases {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			for k, v := range c.hdr {
+				w.Header().Set(k, v)
+			}
+			w.WriteHeader(429)
+			w.Write([]byte(c.body))
+		}))
+		cl := NewClient("secret")
+		cl.BaseURL = ts.URL
+		_, err := cl.ByNumber(context.Background(), "CK624", "2026-10-30")
+		ts.Close()
+		var lim *LimitError
+		if !errors.As(err, &lim) {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		if lim.Quota != c.quota || lim.Retry != c.retry || lim.Wait() != c.wait || lim.Headers != c.headers || lim.Message == "" {
+			t.Errorf("%s: %+v wait %v", c.name, lim, lim.Wait())
+		}
 	}
 }

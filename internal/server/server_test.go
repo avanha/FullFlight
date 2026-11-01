@@ -1502,3 +1502,32 @@ func TestBackfillEndpoints(t *testing.T) {
 		t.Errorf("nothing to do: %d %s", code, body)
 	}
 }
+
+func TestFlightWatchesShowALookupHold(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	for _, id := range []string{"CKK624", "B-LRM"} {
+		e, _ := watchlist.Parse(id, now, time.Time{})
+		st.AddWatch(e)
+	}
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	if _, body := do(t, "GET", ts.URL+"/api/watches", ""); strings.Contains(body, "lookup_hold") {
+		t.Errorf("a hold from nowhere: %s", body)
+	}
+	st.SetProviderHold("aerodatabox", now.Add(2*time.Hour), "You have exceeded the MONTHLY quota")
+	_, body := do(t, "GET", ts.URL+"/api/watches", "")
+	var ws []struct {
+		Ident string
+		Hold  *struct{ Reason string } `json:"lookup_hold"`
+	}
+	if json.Unmarshal([]byte(body), &ws) != nil || len(ws) != 2 {
+		t.Fatal(body)
+	}
+	for _, w := range ws {
+		if (w.Ident == "CKK624") != (w.Hold != nil) {
+			t.Errorf("%s: hold %+v (only a flight watch uses the flight-number lookup)", w.Ident, w.Hold)
+		}
+	}
+}
