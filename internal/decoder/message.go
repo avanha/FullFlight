@@ -23,6 +23,7 @@ const (
 	KindACMF      Kind = "acmf_report"
 	KindAOC       Kind = "aoc_position"
 	KindDeparture Kind = "departure_report"
+	KindPWI       Kind = "wind_forecast"
 	KindPOS       Kind = "pos_report"
 	KindPOSRPT    Kind = "posrpt"
 	KindPOSA1     Kind = "posa1"
@@ -177,6 +178,9 @@ func Decode(m Message) (Result, error) {
 		return r, nil
 	}
 	if r, ok := decodeUPS(m); ok {
+		return r, nil
+	}
+	if r, ok := decodePWI(m); ok {
 		return r, nil
 	}
 	prefix, body := SplitPrefix(m.Text)

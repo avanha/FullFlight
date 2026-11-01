@@ -918,7 +918,7 @@ func TestUPSSatcomWrapper(t *testing.T) {
 	}
 
 	// An unwrapped message is unaffected, and something that only looks a little like a wrapper is left alone.
-	for _, s := range []string{"- #MDPWI/WD370,N25000W180000,028055,370M47.", "- #MDREQPER9CB5", "plain text #M1B/ not a label"} {
+	for _, s := range []string{"- #MDREQPER9CB5", "plain text #M1B/ not a label"} {
 		if r, _ := Decode(Message{Label: "H1", Text: s}); r.Kind != KindUnknown {
 			t.Errorf("%q decoded as %v", s, r.Kind)
 		}
@@ -1164,5 +1164,47 @@ func TestUPSTopOfDescent(t *testing.T) {
 	// the ordinary report has no route and is no top of descent
 	if _, r = load(t, "pos_ontime"); r.Fields["top_of_descent"] != nil || r.Fields["dest"] != nil {
 		t.Errorf("ordinary report: %v", r.Fields)
+	}
+}
+
+// Real predicted-winds messages: the table behind "- #M1" block headers (one cuts ONIKU in two), a request, a receipt, and the aircraft's own with descent winds.
+func TestPWI(t *testing.T) {
+	r, err := Decode(Message{Label: "H1", Dir: Uplink, Text: "- #M1PWI/WD400,ECOMI,278067,400M54.NATES,251091,400M53.NIKLL,241096,400M53.NYMPH,239099,400M53.NUZAN,227098,400M51.NRKEY,224091,400M49.NIPPI,224088,400M48.NOGAL,244079,400M46.NUBDA,271105,400M50.NANNO,274107,400M51.NODAN- #M1,281118,400M54.NANAC,286132,400M57.NIKON,287134,400M59.IXE,287120,400M58.AKAGI,286113,400M57.SUGAL,283113,400M57.ADGUN,281113,400M56.PIONE,280113,400M55.MARCO,277107,400M55.DGC,276103,400M55.ASOVO,276092,400M55.ONIK- #M1U,276083,400M55.SADLI,275077,400M55.DUMET,270070,400M56.N59000W170000,290036,400M46/WD380,ECOMI,284080,380M55.NATES,247098,380M55.NIKLL,238096,380M53.NYMPH,235098,380M53.NUZAN,225093,380M50.NRKEY,223089,380M48.NIPPI- #M1,224086,380M48.NOGAL,244078,380M45.NUBDA,276108,380M50.NANNO,280113,380M51.NODAN,286136,380M53.NANAC,287149,380M55.NIKON,286146,380M56.IXE,286130,380M56.AKAGI,285118,380M55.SUGAL,281108,380M54.ADGUN,280104,380M54.PI- #M1ONE,279107,380M52.MARCO,278106,380M52.DGC,276102,380M52.ASOVO,276092,380M51.ONIKU,275083,380M50.SADLI,275078,380M50.DUMET,271070,380M50.N59000W170000,295039,380M46/WD360,ECOMI,285105,360M55.NATES,238091,360M58.NIKLL- #M1,233086,360M53.NYMPH,230089,360M53.NUZAN,223085,360M49.NRKEY,223085,360M48.NIPPI,224083,360M48.NOGAL,244077,360M44.NUBDA,281113,360M50.NANNO,285121,360M51.NODAN,290157,360M51.NANAC,287158,360M52.NIKON,286147,360M52.- #M1IXE,285130,360M51.AKAGI,283115,360M51.SUGAL,277101,360M51.ADGUN,278093,360M50.PIONE,279097,360M49.MARCO,278102,360M48.DGC,277100,360M47.ASOVO,275090,360M46.ONIKU,273081,360M45.SADLI,273077,360M45.DUMET,270070,360M45- #M1.N59000W170000,297042,360M47/WD340,ECOMI,281128,340M53.NATES,229085,340M55.NIKLL,227072,340M54.NYMPH,224076,340M53.NUZAN,221075,340M48.NRKEY,224079,340M48.NIPPI,225078,340M49.NOGAL,242078,340M44.NUBDA,284119,340M49.- #M1NANNO,287129,340M49.NODAN,290166,340M48.NANAC,288158,340M47.NIKON,287143,340M47.IXE,285124,340M47.AKAGI,281111,340M46.SUGAL,274098,340M46.ADGUN,273087,340M46.PIONE,275088,340M45.MARCO,277091,340M44.DGC,278095,340M43- #M1.ASOVO,274086,340M42.ONIKU,270078,340M41.SADLI,268075,340M41.DUMET,267071,340M40.N59000W170000,296045,340M4967A5\n\t"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := r.Fields["pwi"].(PWI)
+	if r.Kind != KindPWI || len(p.Levels) != 4 || p.Levels[0].FL != 400 || len(p.Levels[0].Points) != 25 {
+		t.Fatalf("%v, %d levels", r.Kind, len(p.Levels))
+	}
+	first, last := p.Levels[0].Points[0], p.Levels[0].Points[24]
+	if first.Fix != "ECOMI" || first.Dir != 278 || first.Speed != 67 || *first.TempC != -54 || last.Fix != "N59000W170000" || last.Speed != 36 || *last.TempC != -46 {
+		t.Errorf("first %+v last %+v", first, last)
+	}
+	if got := p.Levels[0].Points[21].Fix; got != "ONIKU" {
+		t.Errorf("fix across a block boundary = %q", got)
+	}
+	if want := "Predicted winds FL400/380/360/340, 25 fixes ECOMI → N59000W170000"; !strings.HasPrefix(r.Summary, want) {
+		t.Errorf("summary = %q", r.Summary)
+	}
+
+	for _, c := range []struct{ label, text, want string }{
+		{"H1", "F56AFJ0880#M1BREQPWI/TS141904,311026/WQ390.370.350.240:N10000W163300.15N60.RUDEE/DQ390/WRCYVR.KSEAE174", "Wind request FL390/370/350/240, 3 fixes N10000W163300 → RUDEE"},
+		{"H1", "REQPWI/TS054236,301026/CQ340/DQ34026A6", "Wind request: climb FL340, descent FL340"},
+		{"H1", "RESPWI/RJ,302A18B", "Wind data rejected"},
+		{"H1", "F28AQF0018#M1BRESPWI/AK,71605F", "Wind data acknowledged"},
+		{"H1", "PWI/WD390,JAGWA,275040.BURGL,288047.DOUIT,280029/DD300274028.200234019.100213006/SN6702F0\n\n", "Predicted winds FL390, 3 fixes JAGWA → DOUIT, descent winds"},
+	} {
+		r, _ := Decode(Message{Label: c.label, Text: c.text})
+		if r.Kind != KindPWI || r.Summary != c.want {
+			t.Errorf("%q: %v %q, want %q", c.text, r.Kind, r.Summary, c.want)
+		}
+	}
+	r, _ = Decode(Message{Label: "H1", Text: "PWI/WD390,JAGWA,275040.BURGL,288047.DOUIT,280029/DD300274028.200234019.100213006/SN6702F0"})
+	if d := r.Fields["pwi"].(PWI).Descent; len(d) != 3 || d[1] != (LevelWind{FL: 200, Dir: 234, Speed: 19}) {
+		t.Errorf("descent winds %+v", d)
+	}
+	if _, ok := ParsePWI("PWI/ nothing here"); ok {
+		t.Error("an empty PWI decoded")
 	}
 }
