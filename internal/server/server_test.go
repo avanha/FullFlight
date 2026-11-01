@@ -1220,3 +1220,31 @@ func TestSetFlightRoute(t *testing.T) {
 		t.Errorf("data should win: %+v", got)
 	}
 }
+
+// A D-ATIS request is placed at the airport it asks about, so the map can show where the crew is looking.
+func TestMessagesDATISAirport(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	now := time.Date(2026, 11, 1, 2, 0, 0, 0, time.UTC)
+	st.AddMessage(store.Message{ID: 1, Hex: "C023C8", T: now.Add(-time.Hour), Label: "B9", Text: "a", Kind: "datis_request", Summary: "D-ATIS arrival request for RJBB"})
+	st.AddMessage(store.Message{ID: 2, Hex: "C023C8", T: now.Add(-50 * time.Minute), Label: "B9", Text: "b", Kind: "datis_request", Summary: "D-ATIS departure request for ZZZZ"})
+	st.AddMessage(store.Message{ID: 3, Hex: "C023C8", T: now.Add(-40 * time.Minute), Label: "SA", Text: "c", Kind: "media_advisory", Summary: "Link"})
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	_, body := do(t, "GET", ts.URL+"/api/messages/C023C8", "")
+	var ms []struct {
+		ID      int64 `json:"id"`
+		Airport *struct {
+			Code, IATA, Type string
+			Lat, Lon         float64
+		} `json:"airport"`
+	}
+	if err := json.Unmarshal([]byte(body), &ms); err != nil || len(ms) != 3 {
+		t.Fatalf("%v: %s", err, body)
+	}
+	if a := ms[0].Airport; a == nil || a.Code != "RJBB" || a.IATA != "KIX" || a.Type != "arrival" || a.Lat < 34 || a.Lat > 35 {
+		t.Errorf("RJBB request: %+v", ms[0].Airport)
+	}
+	if ms[1].Airport != nil || ms[2].Airport != nil {
+		t.Errorf("an unknown airport and a non-ATIS message get none: %+v %+v", ms[1].Airport, ms[2].Airport)
+	}
+}

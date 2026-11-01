@@ -341,6 +341,16 @@ on the map reads `SQ23 KJFK → WSSS · 31 Oct · dep 15:56Z` (`out 06:44Z` wher
 its hover gives the airport names and how the departure is known. The aircraft's own hover names its flight, route
 and departure the same way.
 
+**Labels are held away from what they name.** A flag, the chosen airport or fix, and the D-ATIS airports below each
+sit about 35 pixels up and to the right of their point, joined to it by a line, so they do not hide the route around
+it. Drag one anywhere; it keeps that place relative to its point at any zoom, and the browser remembers it (the 200
+most recent). Double-click a label to put it back.
+
+**D-ATIS airports.** When the crew asked for an airport's ATIS (or the airport's reply came back), that airport gets
+a violet ring and a label `ATIS KIX arr`, with the airport, the kind of request and the last few times in its hover.
+Choosing a flight fits the map to its track *and* those airports, so the airports the crew was looking at, such as a
+destination and its alternates, are all in view.
+
 **Entering a route by hand.** When the messages never gave a flight's origin or destination, pick the flight in the
 **Flights** selector and press **Set route** under it: type the origin and destination (an IATA or ICAO code; the
 boxes list matching airports as you type, in the same order as the Airports tab: arrow keys and Enter pick one, and Enter with none highlighted takes the first) and Save. Either end may be left empty. Anything the messages do say wins, so
@@ -427,6 +437,18 @@ ADS-C gives waypoints as coordinates only. Where those coordinates match a waypo
 reports, or one in the navigation database, the list adds the name (`ADS-C report ... · next OLGAN,
 then KAPPU`) and the tooltip says which. CPDLC position reports list the names they carried. Run
 `fullflight -redecode` to give already-stored messages the names.
+
+## Predicted winds
+
+Airlines that plan with forecast winds (Air Canada, Qantas and others) exchange them over ACARS, and these are decoded
+as `wind_forecast` messages: the aircraft's request (`REQPWI/TS054236,301026/WQ340.360.380:RW26L.UQQ.ORNAI...`, the
+levels and fixes it wants), the table sent back (`PWI/WD400,ECOMI,278067,400M54.NATES,...`: for each level, each fix's
+wind direction and speed and the temperature, plus any climb and descent winds), and the receipt (`RESPWI/AK`
+acknowledged, `AC` accepted, `RJ` rejected). Uplinks arrive in blocks, each starting `- #M` and a character, that can
+cut a fix name in two; they are joined, and the last four characters (a checksum) are dropped. The summary reads
+"Predicted winds FL400/380/360/340, 25 fixes ECOMI → N59000W170000", and the message text lists every wind. The
+formats and the meaning of the receipt codes are read from samples, not a specification. Winds are not drawn on the map.
+The fix list is the route the airline expects, which is useful when the flight plan itself was never sent.
 
 ## Flight plans
 
@@ -572,7 +594,7 @@ track crossing the date line continues from 179 to 181 instead of drawing a line
 ## Status
 
 Done: the watchlist (tails, hex codes, flights and dates), the ADS-B poller with source fallback, the SQLite track log,
-the message fetcher and decoder (ADS-C, CPDLC, AFN, REP081 and the other A350 MIAM reports, other position report
+the message fetcher and decoder (ADS-C, CPDLC, AFN logons and their acknowledgements, predicted winds, REP081 and the other A350 MIAM reports, other position report
 formats, airline satellite headers), the web page (map, message timeline, UTC clock), the waypoints and fixes named in CPDLC reports, the division
 of an aircraft's history into flights, flight plans, predictions and the projection, estimated paths, weather radar and
 satellite overlays, wind barbs, the unified track, airframe notes, and fix and airport search.

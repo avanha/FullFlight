@@ -84,7 +84,13 @@
   /* Leaflet keeps a tooltip on one line; a long line (where a landed aircraft says how it was inferred) wraps instead */
   .leaflet-tooltip { white-space: normal; width: max-content; max-width: 340px; overflow-wrap: break-word; }
   .fflag-wrap { background: none; border: none; }
-  .fflag { position: absolute; transform: translate(6px, -50%); background: #1d3557; color: #fff; font: 11px system-ui, sans-serif; padding: 1px 5px; border-radius: 3px; white-space: nowrap; cursor: pointer; }
+  .fflag { background: #1d3557; color: #fff; font: 11px system-ui, sans-serif; padding: 1px 5px; border-radius: 3px; white-space: nowrap; cursor: pointer; }
+  /* A label held away from its point (see callout()): centred on where it was put, and draggable */
+  .callout-wrap { background: none; border: none; }
+  .callout { position: absolute; transform: translate(-50%, -50%); box-shadow: 0 1px 4px rgba(0,0,0,.45); cursor: grab; user-select: none; }
+  .callout:active { cursor: grabbing; }
+  .callout.box { background: #fff; color: #111; border: 1px solid #888; border-radius: 4px; padding: 3px 6px; font: 12px system-ui, sans-serif; width: max-content; max-width: 260px; white-space: normal; overflow-wrap: break-word; }
+  .callout.atis { border-color: #7c3aed; }
   .fflag.latest { background: #c00; }
   .wpt-wrap { background: none; border: none; }
   .wpt { width: 8px; height: 8px; margin: 3px; transform: rotate(45deg); background: #fff; border: 2px solid #1d3557; box-sizing: content-box; }
@@ -1398,6 +1404,51 @@ function chooseFlight(v) {
   if (w) showTrack(w, v === 'recent' || v === 'all' ? true : 'flight');   // a particular flight: fit the map to it
 }
 
+// ---- labels held away from what they name ----------------------------------------------------
+// A big label right on its point hides the route around it. So a label sits a little way off, joined to the point by a line,
+// and can be dragged anywhere (double-click puts it back). Where it was put is kept as pixels from the point, so it holds at
+// any zoom, and is remembered between visits.
+const CALLOUT_OFFSET = [34, -30];
+const callouts = new Set();
+let calloutPos = {};
+try { calloutPos = JSON.parse(localStorage.getItem('calloutPos') || '{}') || {}; } catch (e) { calloutPos = {}; }
+function saveCallouts() {
+  try {
+    const keys = Object.keys(calloutPos);
+    keys.slice(0, Math.max(0, keys.length - 200)).forEach(k => delete calloutPos[k]);   // the oldest go
+    localStorage.setItem('calloutPos', JSON.stringify(calloutPos));
+  } catch (e) { /* not remembered: fine */ }
+}
+map.on('zoomend', () => callouts.forEach(c => c.place()));
+
+function callout(group, at, key, el, opts = {}) {
+  el.className = (el.className + ' callout').trim();
+  const line = L.polyline([at, at], {color: opts.color || '#1d3557', weight: 1.5, opacity: .8, interactive: false}).addTo(group);
+  const mk = L.marker(at, {icon: L.divIcon({className: opts.className || 'callout-wrap', iconSize: [0, 0], html: el}), draggable: true, keyboard: false,
+                           zIndexOffset: opts.z || 400});
+  const c = {
+    place() {
+      const o = calloutPos[key] || CALLOUT_OFFSET, p = map.latLngToLayerPoint(at);
+      const to = map.layerPointToLatLng([p.x + o[0], p.y + o[1]]);
+      mk.setLatLng(to);
+      line.setLatLngs([at, to]);
+    },
+  };
+  mk.on('drag', () => line.setLatLngs([at, mk.getLatLng()]));
+  mk.on('dragend', () => {
+    const p = map.latLngToLayerPoint(at), q = map.latLngToLayerPoint(mk.getLatLng());
+    delete calloutPos[key];   // re-added last, so it is the newest
+    calloutPos[key] = [Math.round(q.x - p.x), Math.round(q.y - p.y)];
+    saveCallouts();
+  });
+  mk.on('remove', () => callouts.delete(c));
+  el.ondblclick = e => { e.stopPropagation(); delete calloutPos[key]; saveCallouts(); c.place(); };
+  mk.addTo(group);
+  callouts.add(c);
+  c.place();
+  return mk;
+}
+
 // A label at the start of each flight on the map, so it is clear which points belong together.
 function drawFlightFlags(pts, msgs, chosen) {
   const first = new Map();
@@ -1410,10 +1461,27 @@ function drawFlightFlags(pts, msgs, chosen) {
     const el = document.createElement('div');
     el.className = 'fflag' + (sg.latest ? ' latest' : '');
     el.textContent = [flightText(sg), dayLabel(sg.startMs), departShort(sg)].filter(Boolean).join(' \u00b7 ');
-    L.marker(ll(f.lat, f.lon), {icon: L.divIcon({className: 'fflag-wrap', iconSize: [0, 0], html: el}), zIndexOffset: 400}).addTo(layer)
+    callout(layer, ll(f.lat, f.lon), 'flag:' + sg.id, el, {className: 'fflag-wrap'})
       .bindTooltip(tip(segLabel(sg), `${fmt(sg.start)} to ${fmt(sg.end)}`, [sg.from_name, sg.to_name].filter(Boolean).join(' \u2192 '), departLong(sg),
         `${sg.messages} messages, ${sg.positions} positions`, chosen ? '' : 'click to show only this flight'))
       .on('click', () => chooseFlight(sg.id));
+  }
+}
+
+// The airports a crew asked D-ATIS about show where they were looking: a ring on each, with a label.
+function drawAtisAirports(msgs) {
+  const by = new Map();
+  for (const m of msgs) if (m.airport) { const e = by.get(m.airport.code) || {a: m.airport, ms: []}; e.ms.push(m); by.set(m.airport.code, e); }
+  for (const {a, ms} of by.values()) {
+    const at = ll(a.lat, a.lon);
+    const types = [...new Set(ms.map(m => m.airport.type).filter(Boolean))];
+    const lines = [`D-ATIS: ${a.iata ? a.code + ' / ' + a.iata : a.code}`, a.name, `${types.join(' and ') || 'requested'} · ${ms.length} request${ms.length === 1 ? '' : 's'}`,
+                   ...ms.slice(-3).map(m => fmt(m.t))];
+    L.circleMarker(at, {radius: 6, color: '#7c3aed', weight: 2, fillColor: '#fff', fillOpacity: 1}).addTo(layer).bindTooltip(tip(...lines));
+    const el = document.createElement('div');
+    el.className = 'box atis';
+    el.textContent = `ATIS ${a.iata || a.code}${types.length ? ' ' + types.map(x => x.slice(0, 3)).join('/') : ''}`;
+    callout(layer, at, 'atis:' + a.code, el, {color: '#7c3aed', z: 300}).bindTooltip(tip(...lines));
   }
 }
 
@@ -1523,6 +1591,7 @@ async function showTrack(w, focus) {
   }
   drawWaypoints(msgs);
   drawFlightFlags(pts, msgs, chosen);
+  drawAtisAirports(msgs);
 
   // The aircraft: a plane at its newest trustworthy fix, from ADS-B or from a datalink report. (Not
   // simply the last ADS-B point: that can be hours older than a report, e.g. once it is mid-ocean.)
@@ -1549,7 +1618,8 @@ async function showTrack(w, focus) {
   applyHighlight();
   // Choosing a target: centre and zoom on its newest fix. (A refresh leaves the view alone.)
   if (focus === 'flight') {
-    const pointsOf = [...pts.map(p => ll(p.lat, p.lon)), ...msgs.filter(m => m.lat != null && !m.suspect).map(m => ll(m.lat, m.lon))];
+    const pointsOf = [...pts.map(p => ll(p.lat, p.lon)), ...msgs.filter(m => m.lat != null && !m.suspect).map(m => ll(m.lat, m.lon)),
+                      ...msgs.filter(m => m.airport).map(m => ll(m.airport.lat, m.airport.lon))];   // and the airports asked about
     if (pointsOf.length) map.fitBounds(pointsOf, {maxZoom: 8, padding: [30, 30]});
   } else if (focus) {
     const f = latestFix(pts, msgs);
@@ -1820,7 +1890,7 @@ function fixTip(f) {
 function fixMarker(f, chosen) {
   const m = L.marker(ll2(f), {icon: L.divIcon({className: 'fixpin-wrap', iconSize: [18, 18], iconAnchor: [9, 9], html: `<div class="fixpin ${f.kind === 'learned' ? 'learned' : 'db'}"></div>`}),
                               zIndexOffset: chosen ? 1000 : 0});
-  m.bindTooltip(fixTip(f), {permanent: chosen, direction: 'right', offset: [10, 0]});
+  m.bindTooltip(fixTip(f), {direction: 'right', offset: [10, 0]});
   return m;
 }
 // A fix drawn one world over from the map's centre is hard to find: pick the copy nearest it.
@@ -1830,7 +1900,15 @@ function ll2(f) { return [f.lat, nearLon(f.lon, map.getCenter ? map.getCenter().
 function showFix(f) {
   fixChosen = fixKey(f);
   fixGroup.clearLayers();
-  for (const g of (fixData && fixData.fixes || []).filter(g => g.name === f.name)) fixMarker(g, fixKey(g) === fixChosen).addTo(fixGroup);
+  for (const g of (fixData && fixData.fixes || []).filter(g => g.name === f.name)) {
+    const chosen = fixKey(g) === fixChosen;
+    fixMarker(g, chosen).addTo(fixGroup);
+    if (chosen) {
+      const el = fixTip(g);
+      el.className = 'box';
+      callout(fixGroup, ll2(g), 'fix:' + fixKey(g), el, {color: '#2b9348', z: 1000});
+    }
+  }
   map.setView(ll2(f), Math.max(map.getZoom ? map.getZoom() : 0, 6));
   renderFixes();
 }
@@ -1933,7 +2011,10 @@ function showAirport(a) {
   const at = ll2(a);
   L.circle(at, {radius: LANDING_RADIUS_NM * 1852, color: '#1d4ed8', weight: 1, dashArray: '4 6', fillOpacity: .04, interactive: false}).addTo(airportGroup);
   L.circleMarker(at, {radius: 7, color: '#fff', weight: 2, fillColor: '#1d4ed8', fillOpacity: 1}).addTo(airportGroup)
-    .bindTooltip(airportTip(a), {permanent: true, direction: 'right', offset: [10, 0]});
+    .bindTooltip(airportTip(a), {direction: 'right', offset: [10, 0]});
+  const el = airportTip(a);
+  el.className = 'box';
+  callout(airportGroup, at, 'apt:' + a.icao, el, {color: '#1d4ed8'});
   map.setView(at, Math.max(map.getZoom ? map.getZoom() : 0, 10));
   renderAirports();
 }

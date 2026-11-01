@@ -724,11 +724,40 @@ type messageJSON struct {
 	AFTail         string        `json:"af_tail,omitempty"`
 	AFFlight       string        `json:"af_flight,omitempty"`
 	Route          []routeWpJSON `json:"route,omitempty"`
+	Airport        *atisAirport  `json:"airport,omitempty"` // the airport a D-ATIS request or reply is for
 
 	Wx        *wxJSON        `json:"wx,omitempty"`
 	GS        *float64       `json:"gs,omitempty"`  // knots, as the report gave it
 	Trk       *float64       `json:"trk,omitempty"` // true track, degrees
 	Waypoints []waypointJSON `json:"waypoints,omitempty"`
+}
+
+// atisAirport is where a D-ATIS message points on the map.
+type atisAirport struct {
+	Code string  `json:"code"`
+	IATA string  `json:"iata,omitempty"`
+	Name string  `json:"name"`
+	Lat  float64 `json:"lat"`
+	Lon  float64 `json:"lon"`
+	Type string  `json:"type,omitempty"` // arrival or departure
+}
+
+var atisSummary = regexp.MustCompile(`^D-ATIS (\w+) request for ([A-Z0-9]{4})$`)
+
+// atisAirportOf finds the airport a D-ATIS message names (from its summary), when we know where it is.
+func atisAirportOf(m store.Message) *atisAirport {
+	if m.Kind != "datis_request" {
+		return nil
+	}
+	f := atisSummary.FindStringSubmatch(m.Summary)
+	if f == nil {
+		return nil
+	}
+	a, ok := airports.Lookup(f[2])
+	if !ok {
+		return nil
+	}
+	return &atisAirport{Code: a.ICAO, IATA: a.IATA, Name: a.Name, Lat: a.Lat, Lon: a.Lon, Type: f[1]}
 }
 
 // wxJSON is the weather at a report: wind direction (the way it blows FROM, true), speed and temperature.
@@ -777,6 +806,7 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 			RxCount: m.RxCount, Lat: m.Lat, Lon: m.Lon, AltFt: m.AltFt, PosT: m.PosT, Suspect: m.Suspect, TimeNote: m.TimeNote, TimeUnverified: m.TimeFlag,
 			Mismatch: m.Mismatch, AFTail: m.AFTail, AFFlight: m.AFFlight}
 		j.Route = s.routeWaypoints(m.Route)
+		j.Airport = atisAirportOf(m)
 		if m.WxDir != nil || m.WxKt != nil || m.WxTemp != nil {
 			j.Wx = &wxJSON{DirDeg: m.WxDir, Kt: m.WxKt, TempC: m.WxTemp}
 		}

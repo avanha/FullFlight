@@ -43,10 +43,13 @@ const calls = { mounted: [], legendExtra: null, exec: [], copied: [], timers: []
 const allLayers = [];
 class Layer { on(ev, fn) { (this.handlers ||= {})[ev] = fn; return this; }
   constructor(){ this.items = []; this.open = false; allLayers.push(this); } addTo(t) { this.target = t; this.onMap = (t === mapObj); t.items && t.items.push(this); if (t === highlightGroup) calls.highlightAdds.push(this); return this; }
-  setIcon(i) { this.o = {...this.o, icon: i}; return this; } bindTooltip(c) { this.tooltip = c; return this; } openTooltip() { calls.tooltipsOpened++; this.open = true; return this; } closeTooltip() { this.open = false; return this; } getBounds() { return {}; } }
+  setIcon(i) { this.o = {...this.o, icon: i}; return this; } bindTooltip(c) { this.tooltip = c; return this; } setLatLng(ll) { this.ll = ll; return this; } getLatLng() { return this.ll; } setLatLngs(ll) { this.ll = ll; return this; } openTooltip() { calls.tooltipsOpened++; this.open = true; return this; } closeTooltip() { this.open = false; return this; } getBounds() { return {}; } }
 let highlightGroup;
 const groups = [];
-const mapObj = { setView(ll, z) { calls.setView.push([ll, z]); return this; }, eachLayer(f) { allLayers.forEach(f); }, fitBounds() { calls.fitBounds++; }, panTo(ll) { calls.panTo.push(ll); },
+const mapHandlers = {};
+// A flat map for the labels held away from their points: ten pixels to a degree, north up.
+const mapObj = { on(ev, fn) { mapHandlers[ev] = fn; return this; }, off() { return this; }, latLngToLayerPoint: ll => ({x: ll[1] * 10, y: -ll[0] * 10}), layerPointToLatLng: p => (Array.isArray(p) ? [-p[1] / 10, p[0] / 10] : [-p.y / 10, p.x / 10]),
+  setView(ll, z) { calls.setView.push([ll, z]); return this; }, eachLayer(f) { allLayers.forEach(f); }, fitBounds() { calls.fitBounds++; }, panTo(ll) { calls.panTo.push(ll); },
   hasLayer: g => !!g.onMap, addLayer(g) { calls.addLayer++; g.onMap = true; }, removeLayer(g) { g.onMap = false; },
   getBounds: () => ({ pad: () => ({ contains: ll => !(ll[0] > 50) }) }) };   // "in view" unless lat > 50
 const L = {
@@ -957,6 +960,8 @@ highlightGroup = null;
     assert.strictEqual(r.circles.filter(c => c.o.radius === 4).length, 1, 'only its message position');
     assert.ok(planes(r).length === 1, 'the plane is there: this is the flight in progress');
     assert.strictEqual(flagsOf(r).length, 1);
+    assert.strictEqual(JSON.stringify(flagsOf(r)[0].ll), '[13,23.4]', 'the flag is held up and to the right of the flight\'s first point (10, 20), not on it');
+    assert.ok(r.lines.some(l => l.o.color === '#1d3557' && JSON.stringify(l.ll) === '[[10,20],[13,23.4]]'), 'with a line back to that point');
     assert.strictEqual(flagsOf(r)[0].o.icon.html.textContent, 'CX843 KJFK \u2192 VHHH · 30 Oct · dep 10:05Z', 'flight, route and when it left');
     // the aircraft's own hover names the flight, the route and the departure too
     const pt = lines(planes(r)[0].tooltip);
@@ -1050,6 +1055,52 @@ highlightGroup = null;
   assert.strictEqual(byId['#flightsel'].children[0].textContent, 'no flights identified yet');
   assert.strictEqual(lonsOf(r).length >= 1, true, 'everything is drawn when there are no flights to choose between');
   assert.strictEqual(heads().length, 0, 'and no headings');
+
+  // ===== 8r2. labels held away from their points, and the airports a crew asked D-ATIS about ==========
+  {
+    const KIX = {code: 'RJBB', iata: 'KIX', name: 'Kansai International Airport', lat: 34.43, lon: 135.24, type: 'arrival'};
+    const atis = (id, hh, extra = {}) => ({id, t: `2026-10-30T${hh}:00:00Z`, kind: 'datis_request', summary: 'D-ATIS arrival request for RJBB', raw: 'r', label: 'B9', rx_count: 1, airport: KIX, ...extra});
+    const AM = [fmsg(401, 30, 12, 21.0, {gs: 480, trk: 90}), atis(402, '13'), atis(403, '14')];
+    const labelOf = r => r.markers.find(m => m.o.icon && m.o.icon.html && /atis/.test(m.o.icon.html.className));
+    storage.calloutPos = '{}';
+    let r2 = await draw(FPTS, AM, true);
+    // the airport: a ring on it, one label for two requests, and the map fits it
+    const ring = r2.circles.filter(c => c.o.color === '#7c3aed');
+    assert.strictEqual(ring.length, 1, 'one ring for the airport, not one per request');
+    assert.strictEqual(JSON.stringify(ring[0].ll), '[34.43,135.24]');
+    const lab = labelOf(r2);
+    assert.ok(lab, 'a label for the airport');
+    assert.strictEqual(lab.o.icon.html.textContent, 'ATIS KIX arr');
+    assert.strictEqual(lab.o.draggable, true, 'and it can be dragged');
+    assert.ok(Math.abs(lab.ll[0] - 37.43) < 1e-6 && Math.abs(lab.ll[1] - 138.64) < 1e-6, 'held up and to the right of the airport: ' + JSON.stringify(lab.ll));
+    const lead = r2.lines.find(l => l.o.color === '#7c3aed');
+    assert.strictEqual(JSON.stringify(lead.ll[0]), '[34.43,135.24]', 'a line joins it back to the airport');
+    const tl = lines(ring[0].tooltip);
+    assert.ok(tl[0] === 'D-ATIS: RJBB / KIX' && tl.includes('arrival · 2 requests'), tl.join(' | '));
+    // choosing a flight fits the map to the airport as well as the track
+    const fits = calls.fitBounds;
+    await draw(FPTS, AM, 'flight');
+    assert.strictEqual(calls.fitBounds, fits + 1, 'the map is fitted to the flight');
+    const noAtis = await draw(FPTS, FMSGS, true);
+    assert.strictEqual(labelOf(noAtis), undefined, 'no airport, no label');
+
+    // dragging it: the new place is kept as an offset from the airport, and used the next time
+    lab.ll = [30.43, 130.24];
+    lab.handlers.dragend();
+    assert.strictEqual(storage.calloutPos, JSON.stringify({'atis:RJBB': [-50, 40]}), storage.calloutPos);
+    r2 = await draw(FPTS, AM, true);
+    const again = labelOf(r2);
+    assert.ok(Math.abs(again.ll[0] - 30.43) < 1e-6 && Math.abs(again.ll[1] - 130.24) < 1e-6, 'it stays where it was put: ' + JSON.stringify(again.ll));
+    // zooming moves nothing on the page but the map's pixels per degree, so every label is placed again
+    again.ll = [0, 0];
+    mapHandlers.zoomend();
+    assert.ok(Math.abs(again.ll[0] - 30.43) < 1e-6, 'placed again after a zoom');
+    // double-click puts it back
+    let stopped = false;
+    again.o.icon.html.ondblclick({stopPropagation() { stopped = true; }});
+    assert.ok(stopped && Math.abs(again.ll[0] - 37.43) < 1e-6 && storage.calloutPos === '{}', 'double-click returns it to the default place');
+  }
+
 
   // ===== 8s. how what was typed is read ===========================================================
   const submit = async (input, reply) => {
