@@ -343,7 +343,7 @@ and departure the same way.
 
 **Entering a route by hand.** When the messages never gave a flight's origin or destination, pick the flight in the
 **Flights** selector and press **Set route** under it: type the origin and destination (an IATA or ICAO code; the
-boxes suggest airports as you type) and Save. Either end may be left empty. Anything the messages do say wins, so
+boxes list matching airports as you type, in the same order as the Airports tab: arrow keys and Enter pick one, and Enter with none highlighted takes the first) and Save. Either end may be left empty. Anything the messages do say wins, so
 an end they reported shows in the form but cannot be changed, and once a message supplies an end you entered, the
 reported one is shown and your entry is ignored (though kept). Entered ends carry a star where a route is written (`KJFK → VHHH*`, with a note under the selector);
 the airframes page shows the star too. An entry belongs to the one flight it was made for (the span it had at the

@@ -1172,19 +1172,71 @@ highlightGroup = null;
       assert.strictEqual(byId['#routeedit'].hidden, true);
     });
 
-    // typing offers airports (by IATA code, so JNB finds O.R. Tambo) in the route boxes' own list, and leaves the airport tab's alone
+    // typing offers airports in the order the Airports tab lists them, in a list of the page's own (a browser's datalist hid
+    // the exact match: typing HKG offered Garissa and not Hong Kong)
     await withFlights([flight()], async () => {
       await choose('recent');
       byId['#routebtn'].onclick();
       document.querySelector('#aptlist').children = [];
-      calls.timers.length = 0;
-      byId['#routeto'].oninput({target: {value: 'jnb'}});
-      await calls.timers.pop()();
-      const opts = document.querySelector('#routeapts').children;
-      assert.deepStrictEqual(opts.map(o => o.value), ['JNB']);
-      assert.ok(/Tambo/.test(opts[0].textContent) && /FAOR/.test(opts[0].textContent), opts[0].textContent);
+      const list = () => document.querySelector('#routeapts');
+      const noop = {preventDefault() {}};
+      const type = async (id, text) => { calls.timers.length = 0; byId[id].value = text; byId[id].oninput(); await calls.timers.pop()(); };
+      const keep = airportData.airports.slice();
+      airportData.airports.splice(0, airportData.airports.length,
+        {icao: 'VHHH', iata: 'HKG', name: 'Hong Kong International Airport', city: 'Hong Kong', lat: 22.3, lon: 113.9},
+        {icao: 'HKGA', iata: 'GAS', name: 'Garissa Airport', city: 'Garissa', lat: -0.46, lon: 39.64});
+      await type('#routeto', 'HKG');
+      const rows = () => list().children.map(li => li.children[0].textContent + ' | ' + li.children[1].textContent);
+      assert.deepStrictEqual(rows(), ['VHHH / HKG | Hong Kong International Airport', 'HKGA / GAS | Garissa Airport'], 'the exact code first, as in the tab, and not filtered away');
+      assert.strictEqual(list().hidden, false);
       assert.strictEqual(document.querySelector('#aptlist').children.length, 0, 'the airport tab\'s list is not the suggestions\' list');
+
+      // the list is placed from the box's position, under it, or above it when the window ends too soon below
+      const box = (left, top, bottom) => { byId['#routeto'].getBoundingClientRect = () => ({left, top, bottom}); };
+      ctx.window.innerHeight = 800;
+      box(120, 300, 324); await type('#routeto', 'HKG');
+      assert.deepStrictEqual([list().style.left, list().style.top, list().style.bottom], ['120px', '326px', 'auto'], 'under the box');
+      assert.ok(parseInt(list().style.maxHeight) <= 260);
+      box(120, 700, 724); await type('#routeto', 'HKG');
+      assert.deepStrictEqual([list().style.left, list().style.top, list().style.bottom], ['120px', 'auto', '102px'], 'above the box: only 68px below it');
+      assert.ok(parseInt(list().style.maxHeight) >= 100 && parseInt(list().style.maxHeight) <= 260);
+      box(120, 300, 324); await type('#routeto', 'HKG');
+
+      // arrows move through it, Escape closes it, and a click takes one (the box gets the IATA code)
+      byId['#routeto'].onkeydown({key: 'ArrowDown', ...noop});
+      byId['#routeto'].onkeydown({key: 'ArrowDown', ...noop});
+      assert.strictEqual(list().children[1].className, 'sel');
+      byId['#routeto'].onkeydown({key: 'ArrowUp', ...noop});
+      byId['#routeto'].onkeydown({key: 'ArrowUp', ...noop});
+      assert.strictEqual(list().children[1].className, 'sel', 'up from the top wraps to the last');
+      byId['#routeto'].onkeydown({key: 'Escape', ...noop});
+      assert.strictEqual(list().hidden, true);
+      await type('#routeto', 'HKG');
+      list().children[1].onmousedown(noop);
+      assert.strictEqual(byId['#routeto'].value, 'GAS');
+      assert.strictEqual(list().hidden, true);
+
+      // Enter takes the first match when a list is showing, as it does in the tab; with no list it saves
+      await type('#routefrom', 'HKG');
+      byId['#routefrom'].onkeydown({key: 'Enter', ...noop});
+      assert.strictEqual(byId['#routefrom'].value, 'HKG');
+      lastPut = null;
+      byId['#routefrom'].onkeydown({key: 'Enter', ...noop}); await settle();
+      assert.ok(lastPut && lastPut.body.from === 'HKG', 'Enter with no list saves');
+
+      // leaving the box closes the list, and an answer that arrives after that does not bring it back
+      byId['#routebtn'].onclick();
+      calls.timers.length = 0; byId['#routeto'].value = 'JNB'; byId['#routeto'].oninput();
+      const pending = calls.timers.pop()();   // the search is under way ...
+      byId['#routeto'].onblur();               // ... when the box loses focus
+      await pending;
+      assert.strictEqual(list().hidden, true, 'an answer that arrives after the list was closed does not reopen it');
+
+      airportData.airports.splice(0, airportData.airports.length, ...keep);
+      await type('#routeto', 'jnb');
+      assert.strictEqual(rows()[0].startsWith('FAOR / JNB | O.R. Tambo'), true, rows()[0]);
       byId['#routecancel'].onclick();
+      assert.strictEqual(list().hidden, true);
     });
 
     // the messages gave the origin: it is shown, cannot be changed, and is never sent
