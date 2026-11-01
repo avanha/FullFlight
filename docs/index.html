@@ -64,7 +64,7 @@
 
   <h2>Run it yourself</h2>
   <p>FullFlight is a single Go program with a SQLite database and a web page. It runs on your own machine and watches the aircraft you ask it to.</p>
-<pre>make build                           # -> bin/fullflight
+<pre>go build -o bin/ ./cmd/...           # -> bin/fullflight
 cp config.example.yaml config.yaml   # edit; then:
 bin/fullflight -config config.yaml</pre>
   <p>Then type a registration, hex code, or flight number and date into the page. The <a href="https://github.com/avanha/FullFlight#readme">README</a> describes the watch list, the data sources and each map layer in detail.</p>

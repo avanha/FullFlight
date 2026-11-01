@@ -33,7 +33,7 @@ type Config struct {
 		Every  time.Duration `yaml:"every"` // least time between lookups per watch; default 30m
 	} `yaml:"aerodatabox"`
 
-	// Navdata holds the optional waypoint database (fix.dat.gz, nav.dat.gz); see scripts/fetch-navdata.sh.
+	// Navdata holds the optional waypoint database (fix.dat.gz, nav.dat.gz); fetch it with `fullflight -fetch-navdata`.
 	Navdata struct {
 		Dir string `yaml:"dir"` // default data/navdata
 	} `yaml:"navdata"`

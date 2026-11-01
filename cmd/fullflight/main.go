@@ -23,6 +23,7 @@ import (
 	"github.com/avanha/fullflight/internal/poller"
 	"github.com/avanha/fullflight/internal/server"
 	"github.com/avanha/fullflight/internal/store"
+	"github.com/avanha/fullflight/internal/version"
 )
 
 func main() {
@@ -31,6 +32,7 @@ func main() {
 	purgeDays := flag.Float64("purge-older-than", 0, "delete positions, messages and finished watches older than this many days, then exit; airframes with notes keep all their data. Only reports what it would do unless -confirm is given")
 	confirm := flag.Bool("confirm", false, "with -purge-older-than: really delete")
 	redecode := flag.Bool("redecode", false, "re-decode all stored messages with the current decoder, then exit")
+	fetchNav := flag.Bool("fetch-navdata", false, "download the optional waypoint database (FlightGear's, GPL, from 2013) into the navdata directory, then exit")
 	flag.Parse()
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 
@@ -38,6 +40,22 @@ func main() {
 	if err != nil {
 		log.Error("config", "err", err)
 		os.Exit(1)
+	}
+	if *fetchNav {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		client := &http.Client{Timeout: 3 * time.Minute}
+		if err := navdata.Fetch(ctx, client, navdata.DefaultBase, version.UserAgent(), cfg.Navdata.Dir, os.Stdout); err != nil {
+			log.Error("fetching the navigation database", "err", err)
+			os.Exit(1)
+		}
+		nav, err := navdata.Load(cfg.Navdata.Dir)
+		if err != nil {
+			log.Error("the downloaded navigation database is unusable", "err", err)
+			os.Exit(1)
+		}
+		fmt.Printf("done: %s (cycle %s, %d fixes, %d navaids)\n", cfg.Navdata.Dir, nav.Cycle, nav.Fixes, nav.Navaid)
+		return
 	}
 	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o700); err != nil {
 		log.Error("data dir", "err", err)
@@ -97,7 +115,7 @@ func main() {
 	nav, err := navdata.Load(cfg.Navdata.Dir)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
-		log.Info("no navigation database; run scripts/fetch-navdata.sh to place more of the waypoints CPDLC reports name", "dir", cfg.Navdata.Dir)
+		log.Info("no navigation database; run fullflight -fetch-navdata to place more of the waypoints CPDLC reports name", "dir", cfg.Navdata.Dir)
 		nav = nil
 	case err != nil:
 		log.Warn("navigation database unusable; continuing without it", "err", err)

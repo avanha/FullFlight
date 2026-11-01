@@ -1,6 +1,7 @@
 package version
 
 import (
+	"runtime/debug"
 	"strings"
 	"testing"
 )
@@ -18,5 +19,26 @@ func TestUserAgent(t *testing.T) {
 	}
 	if !strings.HasPrefix(UserAgent(), "FullFlight/") {
 		t.Errorf("UserAgent = %q", UserAgent())
+	}
+}
+
+func TestFromBuildInfo(t *testing.T) {
+	setting := func(k, v string) debug.BuildSetting { return debug.BuildSetting{Key: k, Value: v} }
+	for _, c := range []struct {
+		name string
+		info debug.BuildInfo
+		want string
+	}{
+		{"at a tag", debug.BuildInfo{Main: debug.Module{Version: "v0.6.0"}}, "v0.6.0"},
+		{"after a tag", debug.BuildInfo{Main: debug.Module{Version: "v0.6.1-0.20261101123456-abcdef123456+dirty"}}, "v0.6.1-0.20261101123456-abcdef123456+dirty"},
+		{"devel with a commit", debug.BuildInfo{Main: debug.Module{Version: "(devel)"},
+			Settings: []debug.BuildSetting{setting("vcs.revision", "3a1895636b447e2afd9e86dc0ffc14f12d885a9b")}}, "3a18956"},
+		{"devel, modified", debug.BuildInfo{Main: debug.Module{Version: "(devel)"},
+			Settings: []debug.BuildSetting{setting("vcs.revision", "3a1895636b447e2afd9e86dc0ffc14f12d885a9b"), setting("vcs.modified", "true")}}, "3a18956-dirty"},
+		{"nothing known", debug.BuildInfo{}, "dev"},
+	} {
+		if got := fromBuildInfo(&c.info); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
 	}
 }

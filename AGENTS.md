@@ -23,10 +23,10 @@ the user-facing reference and must be kept in step with the code.
 
 ## Build and test
 
-    go vet ./... && go test ./...      # = make test
-    make uitest                        # needs node; not part of make test
+    go vet ./... && go test ./...
+    node scripts/uitest.js && node scripts/uitest-notes.js   # needs node; not part of go test
 
-Only Go is needed (no C compiler or libraries; `CGO_ENABLED=0` builds). Run the Go tests after any change, and `make uitest`
+Only Go is needed (no C compiler or libraries; `CGO_ENABLED=0` builds). Run the Go tests after any change, and the two node scripts
 after any change to `index.html` or its helpers. If node is not installed, say so rather than claiming the page is tested; a
 syntax check with another engine is not a test. Add or update a test with each behaviour change, using the existing style
 (`internal/flights/flights_test.go` has small rigs; `scripts/uitest.js` has numbered sections).

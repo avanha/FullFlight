@@ -20,7 +20,7 @@ poll:
   stopover_grace: 3h           # flight watch ends after this long on the ground
 
 navdata:
-  dir: data/navdata            # optional waypoint database; fetch it with scripts/fetch-navdata.sh
+  dir: data/navdata            # optional waypoint database; fetch it with: fullflight -fetch-navdata
 
 aerodatabox:                   # optional: find a flight by number when ADS-B has lost it (mid-ocean)
   api_key: ""                  # RapidAPI key for AeroDataBox; empty turns this off

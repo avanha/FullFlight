@@ -19,14 +19,13 @@ Building needs only Go, with no C compiler, cmake or system libraries, and it cr
 
 - **Go** 1.27.3 or newer (see `go.mod`) from <https://go.dev/dl/>; the version in Debian's own `golang` package is
   usually older. Put it on your `PATH` and check with `go version`.
-- `make` and `git`, which the Makefile uses (`sudo apt install make git` on Debian and Ubuntu; macOS has them with
-  the Xcode command line tools).
-- Optional: `nodejs` for `make uitest`, and `sqlite3` to look inside the database.
+- Optional: `git`, so the program can name the release it was built from; `nodejs` for the page script tests
+  (`node scripts/uitest.js`); and `sqlite3` to look inside the database.
 
 Then:
 
-    make test
-    make build                           # -> bin/fullflight
+    go test ./...
+    go build -o bin/ ./cmd/...           # -> bin/fullflight
     cp config.example.yaml config.yaml   # edit; then:
     bin/fullflight -config config.yaml
 
@@ -268,8 +267,8 @@ with the HTTP status.
 
 Every request to a service (the ADS-B sources, airframes.io, AeroDataBox) carries the User-Agent
 `FullFlight/<version> (personal flight tracker; +https://github.com/avanha/FullFlight)`, so an operator can see what is
-calling and where to find us. `make build` puts the git tag in it (`v0.5.0`, or `v0.5.0-3-gabc123-dirty` between
-tags); a binary built any other way names its commit, or says `dev`. The weather imagery (RainViewer, NASA GIBS) is
+calling and where to find us. A build from a git checkout names its release: Go records the tag (`v0.6.0`) or, after it, a
+pseudo-version such as `v0.6.1-0.20261101123456-abcdef123456+dirty`; a build with no git information says `dev`. The weather imagery (RainViewer, NASA GIBS) is
 fetched by your browser, which sends its own.
 
 ## Airframes and notes
@@ -351,7 +350,7 @@ but not where they are. Each name gets coordinates from the most trustworthy sou
    flight computer sequences it early). Learned positions persist (the `fix` table, with where each
    came from) and name bare ADS-C coordinates later; `fullflight -redecode` learns from stored messages.
 2. **The navigation database** (exact), if it fits the flight: not behind the aircraft, no nearer than
-   the next fix, within 60 nm of our own estimate. `scripts/fetch-navdata.sh` downloads FlightGear's
+   the next fix, within 60 nm of our own estimate. `fullflight -fetch-navdata` downloads FlightGear's
    X-Plane-format `fix.dat.gz`/`nav.dat.gz` into `data/navdata/`. It is GPL data from **2013**, so it
    misses newer waypoints (about half of the names seen on Cathay's Pacific routes) and some names have
    been reused (KADAB is 44 nm behind B-LRD in it); it is kept out of git and the app works without it.
@@ -542,7 +541,7 @@ source's checkbox shows or hides its dots, and in the unified view takes its fix
 has a position (orange bar on its left) to ring it on the map and show its popup
 (only one popup is ever open); the map pans only if it is out of view. Position messages are listed at the time the report carries, with a dotted underline, and the list is ordered by the time shown; hover for both times and the gap between them (one station logs about 3 minutes before the time inside its messages). Other messages show when they arrived. Hover any message time for its age.
 The aircraft is drawn as a plane turned to its track; hovering it shows altitude,
-climb/descent trend, ground speed and track. `make uitest` (needs node) drives the
+climb/descent trend, ground speed and track. `node scripts/uitest.js` and `node scripts/uitest-notes.js` (need node) drive the
 page script against a fake DOM.
 
 Everything drawn shares one longitude frame, anchored at the chosen aircraft's newest fix, so a
