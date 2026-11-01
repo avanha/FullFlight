@@ -330,10 +330,13 @@ func (s *Server) listWatches(w http.ResponseWriter, r *http.Request) {
 }
 
 // addWatch takes {"input": "UA869 2026-10-31 SFO"} or {"input": "B-LRM", "until": "<RFC3339>"}.
+var hexRe = regexp.MustCompile(`^[0-9A-F]{6}$`)
+
 func (s *Server) addWatch(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Input string `json:"input"`
 		Until string `json:"until"`
+		Hex   string `json:"hex"` // the address of a registration already known, so a tail watch need not look it up
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&in); err != nil {
 		fail(w, 400, "bad JSON")
@@ -351,6 +354,9 @@ func (s *Server) addWatch(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		fail(w, 400, err.Error())
 		return
+	}
+	if hex := strings.ToUpper(in.Hex); e.Kind == watchlist.KindTail && e.Hex == "" && hexRe.MatchString(hex) {
+		e.Hex = hex
 	}
 	if e.Kind == watchlist.KindFlight {
 		// a flight we could never find on the air (an airline code we cannot turn into a callsign) is refused now,

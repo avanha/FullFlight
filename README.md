@@ -283,7 +283,7 @@ fetched by your browser, which sends its own.
 its current registration and any earlier ones, hex, type, when first and last heard from, whether it is on a
 watch, its **last flight** (`SQ23 KJFK → WSSS`, with when it left, or when it was last heard on that flight; hover for the
 callsign and airport names), and a preview of its newest note. An aircraft known only from a watch or a note is listed too. An aircraft that is not being watched has a **Watch**
-button: it starts a hex watch (the usual 36 hours) that then appears on the map page; a refusal is shown at the top.
+button: it starts a watch by registration (the usual 36 hours; by hex for an airframe with no registration, or one the watch list would not accept) that then appears on the map page; a refusal is shown at the top.
 
 You can write any number of **notes** about an airframe (`This was the plane Yen took from SEA to HKG on
 2026-10-27`), each with its own date, and edit or delete them later. They attach to the hex, the aircraft,

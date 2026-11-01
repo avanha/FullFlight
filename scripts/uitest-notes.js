@@ -27,11 +27,14 @@ function newWorld() {
     const reply = (status, body) => ({status, ok: status < 400, statusText: 'x', json: async () => JSON.parse(JSON.stringify(body ?? null))});
     if (url === '/api/airframes') return reply(200, w.airframes);
     if (url === '/api/watches' && method === 'POST') {
-      const hex = JSON.parse(opts.body).input.replace(/^hex:/, '');
+      const body = JSON.parse(opts.body);
       if (w.refuseWatch) return reply(400, {error: w.refuseWatch});
+      if (w.badTail && body.input === 'tail:' + w.badTail) return reply(400, {error: 'does not look like a registration'});
+      const tail = body.input.startsWith('tail:');
+      const hex = tail ? body.hex : body.input.replace(/^hex:/, '');   // a tail watch carries the hex we already know
       const a = w.airframes.find(x => x.hex === hex);
       if (a) a.watched = true;
-      return reply(201, {id: 9, kind: 'hex', ident: hex});
+      return reply(201, {id: 9, kind: tail ? 'tail' : 'hex', ident: tail ? body.input.slice(5) : hex});
     }
     const m = url.match(/^\/api\/airframes\/([0-9A-F]{6})\/notes(?:\/(\d+))?$/);
     if (!m) return reply(404, {error: 'not found'});
@@ -257,10 +260,20 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   assert.strictEqual(watchBtn(rows()[1]).disabled, false, 'it can be tried again');
   w.refuseWatch = null;
   await watchBtn(rows()[1]).onclick(); await tick();
-  assert.deepStrictEqual(w.calls.filter(c => c[0] === 'POST' && c[1] === '/api/watches').pop().slice(2), [{input: 'hex:780AA4'}], 'by hex');
+  const posts = () => w.calls.filter(c => c[0] === 'POST' && c[1] === '/api/watches');
+  assert.deepStrictEqual(posts().pop().slice(2), [{input: 'tail:B-LRD', hex: '780AA4'}], 'by registration, with the hex it already knows');
   assert.strictEqual(q('#err').textContent, '');
   assert.strictEqual(rows()[1].children[6].textContent, 'watching', 'the row updates');
   assert.strictEqual(watchBtn(rows()[1]), undefined);
+  // an airframe known only by its hex is watched by hex
+  await watchBtn(rows()[2]).onclick(); await tick();
+  assert.deepStrictEqual(posts().pop().slice(2), [{input: 'hex:ABB601', hex: 'ABB601'}], 'no registration: by hex');
+  // and a registration the watch list will not take falls back to the hex
+  w.airframes[0].watched = false; w.airframes[0].tail = 'B-ODD'; w.badTail = 'B-ODD';
+  vm.runInContext('load()', w.ctx); await tick();
+  await watchBtn(rows()[0]).onclick(); await tick();
+  assert.deepStrictEqual(posts().slice(-2).map(c => c[2].input), ['tail:B-ODD', 'hex:780AB8'], 'tried by registration, then by hex');
+  assert.strictEqual(q('#err').textContent, '');
 
   // no airframes at all
   w.airframes = [];

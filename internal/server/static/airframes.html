@@ -107,12 +107,16 @@ function flightCell(a) {
   return td;
 }
 
-// Start a watch on the aircraft, by its hex (a registration can change; the hex does not). It appears on the map page.
+// Start a watch on the aircraft. It is a watch by registration where we know one, since that is what people read; the hex
+// goes along so nothing has to be looked up, and it is the watch's identity if the registration is one the watch list
+// would not accept. It appears on the map page.
 async function startWatch(a, b) {
   b.disabled = true;
   $('#err').textContent = '';
+  const post = input => fetch('/api/watches', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({input, hex: a.hex})});
   try {
-    const r = await fetch('/api/watches', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({input: 'hex:' + a.hex})});
+    let r = a.tail ? await post('tail:' + a.tail) : null;
+    if (!r || !r.ok) r = await post('hex:' + a.hex);   // no registration, or one the watch list will not take
     if (!r.ok) {
       const j = await r.json().catch(() => ({}));
       throw new Error(j.error || r.statusText);
@@ -149,7 +153,7 @@ function row(a) {
   const watching = el('td', a.watched ? 'watching' : 'gone', a.watched ? 'watching' : '');
   if (!a.watched) {
     const b = el('button', 'watchbtn', 'Watch');
-    b.title = 'Start tracking this aircraft (a hex watch, for the usual 36 hours)';
+    b.title = 'Start tracking this aircraft (by its registration, for the usual 36 hours)';
     b.onclick = () => startWatch(a, b);
     watching.append(b);
   }
