@@ -27,7 +27,9 @@ type OpsReport struct {
 	On       string            `json:"on,omitempty"`  // wheels down
 	In       string            `json:"in,omitempty"`  // at the gate
 	ETA      string            `json:"eta,omitempty"`
-	Sched    string            `json:"sched,omitempty"` // when a flight that has not left yet is due to, RFC 3339 UTC
+	At       string            `json:"at,omitempty"`     // when the event happened, RFC 3339 UTC, for reports that give a full date
+	OffAt    string            `json:"off_at,omitempty"` // wheels up as an exact time, for a report that gives one
+	Sched    string            `json:"sched,omitempty"`  // when a flight that has not left yet is due to, RFC 3339 UTC
 	Runway   string            `json:"runway,omitempty"`
 	SID      string            `json:"sid,omitempty"`
 	Squawk   string            `json:"squawk,omitempty"`
@@ -42,6 +44,7 @@ type opsParsed struct {
 	summary string
 	extra   []string // more lines for the message text
 	uplink  bool
+	tail    string // the registration the message names
 }
 
 var spaces = regexp.MustCompile(`\s+`)
@@ -54,6 +57,11 @@ func opsFlight(code, digits string) (callsign, flight string) {
 	}
 	icao, iata := airlines.Forms(code + strconv.Itoa(n))
 	return icao, iata
+}
+
+// opsAirline names the airline of an ICAO callsign prefix, for those that send operations messages we read.
+func opsAirline(code string) string {
+	return map[string]string{"ACA": "Air Canada", "UAL": "United", "CKK": "China Cargo", "TZP": "Zipair", "QFA": "Qantas"}[code]
 }
 
 // hhmm accepts "1921" or "1921Z" and rejects the asterisks a message puts where a time is not yet known.
@@ -137,6 +145,8 @@ func parseOps(label, text string) (opsParsed, bool) {
 		return parseACNotoc(text)
 	case "A3", "A4":
 		return parseClearance(text)
+	case "H1":
+		return parseEngine(text)
 	}
 	return opsParsed{}, false
 }
@@ -187,7 +197,7 @@ func parseQantasMVA(text string) (opsParsed, bool) {
 // What the numbers mean is not known; they are kept as sent.
 var (
 	fdaRouteRe = regexp.MustCompile(`^(?:[A-Z0-9]{10})?,(FDASUB|FDACOM|FSTREQ)\d{2}(\d{12}),([A-Z]{3}),,([A-Z]{3}),,([A-Z0-9]{4,6}),(\d{6}),(\d{4}),(\w+),,([A-Z0-9-]+),/?(.*?),?[0-9A-F]{4}$`)
-	fdaOtherRe = regexp.MustCompile(`^(?:[A-Z0-9]{10})?,(FDAACK|FSTREP|FENIND|FERIND)\d{2}(\d{12})/?(.*?),?[0-9A-F]{4}$`)
+	fdaOtherRe = regexp.MustCompile(`^(?:[A-Z0-9]{10})?,(FDAACK|FSTREP|FENIND|FERIND|FDASUB|FDACOM|FSTREQ)\d{2}(\d{12})/?(.*?),?[0-9A-F]{4}$`)
 )
 
 var fdaWhat = map[string]string{
@@ -282,7 +292,7 @@ func parseQantasWX(text string) (opsParsed, bool) {
 // Read from samples, not a specification.
 var (
 	acHeadRe = regexp.MustCompile(`^(ATD|ARV|PSHBK|TDX|TAR|KQ1) (AC)(\d{4})/(\d{2})/\d{2} ([A-Z]{3})(?: ([A-Z]{3}))?[ /]?(.*)$`)
-	acPosRe  = regexp.MustCompile(`^AGFSR (AC)(\d{4})/(\d{2})/\d{2}/([A-Z]{3})([A-Z]{3})/(\d{4})Z/(\w+)/(\d{2})(\d{2}\.\d)([NS])(\d{3})(\d{2}\.\d)([EW])/(\d{3})/(\w+)/(\d+)/(\d+)/([MP])(\d+)/(\d{3})(\d{2,3})`)
+	acPosRe  = regexp.MustCompile(`^AGFSR (AC)(\d{4})/(\d{2})/\d{2}/([A-Z]{3})([A-Z]{3})/(\d{4})Z/(\w+)/(\d{2})(\d{2}\.\d)([NS])(\d{3})(\d{2}\.\d)([EW])/(\d{3})/([A-Z ]+)/(\d+)/(\d+)/([MP])(\d+)/(\d{3})(\d{2,3})`)
 	acTimeRe = regexp.MustCompile(`\d{4}Z|\*{4}Z`)
 )
 
@@ -413,7 +423,7 @@ func parseEvent(text string) (opsParsed, bool) {
 		if o.Callsign == "" {
 			o.Callsign = f
 		}
-		o.Airline = map[string]string{"ACA": "Air Canada", "UAL": "United", "CKK": "China Cargo", "TZP": "Zipair"}[f[:3]]
+		o.Airline = opsAirline(f[:3])
 	}
 	who := o.name()
 	s := strings.TrimSpace(fmt.Sprintf("%s %s event %s %s at %s", o.Airline, who, m[1], route(o.Origin, o.Dest), hmZ(m[4])))
@@ -568,6 +578,9 @@ func decodeOps(m Message) (Result, bool) {
 		if p.uplink {
 			r.Dir = Uplink
 		}
+	}
+	if p.tail != "" {
+		r.Identity.Tail = p.tail
 	}
 	switch {
 	case p.rep.Event == "PDC":

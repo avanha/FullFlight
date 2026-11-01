@@ -16,7 +16,7 @@ import (
 // direction the wind blows from, and the wind along the track (positive a tailwind: eastbound flights
 // have positive values, westbound negative). The last number is unexplained. Read from samples, not a
 // specification.
-var aocRe = regexp.MustCompile(`^(?:([A-Z0-9]{4})([A-Z0-9]{2}\d{4}))?([A-Z]{4}),([A-Z]{4}),(\d{2})(\d{2})(\d{2}),\s*(-?)\s*(\d+\.\d+),\s*(-?)\s*(\d+\.\d+),\s*(-?\d+),\s*(\d+),\s*(-?)\s*(\d+\.\d+),\s*(\d+)`)
+var aocRe = regexp.MustCompile(`^(?:([A-Z0-9]{4})([A-Z0-9]{2}\d{4}))?([A-Z]{4}),([A-Z]{4}),(\d{2})(\d{2})(\d{2}),\s*(-?)\s*(\d*\.\d+),\s*(-?)\s*(\d*\.\d+),\s*(-?\d+),\s*(\d+),\s*(-?)\s*(\d+\.\d+),\s*(\d+)`)
 
 // parseAOC decodes a label-83 airline position report.
 func parseAOC(body string, r *Result) {

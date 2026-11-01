@@ -86,7 +86,7 @@ global.fetch = async (url, opts) => {
   fetchLog.push(url);
   if (opts && opts.method === 'PUT') { lastPut = {url, body: JSON.parse(opts.body)}; return { status: putReply.status, ok: putReply.status < 400, json: async () => putReply.body }; }
   if (opts && opts.method === 'POST') { lastPostBody = JSON.parse(opts.body); return { status: postReply.status, ok: postReply.status < 400, json: async () => postReply.body }; }
-  const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : url.startsWith('/api/flights') ? flightData : url.startsWith('/api/plan') ? planData : url.startsWith('/api/airports') ? airportData : null;
+  const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : url.startsWith('/api/flights') ? flightData.filter(sg => !/hours=96\b/.test(url) || Date.parse(sg.end) >= Date.now() - 96 * 3600e3) : url.startsWith('/api/plan') ? planData : url.startsWith('/api/airports') ? airportData : null;
   return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(body)) };   // a fresh copy each time, like a real response
 };
 let intervals = [];
@@ -101,7 +101,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -265,7 +265,7 @@ highlightGroup = null;
   const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
   // the legend lists all five sources
   assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS', 'ACMF', 'AOC', 'POS', 'POSRPT', 'POSA1', 'SB', 'Airline', 'AeroDataBox']);
-  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Satellite (IR)|Waypoints|Predictions|Planned route|Estimated path|Projection|Wind barbs|D-ATIS requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
+  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Satellite (IR)|Waypoints|Predictions|Planned route|Oceanic clearance|Estimated path|Projection|Wind barbs|D-ATIS requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
   // each source gets its own colour and style
   for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {
     const r = await lineOf([], [at2(0, 41, -105, kind), at2(10, 41.1, -104, kind), at2(20, 41.2, -103, kind)]);
@@ -1126,6 +1126,89 @@ highlightGroup = null;
     // no airports, no diamonds
     const none = await draw(FPTS, FMSGS, true);
     assert.strictEqual(dotsOf(none).length, 0);
+  }
+
+  // ===== 8r3. blocks and copies are listed under the whole message ====================================
+  {
+    const part = (id, extra = {}) => ({id, t: `2026-10-30T11:0${id - 600}:00Z`, kind: 'ops_report', summary: 'United UA182 performance report KDEN→EDDF at 23:20Z', raw: 'r', label: 'H1', rx_count: 1, lat: 10, lon: 20.1 + (id - 600) / 100, ...extra});
+    const WHOLE = part(603, {parts: [{id: 601, t: '2026-10-30T11:01:00Z', label: 'H1'}, {id: 602, t: '2026-10-30T11:02:00Z', label: 'H1'}]});
+    const FM = [part(601, {part_of: 603}), part(602, {part_of: 603, undecoded: true, kind: 'unknown', summary: 'Undecoded H1 message: 021 641'}), WHOLE, part(604)];
+    await draw(FPTS, FM, true);
+    assert.deepStrictEqual([...t.rows.keys()].sort(), [603, 604], 'only whole messages have rows');
+    assert.strictEqual(byId['#msgcount'].textContent, '(2)', 'the count is of whole messages');
+    const row = t.rows.get(603);
+    const chip = row.children.find(c => c.className === 'partchip');
+    assert.ok(chip && chip.textContent === '+2 parts' && /also received as .*\(label H1\)/.test(chip.title), chip && chip.title);
+    assert.ok(!t.rows.get(604).children.some(c => c.className === 'partchip'), 'a message with no parts has no tag');
+    assert.ok(row.children.find(c => c.tag === 'pre').textContent.includes('also received as 2 shorter copies or blocks'), 'and the detail says so');
+    assert.ok(t.markers.has(601) && t.markers.has(603), 'the map still marks the parts, with their positions');
+    // choosing a part on the map chooses the whole message
+    t.pickMessage(601);
+    assert.strictEqual(t.selectedMsg, 603);
+    t.pickMessage(604);
+    assert.strictEqual(t.selectedMsg, 604);
+    // undecoded fragments folded away are not counted among the hidden undecoded rows
+    assert.ok(!byId['#msgs'].children.some(c => c.className === 'empty' && /undecoded/.test(c.textContent)), 'no "show undecoded" for a folded fragment');
+  }
+
+  // ===== 8r4. an oceanic clearance is its own route, and does not replace the filed plan ===============
+  {
+    const NOW_MS = Date.parse('2026-10-27T14:00:00Z');
+    const pt = (name, lat, lon, kind = 'fix') => ({name, lat, lon, kind});
+    const filed = {id: 1, t: '2026-10-27T11:00:00Z', callsign: 'UAL26', from: 'EGLL', to: 'KDEN', points: [pt('EGLL', 51.5, -0.5, 'airport'), pt('ATSIX', 61, -10), pt('KDEN', 39.9, -104.7, 'airport')]};
+    const clr = {id: 2, t: '2026-10-27T12:30:00Z', kind: 'clearance', callsign: 'UAL26', to: 'KDEN', detail: 'NAT B · FL370 M0.85 · entry ATSIX 1316',
+      points: [pt('ATSIX', 61, -10), pt('62N020W', 62, -20, 'given'), pt('PIDSO', 61.5, -60)], missing: []};
+    assert.strictEqual(t.choosePlan([filed, clr], null, NOW_MS).id, 1, 'the newer clearance does not take over as the flight\'s plan');
+    assert.strictEqual(t.choosePlan([clr], null, NOW_MS), null, 'and is not a plan on its own');
+
+    calls.lines.length = 0; calls.circles.length = 0;
+    t.drawClearances([filed, clr], null, NOW_MS);
+    const line = calls.lines.find(l => l.o.color === '#0f766e');
+    assert.ok(line && JSON.stringify(line.ll) === '[[61,-10],[62,-20],[61.5,-60]]', 'the cleared fixes, joined, and nothing added for the destination');
+    const dots = calls.circles.filter(c => c.o.color === '#0f766e');
+    assert.strictEqual(dots.length, 3);
+    const tl = lines(dots[1].tooltip);
+    assert.ok(tl[0] === '62N020W' && tl.includes('oceanic clearance UAL26 cleared to KDEN') && tl.includes('NAT B · FL370 M0.85 · entry ATSIX 1316'), tl.join(' | '));
+    assert.strictEqual(t.clearanceGroup.items.length, 4, 'one line and three dots in its own layer');
+    // one from another day, or only a request, is not drawn
+    calls.lines.length = 0;
+    t.drawClearances([{...clr, t: '2026-10-20T12:30:00Z'}, {...clr, points: [pt('ATSIX', 61, -10)]}], null, NOW_MS);
+    assert.strictEqual(t.clearanceGroup.items.length, 0);
+  }
+
+  // ===== 8r5. flights older than the window are listed, and fetched one at a time ====================
+  {
+    const hoursAgo = h => new Date(Date.now() - h * 3600e3).toISOString();
+    const REC = seg('CX900@a', 'CX900', hoursAgo(10), hoursAgo(6), {latest: true, from: 'VHHH', to: 'KJFK'});
+    const OLDER = seg('CX700@b', 'CX700', hoursAgo(240), hoursAgo(236), {from: 'KJFK', to: 'VHHH'});   // ten days ago: outside the 96 hours
+    const trackUrl = () => fetchLog.filter(u => u.startsWith('/api/track/')).at(-1);
+    const msgUrl = () => fetchLog.filter(u => u.startsWith('/api/messages/')).at(-1);
+    const forgetOlder = () => vm.runInContext('olderAt = 0; olderSegs = []; olderFor = null; olderPending = null;', ctx);   // the month's list is kept for ten minutes
+    await withFlights([OLDER, REC], async () => {
+      forgetOlder(); fetchLog.length = 0;
+      t.chooseFlight('recent'); await settle(); await settle();
+      assert.ok(fetchLog.some(u => /^\/api\/flights\/780AB8\?hours=96$/.test(u)), 'the recent flights come first');
+      assert.ok(fetchLog.some(u => /^\/api\/flights\/780AB8\?hours=720$/.test(u)), 'and the month before is asked for apart');
+      const sel = byId['#flightsel'];
+      assert.strictEqual(JSON.stringify(sel.children.map(o => o.value)), '["recent","all","CX900@a","CX700@b"]', 'the older flight is in the list');
+      assert.strictEqual(sel.children[1].textContent, 'all flights (1)', 'all means the ones in the window');
+      assert.ok(!/until=/.test(trackUrl()), 'the usual window for a recent flight: ' + trackUrl());
+      // choosing the old one asks for its own time, and for enough messages
+      t.chooseFlight('CX700@b'); await settle();
+      assert.ok(/hours=\d+&until=\d{4}-\d\d-\d\dT[\d%A]+Z$/.test(trackUrl()) && /until=/.test(msgUrl()) && /limit=1000/.test(msgUrl()), trackUrl() + ' ' + msgUrl());
+      const hrs = +trackUrl().match(/hours=(\d+)/)[1];
+      assert.ok(hrs >= 4 && hrs < 30, 'about the flight\'s length and a margin, not four days: ' + hrs);
+      assert.strictEqual(t.flightChoice, 'CX700@b');
+    });
+    // an aircraft that has not flown for a week: its latest flight is the old one, and is fetched by its own window
+    await withFlights([OLDER], async () => {
+      forgetOlder(); fetchLog.length = 0;
+      t.chooseFlight('recent'); await settle(); await settle();
+      assert.strictEqual(t.flightSegs.length, 1, 'the only flight is listed though it is outside the window');
+      assert.ok(/until=/.test(trackUrl()), 'and fetched by its own window: ' + trackUrl());
+      assert.strictEqual(byId['#flightsel'].disabled, false);
+    });
+    forgetOlder();   // so later sections see a page with no month of history
   }
 
   // ===== 8s. how what was typed is read ===========================================================

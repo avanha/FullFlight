@@ -389,7 +389,7 @@ func TestIngestDeltaH1(t *testing.T) {
 	if m := by[2]; m.Kind != "fms_position" || m.Lat == nil || *m.Lat < 34.74 || !m.PosT.Equal(pos.Received.Truncate(time.Second)) {
 		t.Errorf("posn: %+v", m)
 	}
-	if m := by[3]; m.Kind != "unknown" || !strings.HasPrefix(m.Summary, "Undecoded H1") {
+	if m := by[3]; m.Kind != "unknown" || !strings.Contains(m.Summary, "not decoded") {
 		t.Errorf("engine: %+v", m)
 	}
 

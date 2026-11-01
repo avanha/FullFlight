@@ -91,6 +91,7 @@
   .callout:active { cursor: grabbing; }
   .callout.box { background: #fff; color: #111; border: 1px solid #888; border-radius: 4px; padding: 3px 6px; font: 12px system-ui, sans-serif; width: max-content; max-width: 260px; white-space: normal; overflow-wrap: break-word; }
   .callout.atis { border-color: #7c3aed; }
+  .partchip { font-size: 10px; color: #555; background: #eceff3; border-radius: 8px; padding: 0 5px; margin-left: 4px; white-space: nowrap; }
   .atis-dot-wrap { background: none; border: none; }
   .atis-dot { width: 6px; height: 6px; margin: 4px; transform: rotate(45deg); background: #7c3aed; cursor: pointer; }   /* the 14 px box around it is what is clicked */
   .fflag.latest { background: #c00; }
@@ -259,6 +260,7 @@ L.control.layers(Object.fromEntries(Object.entries(TRACK_MODES).map(([k, name]) 
 const wptGroup = L.layerGroup().addTo(map);   // waypoints named in CPDLC position reports
 const projGroup = L.layerGroup().addTo(map);  // dead-reckoned position and look-ahead
 const predGroup = L.layerGroup().addTo(map);  // what the selected report predicted: its route and next waypoints
+const clearanceGroup = L.layerGroup().addTo(map);  // an oceanic clearance: the route over the ocean the centre cleared it to fly
 const planGroup = L.layerGroup().addTo(map);  // the filed flight plan: planned route and its fixes
 const trackGroup = L.layerGroup().addTo(map);   // the unified track: one line through every plausible report
 let trackCtx = null, srcLines = [];   // what the lines are drawn from (so they can be redrawn), and the by-source lines in their groups
@@ -416,6 +418,7 @@ L.control.layers(null, {
   '<span style="font-weight:bold">&#9671;</span> Waypoints': wptGroup,
   '<span style="color:#e8590c;font-weight:bold">&#8211; &#8211;</span> Predictions': predGroup,
   '<span style="color:#5c6b8a;font-weight:bold">&#8211; &#8211;</span> Planned route': planGroup,
+  '<span style="color:#0f766e;font-weight:bold">&#8211; &#8211;</span> Oceanic clearance': clearanceGroup,
   '<span style="color:#777;font-weight:bold">&middot;&middot;&middot;</span> Estimated path': bridgeGroup,
   '<span style="color:#666;font-weight:bold">&middot;&middot;&middot;</span> Projection': projGroup,
   '<span style="font-weight:bold">&#8627;</span> Wind barbs': windGroup,
@@ -1022,8 +1025,27 @@ function drawGhost(m, pan) {
 function choosePlan(plans, chosen, nowMs = Date.now()) {
   const lo = chosen ? chosen.startMs - 12 * 3600000 : nowMs - 48 * 3600000;
   const hi = chosen ? chosen.endMs + FLIGHT_TOL : nowMs + 5 * 60000;
-  const ok = (plans || []).filter(p => { const t = Date.parse(p.t); return t >= lo && t <= hi && p.points && p.points.length >= 2; });
+  const ok = (plans || []).filter(p => { const t = Date.parse(p.t); return p.kind !== 'clearance' && t >= lo && t <= hi && p.points && p.points.length >= 2; });
   return ok.length ? ok[ok.length - 1] : null;
+}
+
+// An oceanic clearance is the route over the ocean the centre cleared the aircraft to fly: only its own fixes, drawn apart from
+// the filed plan, which stays the flight's route. Those that arrived during the flight shown (or in the last two days).
+const CLEARANCE_COLOR = '#0f766e';
+function drawClearances(plans, chosen, nowMs = Date.now()) {
+  clearanceGroup.clearLayers();
+  const lo = chosen ? chosen.startMs - 12 * 3600000 : nowMs - 48 * 3600000;
+  const hi = chosen ? chosen.endMs + FLIGHT_TOL : nowMs + 5 * 60000;
+  for (const c of plans || []) {
+    const t = Date.parse(c.t);
+    if (c.kind !== 'clearance' || t < lo || t > hi || !c.points || c.points.length < 2) continue;
+    L.polyline(c.points.map(p => ll(p.lat, p.lon)), {color: CLEARANCE_COLOR, weight: 3, dashArray: '2 7', opacity: .8, interactive: false}).addTo(clearanceGroup);
+    const head = `${c.callsign ? c.callsign + ' ' : ''}cleared to ${c.to}`;
+    for (const p of c.points) {
+      L.circleMarker(ll(p.lat, p.lon), {radius: 3, color: CLEARANCE_COLOR, weight: 1.5, fillColor: '#fff', fillOpacity: 1}).addTo(clearanceGroup)
+        .bindTooltip(tip(p.name, `oceanic clearance ${head}`, c.detail, `received ${fmtAgo(c.t)}`, c.missing && c.missing.length ? `not placed: ${c.missing.join(', ')}` : ''));
+    }
+  }
 }
 
 const PLAN_COLOR = '#5c6b8a';
@@ -1270,7 +1292,7 @@ const isOlder = ms => !chosenFlight() && flightSegs.length > 1 && segOf(ms) !== 
 function syncFlightSelector() {
   const sel = $('#flightsel');
   const opts = flightSegs.length
-    ? [['recent', `most recent: ${segLabel(flightSegs[flightSegs.length - 1])}`], ['all', `all flights (${flightSegs.length})`],
+    ? [['recent', `most recent: ${segLabel(flightSegs[flightSegs.length - 1])}`], ['all', `all flights (${flightSegs.filter(s => !s.older).length})`],
        ...flightSegs.slice().reverse().map(s => [s.id, segLabel(s)])]
     : [['recent', 'no flights identified yet']];
   sel.replaceChildren(...opts.map(([v, text]) => { const o = document.createElement('option'); o.value = v; o.textContent = text; return o; }));
@@ -1567,12 +1589,33 @@ function latestFix(pts, msgs) {
   return all.filter(f => f.tier === best).reduce((a, b) => (b.t > a.t ? b : a));
 }
 
+// ---- flights older than the window -------------------------------------------------------
+const WINDOW_HOURS = 96;      // the track, messages and plans fetched with the page
+let olderSegs = [], olderFor = null, olderAt = 0, olderPending = null;
+const OLDER_KEEP_MS = 10 * 60000;
+function olderFlightsCached(hex) { return olderFor === hex ? olderSegs : []; }
+// The aircraft's flights for the last 30 days (it costs more than the recent few days, so it is not asked for at every refresh).
+function loadOlderFlights(hex) {
+  if (olderFor === hex && Date.now() - olderAt < OLDER_KEEP_MS) return Promise.resolve(olderSegs);
+  if (olderPending && olderPending.hex === hex) return olderPending.p;
+  const p = api(`/api/flights/${hex}?hours=720`).then(list => { olderFor = hex; olderAt = Date.now(); olderSegs = list; return list; })
+    .catch(() => olderFlightsCached(hex)).finally(() => { olderPending = null; });
+  olderPending = {hex, p};
+  return p;
+}
+// The recent flights, and the older ones that ended before the window, in order.
+function setFlights(recent, hex) {
+  const cutoff = Date.now() - WINDOW_HOURS * 3600000;
+  const older = olderFlightsCached(hex).filter(sg => Date.parse(sg.end) < cutoff).map(sg => ({...sg, older: true}));
+  flightSegs = [...older, ...recent].map(sg => ({...sg, startMs: Date.parse(sg.start), endMs: Date.parse(sg.end)}));
+}
+
 async function showTrack(w, focus) {
   if (!w.hex) {
     // A target not yet matched to an aircraft has nothing to show, and nothing of the previous target may stay.
     ++showSeq;   // a fetch for the previous target still in flight must not draw over this
     planeMark = null;
-    layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); planGroup.clearLayers(); bridgeGroup.clearLayers(); windGroup.clearLayers(); atisGroup.clearLayers(); highlight.clearLayers();
+    layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); planGroup.clearLayers(); clearanceGroup.clearLayers(); bridgeGroup.clearLayers(); windGroup.clearLayers(); atisGroup.clearLayers(); highlight.clearLayers();
     Object.values(SOURCES).forEach(src => src.group.clearLayers());   // the report dots and each source's track
     trackGroup.clearLayers(); srcLines = []; trackCtx = null;
     lastData = null; lastTrack = {pts: [], msgs: []}; drawProjection(); markers.clear(); renderMessages([]);
@@ -1581,11 +1624,27 @@ async function showTrack(w, focus) {
     return;
   }
   const seq = ++showSeq;
-  let [pts, msgs, segs, plans] = await Promise.all([api(`/api/track/${w.hex}?hours=96`), api(`/api/messages/${w.hex}?hours=96`), api(`/api/flights/${w.hex}?hours=96`),
-    api(`/api/plan/${w.hex}?hours=96`).catch(() => [])]);
+  const recent = await api(`/api/flights/${w.hex}?hours=${WINDOW_HOURS}`);
   if (seq !== showSeq) return;
-  flightSegs = segs.map(sg => ({...sg, startMs: Date.parse(sg.start), endMs: Date.parse(sg.end)}));
+  // Flights older than the window are listed too (for a month back), and chosen one at a time. Their list is fetched apart and
+  // kept for a few minutes; it is waited for only if the flight asked for is not among the recent ones.
+  const needOlder = !recent.length || (flightChoice !== 'recent' && flightChoice !== 'all' && !recent.some(sg => sg.id === flightChoice));
+  if (needOlder) await loadOlderFlights(w.hex);
+  if (seq !== showSeq) return;
+  if (!needOlder) loadOlderFlights(w.hex).then(() => { if (seq === showSeq) { setFlights(recent, w.hex); syncFlightSelector(); } });
+  setFlights(recent, w.hex);
   syncFlightSelector();
+  // The window to fetch: the last few days, or, for a flight older than that, its own time.
+  const own = chosenFlight();
+  let span = `hours=${WINDOW_HOURS}`, limit = '';
+  if (own && own.startMs - FLIGHT_TOL < Date.now() - WINDOW_HOURS * 3600000) {
+    const from = own.startMs - 14 * 3600000, to = own.endMs + 3 * 3600000;   // (plans arrive up to half a day before)
+    span = `hours=${Math.ceil((to - from) / 3600000)}&until=${encodeURIComponent(new Date(to).toISOString().slice(0, 19) + 'Z')}`;
+    limit = '&limit=1000';
+  }
+  let [pts, msgs, plans] = await Promise.all([api(`/api/track/${w.hex}?${span}`), api(`/api/messages/${w.hex}?${span}${limit}`),
+    api(`/api/plan/${w.hex}?${span}`).catch(() => [])]);
+  if (seq !== showSeq) return;
   // One flight chosen: only its points and messages are shown.
   const chosen = chosenFlight();
   if (chosen) {
@@ -1648,6 +1707,7 @@ async function showTrack(w, focus) {
 
   const plan = choosePlan(plans, chosen);
   drawPlan(plan);
+  drawClearances(plans, chosen);
   trackCtx = {pts, msgs, chosen, plan};
   drawTrackLines();
   drawWindBarbs();
@@ -1725,6 +1785,8 @@ let showUndecoded = false, lastMsgs = [], selectedMsg = null;
 // A dot or waypoint on the map was clicked: select its message in the list and bring it into view.
 function pickMessage(id) {
   if (!accOpen.msgs) setAcc('msgs', true);   // choosing a message on the map shows it in the list
+  const m = lastMsgs.find(x => x.id === id);
+  if (m && m.part_of) id = m.part_of;        // a block or copy has no row: its whole message does
   selectedMsg = id;
   applyHighlight(false);
   const row = rows.get(id);
@@ -1772,10 +1834,12 @@ function renderMessages(msgs) {
   lastMsgs = msgs;
   rows.clear();
   const box = $('#msgs');
-  $('#msgcount').textContent = msgs.length ? `(${msgs.length})` : '';
+  // A block of a longer message, or a shorter copy of it, is listed under the whole message (the map still marks every one).
+  const whole = msgs.filter(m => !m.part_of);
+  $('#msgcount').textContent = whole.length ? `(${whole.length})` : '';
   if (!msgs.length) { box.innerHTML = '<div class="empty">No messages yet.</div>'; return; }
-  const hidden = msgs.filter(m => m.undecoded).length;
-  const shown = showUndecoded ? msgs : msgs.filter(m => !m.undecoded);
+  const hidden = whole.filter(m => m.undecoded).length;
+  const shown = showUndecoded ? whole : whole.filter(m => !m.undecoded);
   const toggle = document.createElement('div');
   toggle.className = 'empty';
   if (hidden) {
@@ -1811,6 +1875,13 @@ function renderMessages(msgs) {
     k.className = 'kind';
     k.textContent = m.kind.replace('_', ' ');
     d.append(t, k, document.createTextNode(m.summary + routeNames(m)));
+    if (m.parts && m.parts.length) {
+      const c = document.createElement('span');
+      c.className = 'partchip';
+      c.textContent = `+${m.parts.length} part${m.parts.length === 1 ? '' : 's'}`;
+      c.title = 'also received as ' + m.parts.map(x => `${fmtTime(x.t)} (label ${x.label})`).join(', ');
+      d.append(c);
+    }
     for (const [flag, why] of [['⚠', m.mismatch], ['?', m.suspect], ['⏱', m.time_unverified && m.time_note]]) {
       if (!why) continue;
       const w = document.createElement('span');
@@ -1823,6 +1894,7 @@ function renderMessages(msgs) {
       m.mismatch ? 'airframes.io disagrees: ' + m.mismatch : '', m.suspect ? 'position suspect: ' + m.suspect : '',
       m.time_note ? 'time: ' + m.time_note : '',
       `label ${m.label}${m.dir ? ', ' + m.dir : ''}${m.station ? ', ' + m.station : ''}${m.rx_count > 1 ? `, heard ${m.rx_count}x` : ''}`,
+      m.parts && m.parts.length ? `also received as ${m.parts.length} shorter ${m.parts.length === 1 ? 'copy or block' : 'copies or blocks'}: ${m.parts.map(x => fmtTime(x.t)).join(', ')}` : '',
       'raw: ' + m.raw].filter(Boolean).join('\n\n');
     d.append(pre);
     d.onclick = () => {

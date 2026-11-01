@@ -25,6 +25,8 @@ const (
 	KindDeparture  Kind = "departure_report"
 	KindPWI        Kind = "wind_forecast"
 	KindOps        Kind = "ops_report"
+	KindText       Kind = "text_message"
+	KindClearance  Kind = "oceanic_clearance"
 	KindWeather    Kind = "weather_report"
 	KindDisconnect Kind = "disconnect"
 	KindPOS        Kind = "pos_report"
@@ -194,6 +196,9 @@ func Decode(m Message) (Result, error) {
 	if r, ok := decodeWeather(m); ok {
 		return r, nil
 	}
+	if r, ok := decodeOceanic(m); ok {
+		return r, nil
+	}
 	prefix, body := SplitPrefix(m.Text)
 	if strings.HasPrefix(m.Text, "POSA1") || strings.HasPrefix(m.Text, "SB0122BA_") {
 		prefix, body = "", m.Text // the latitude digits after POSA1N look like a message number
@@ -343,6 +348,9 @@ func Decode(m Message) (Result, error) {
 		parseMedia(body, &r)
 	}
 	r.Summary = summarize(r)
+	if r.Kind == KindUnknown {
+		describeUnknown(&r)
+	}
 	if r.Text == "" {
 		r.Text = r.Summary
 	}

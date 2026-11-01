@@ -1035,3 +1035,15 @@ func TestMessagesAboutAFlightNotYetDueAreHeldBack(t *testing.T) {
 		t.Errorf("evidence = %+v (QF1 counts from %v)", ev, sched)
 	}
 }
+
+// A take-off report with its whole date gives the take-off time exactly, even when it was delivered days late.
+func TestExactTakeoffTimeFromALateReport(t *testing.T) {
+	s := open(t)
+	late := time.Date(2026, 10, 28, 8, 0, 0, 0, time.UTC)
+	s.AddMessage(Message{ID: 1, Hex: "A2551D", T: late, Label: "H1", Text: "a", Kind: "ops_report",
+		Decoded: `{"fields":{"ops":{"event":"TO","origin":"KDEN","dest":"EGLL","at":"2026-10-26T00:57:43Z","off_at":"2026-10-26T00:57:43Z"}}}`})
+	ds, err := s.Departures("A2551D", late.Add(-72*time.Hour), late)
+	if err != nil || len(ds) != 1 || ds[0].How != "takeoff" || !ds[0].T.Equal(time.Date(2026, 10, 26, 0, 57, 43, 0, time.UTC)) {
+		t.Errorf("departures = %+v %v", ds, err)
+	}
+}

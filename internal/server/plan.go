@@ -2,12 +2,13 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/avanha/fullflight/internal/airports"
+	"github.com/avanha/fullflight/internal/decoder"
 	"github.com/avanha/fullflight/internal/flightplan"
 )
 
@@ -22,6 +23,8 @@ type planJSON struct {
 	ToName   string             `json:"to_name,omitempty"`
 	Points   []flightplan.Point `json:"points"`
 	Missing  []string           `json:"missing,omitempty"` // fixes whose position we could not find
+	Kind     string             `json:"kind,omitempty"`    // "clearance": an oceanic clearance, the route over the ocean only, not a flight plan
+	Detail   string             `json:"detail,omitempty"`  // a clearance's track, level and entry
 }
 
 // plans serves the flight plans an aircraft sent, oldest first. A plan is often sent several times (heard by
@@ -30,12 +33,8 @@ type planJSON struct {
 // navigation database.
 func (s *Server) plans(w http.ResponseWriter, r *http.Request) {
 	hex := strings.ToUpper(r.PathValue("hex"))
-	hours := 96
-	if h, err := strconv.Atoi(r.URL.Query().Get("hours")); err == nil && h > 0 && h <= 24*30 {
-		hours = h
-	}
-	now := s.now()
-	ms, err := s.Store.Messages(hex, now.Add(-time.Duration(hours)*time.Hour), now.Add(time.Minute), 2000)
+	since, until := s.window(r, 96, 24*30)
+	ms, err := s.Store.Messages(hex, since, until, 2000)
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
@@ -65,6 +64,34 @@ func (s *Server) plans(w http.ResponseWriter, r *http.Request) {
 	seen := map[string]int{}  // identical plans: index of the one kept
 	given := map[string]int{} // how many of its fixes came with coordinates (a station may have heard only part of a message)
 	for _, m := range ms {    // oldest first
+		if m.Kind == "oceanic_clearance" {
+			var d struct {
+				Fields struct {
+					Clearance *decoder.Clearance `json:"clearance"`
+				} `json:"fields"`
+			}
+			if json.Unmarshal([]byte(m.Decoded), &d) != nil || d.Fields.Clearance == nil {
+				continue
+			}
+			c := d.Fields.Clearance
+			if c.What != "clearance" || c.Route == nil {
+				continue
+			}
+			pts, missing := flightplan.Resolve(c.Route, lookup, airport) // no origin or destination: just the fixes
+			key := "clearance|" + c.Callsign + "|" + routeKey(c.Route)
+			if k, dup := seen[key]; dup {
+				out[k].T, out[k].ID = m.T, m.ID
+				continue
+			}
+			detail := c.Track
+			if detail != "" {
+				detail += " · "
+			}
+			detail += fmt.Sprintf("FL%d M%.2f · entry %s %s", c.Level, c.Mach, c.Entry, c.EntryTime)
+			seen[key] = len(out)
+			out = append(out, planJSON{ID: m.ID, T: m.T, Callsign: c.Callsign, To: c.Dest, Points: pts, Missing: missing, Kind: "clearance", Detail: detail})
+			continue
+		}
 		if m.Kind != "flight_plan" {
 			continue
 		}

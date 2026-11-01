@@ -259,6 +259,7 @@ func TestMessagesFlagUndecoded(t *testing.T) {
 	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
 	defer ts.Close()
 	st.AddMessage(store.Message{ID: 4, Hex: "A48E3A", T: now.Add(-time.Hour), Label: "H1", Text: "x4", Kind: "fms_position", Summary: "FMS", TimeNote: "arrived 1 Z", TimeFlag: true})
+	st.AddMessage(store.Message{ID: 5, Hex: "A48E3A", T: now.Add(-time.Hour), Label: "7B", Text: "x5", Kind: "text_message", Summary: "Crew message: CX85 EASTERN GREENLAND ROUTING"}) // readable text is listed, not hidden
 	_, body := do(t, "GET", ts.URL+"/api/messages/A48E3A", "")
 	if strings.Count(body, `"time_unverified":true`) != 1 || !strings.Contains(body, `"time_note":"arrived 1 Z"`) {
 		t.Errorf("time fields: %s", body)
@@ -1273,5 +1274,122 @@ func TestTailWatchWithKnownHex(t *testing.T) {
 	code, body = do(t, "POST", ts.URL+"/api/watches", `{"input":"tail:B-LRD","hex":"nonsense"}`)
 	if code != 201 || strings.Contains(body, "nonsense") {
 		t.Errorf("bad hex: %d %s", code, body)
+	}
+}
+
+// The blocks of a message and its shorter copies are listed under the whole message, not as rows of their own.
+func TestMessagesFoldTheBlocksUnderTheWholeMessage(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	now := time.Date(2026, 10, 23, 21, 30, 0, 0, time.UTC)
+	first := "<701>IEG\r\n N24993UAL182    ER  72211026232013KDENEDDF"
+	rest := "021 641\r\n 958959  92261058 8031"
+	add := func(id int64, at time.Duration, num, text string) {
+		st.AddMessage(store.Message{ID: id, Hex: "A2551D", T: now.Add(at), Label: "H1", MsgNum: num, Text: text, Kind: "unknown"})
+	}
+	add(1, 0, "D94", first)                                 // the first block
+	add(2, 4*time.Second, "D94", rest)                      // the second
+	add(3, 8*time.Second, "D94", first+"\r\n"+rest)         // the whole, joined up
+	add(4, 9*time.Second, "D95", "something else entirely") // another message
+	add(5, 10*time.Second, "D94", "short")                  // too short to say anything
+	add(6, 20*time.Minute, "D94", first)                    // the number is reused much later: not a part of the first
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now.Add(time.Hour) }}).Handler())
+	defer ts.Close()
+	_, body := do(t, "GET", ts.URL+"/api/messages/A2551D", "")
+	var ms []struct {
+		ID     int64                `json:"id"`
+		PartOf int64                `json:"part_of"`
+		Parts  []struct{ ID int64 } `json:"parts"`
+	}
+	if err := json.Unmarshal([]byte(body), &ms); err != nil || len(ms) != 6 {
+		t.Fatalf("%v: %s", err, body)
+	}
+	by := map[int64]int{}
+	for i, m := range ms {
+		by[m.ID] = i
+	}
+	for _, id := range []int64{1, 2} {
+		if ms[by[id]].PartOf != 3 {
+			t.Errorf("message %d is part of %d, want 3", id, ms[by[id]].PartOf)
+		}
+	}
+	if w := ms[by[3]]; w.PartOf != 0 || len(w.Parts) != 2 || w.Parts[0].ID != 1 || w.Parts[1].ID != 2 {
+		t.Errorf("the whole: %+v", w)
+	}
+	for _, id := range []int64{4, 5, 6} {
+		if ms[by[id]].PartOf != 0 || len(ms[by[id]].Parts) != 0 {
+			t.Errorf("message %d should stand alone: %+v", id, ms[by[id]])
+		}
+	}
+}
+
+// An oceanic clearance is served with the plans but marked as one: only the fixes it gives, resolved to positions (the
+// named ones from the navigation database), with no origin or destination point added on.
+func TestOceanicClearanceIsServedAsItsOwnRoute(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 27, 14, 0, 0, 0, time.UTC)
+	nav := navdata.New()
+	nav.Add("ATSIX", navdata.Point{Lat: 61.0, Lon: -10.0, Kind: "fix"})
+	nav.Add("PIDSO", navdata.Point{Lat: 61.5, Lon: -60.0, Kind: "fix"})
+	dec := `{"fields":{"clearance":{"what":"clearance","callsign":"UAL26","dest":"KDEN","track":"NAT B","entry":"ATSIX","entry_time":"1316","level":370,"mach":0.85,
+		"route":{"callsign":"UAL26","from":"","to":"","fixes":[{"name":"ATSIX"},{"name":"62N020W","lat":62,"lon":-20,"has_pos":true},{"name":"PIDSO"}]}}}}`
+	for i, at := range []time.Time{now.Add(-90 * time.Minute), now.Add(-80 * time.Minute)} { // sent twice
+		st.AddMessage(store.Message{ID: int64(i + 1), Hex: "A2551D", T: at, Label: "B2", Text: "x" + string(rune('a'+i)), Kind: "oceanic_clearance", Decoded: dec})
+	}
+	st.AddMessage(store.Message{ID: 3, Hex: "A2551D", T: now.Add(-100 * time.Minute), Label: "B1", Text: "req", Kind: "oceanic_clearance", Decoded: `{"fields":{"clearance":{"what":"request","callsign":"UAL26"}}}`})
+	ts := httptest.NewServer((&Server{Store: st, Nav: nav, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	_, body := do(t, "GET", ts.URL+"/api/plan/A2551D", "")
+	var plans []struct {
+		Kind, Detail, To string
+		Points           []struct {
+			Name string
+			Lat  float64
+			Kind string
+		}
+	}
+	if err := json.Unmarshal([]byte(body), &plans); err != nil || len(plans) != 1 {
+		t.Fatalf("%v: %s", err, body)
+	}
+	p := plans[0]
+	if p.Kind != "clearance" || p.To != "KDEN" || p.Detail != "NAT B · FL370 M0.85 · entry ATSIX 1316" || len(p.Points) != 3 {
+		t.Errorf("clearance: %+v", p)
+	}
+	if p.Points[0].Name != "ATSIX" || p.Points[0].Lat != 61 || p.Points[1].Name != "62N020W" || p.Points[1].Lat != 62 || p.Points[2].Name != "PIDSO" {
+		t.Errorf("points: %+v (nothing is added for the destination)", p.Points)
+	}
+}
+
+// "until" fetches a window that ended in the past, so an older flight comes by itself and not as the oldest part of the
+// newest rows; it can never reach into the future.
+func TestWindowUntil(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 11, 1, 8, 0, 0, 0, time.UTC)
+	old := now.Add(-5 * 24 * time.Hour) // five days ago: outside a 96 hour window
+	st.AddMessage(store.Message{ID: 1, Hex: "A2551D", T: old, Label: "H1", Text: "old flight", Kind: "unknown"})
+	st.AddMessage(store.Message{ID: 2, Hex: "A2551D", T: now.Add(-time.Hour), Label: "H1", Text: "recent", Kind: "unknown"})
+	st.AddPosition(store.Position{Hex: "A2551D", T: old, Lat: 51, Lon: 0, Source: "x"})
+	st.AddPosition(store.Position{Hex: "A2551D", T: now.Add(-time.Hour), Lat: 40, Lon: -100, Source: "x"})
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	until := old.Add(3 * time.Hour).Format(time.RFC3339)
+
+	_, body := do(t, "GET", ts.URL+"/api/messages/A2551D?hours=96", "")
+	if strings.Count(body, `"raw"`) != 1 || strings.Contains(body, "old flight") {
+		t.Errorf("96 hours does not reach five days back: %s", body)
+	}
+	_, body = do(t, "GET", ts.URL+"/api/messages/A2551D?hours=10&until="+until, "")
+	if strings.Count(body, `"raw"`) != 1 || !strings.Contains(body, "old flight") {
+		t.Errorf("the window before until: %s", body)
+	}
+	_, body = do(t, "GET", ts.URL+"/api/track/A2551D?hours=10&until="+until, "")
+	if strings.Count(body, `"lat"`) != 1 || !strings.Contains(body, `"lat":51`) {
+		t.Errorf("track before until: %s", body)
+	}
+	// an until in the future is the present
+	_, body = do(t, "GET", ts.URL+"/api/messages/A2551D?hours=10&until="+now.Add(48*time.Hour).Format(time.RFC3339), "")
+	if strings.Count(body, `"raw"`) != 1 || !strings.Contains(body, "recent") {
+		t.Errorf("until in the future: %s", body)
 	}
 }

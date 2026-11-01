@@ -496,3 +496,18 @@ func TestNextFlightsDataBeforeLandingDoesNotMuddleTheCurrentOne(t *testing.T) {
 		t.Errorf("after: %s %+v", names(segs), segs)
 	}
 }
+
+// United's engine reports carry the time of their event and are often delivered days late. The flight they name belongs
+// where it happened, not where they arrived, or its positions sit in a flight with no name.
+func TestLateReportsCountFromTheirEventTime(t *testing.T) {
+	r := newRig(t)
+	for _, ev := range []time.Time{at(0, 3, 0), at(0, 4, 0), at(0, 5, 0)} {
+		r.adsb(ev, "") // positions without a callsign, as when the aircraft was out of ADS-B and heard by satellite
+		r.msg(store.Message{T: at(2, 21, 24), Kind: "ops_report", Flight: "UA182", Callsign: "UAL182",
+			Decoded: `{"fields":{"ops":{"event":"ER","origin":"KDEN","dest":"EDDF","at":"` + ev.Format(time.RFC3339) + `"}}}`})
+	}
+	segs := r.segments()
+	if names(segs) != "UA182|" || segs[0].From != "KDEN" || segs[0].To != "EDDF" || segs[0].Start.After(at(0, 3, 30)) {
+		t.Fatalf("segments: %s %+v", names(segs), segs)
+	}
+}

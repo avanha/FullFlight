@@ -139,6 +139,18 @@ used as a neighbour to judge others by. (N393DA: a report filed at 21:45Z at 40.
 `GET /api/messages/{hex}?hours=48&limit=300` returns them, oldest first. Airline-
 specific engine/performance data (label H1 and others) has no public format; it
 is kept raw and hidden in the timeline behind a "show N undecoded" link.
+A message nothing decodes is still described as well as its form allows. Readable text (a crew message, a weather forecast,
+a company notice, an ATIS) is listed by default as a `text_message` with its first words, and its full text when opened.
+Families of maintenance data are named as such ("Real-time system report RPT13", "Software and hardware status table",
+"A380 maintenance report REP044", "Ground request for aircraft data", "Acknowledgement") and stay behind "show N
+undecoded"; so does a block of numbers, and anything else, which says its label and length. The names come from how the
+messages start, in samples: what is inside them is not known.
+A message sent in several blocks reaches us as the blocks and usually as one copy joined up (airframes.io stores that under
+the last block), and a longer message can be heard first as a shorter one. A block or shorter copy whose text is wholly
+inside a longer one with the same message number, received within three minutes, is folded under the whole message: the
+list shows one row with a "+2 parts" tag (its hover and its detail say when the others arrived), the count at the top counts
+whole messages, and the map still marks every point; clicking a folded point selects the whole message. The API gives
+`part_of` on the folded message and `parts` on the whole one. Blocks with no joined copy are left as they are.
 Uplink vs downlink is taken from airframes.io when given, else from which end of
 the link is the aircraft (`fromHex`/`toHex`), else tried both ways.
 
@@ -375,6 +387,14 @@ number and date, and the message list has a heading above each flight's messages
 a flag shows just that flight and fits the map to it. The plane and the projection appear only for the
 flight in progress. The choice of most recent / all is remembered; a particular flight is not.
 
+The page loads the last four days (96 hours) of track, messages and plans with the flight list. The selector also lists
+the flights of the last 30 days: those older than four days are in it as well, and choosing one fetches just that flight
+(its own hours, from half a day before its start to a few hours after its end, with up to 1000 messages), so a flight from
+last week shows in full. "All flights" means the ones in the last four days, and an aircraft that has not flown for a week
+shows its latest flight the same way. The month's list is asked for apart and kept for ten minutes, not at every refresh.
+`/api/track`, `/api/messages` and `/api/plan` take `until` (RFC 3339) beside `hours` for such a window; `/api/flights?hours=`
+goes back up to 30 days.
+
 ## Waypoints named in CPDLC reports
 
 A CPDLC position report names the fix just passed, the next fix (with its ETA) and the one after,
@@ -461,6 +481,12 @@ route and times in them join the evidence for a flight's route and departure.
   `4M` the load sheet (zero fuel, take-off and fuel weights in tonnes, passengers) and `4P` the dangerous goods notice.
 - **Ground events** (`49`, `17`): `01ICCL ACA025/311941CYVRZSPD` names an event, the flight, the time and the route.
   Air Canada, United, China Cargo and Zipair send them. The four-letter event codes are shown as sent: I do not know them.
+- **787 engine and performance reports** (United and Air Canada, label `H1`): `/ILNGE7X.CLB006UA N249932UAL177 261024000658KDENLIRF…`,
+  `APM … UAL182 KDENEDDF211026232013,` and `<701>IEG … ER …` are maintenance data, but each begins with the flight, the
+  route and the whole date and time of the event, and most carry the aircraft's position. They are drawn as "Airline"
+  positions, placed when they happened even if they were delivered days late, and they name the flight at that time.
+  A take-off report (`TOF`, or `TO` in the others) gives the moment of take-off to the second, which becomes the flight's
+  departure time. The other numbers, and the event codes beyond take-off, climb and cruise, are not interpreted.
 - **Pre-departure clearances** (`A3`, `A4`, Beijing and Shanghai): the runway, SID and squawk
   (`ACA030 CLRD TO CYVR OFF 36R VIA MUGL7X SQUAWK 0075`), and the status of a request.
 - **Weather requests** (`5U`): Qantas asking for D-ATIS, TAF or METAR for a list of airports, and Fiji Airways and Delta's `WXRQ`.
@@ -472,6 +498,17 @@ same way. The weather is not drawn on the map. D-ATIS requests and replies show 
 A **data link disconnect** (`.DIS.`) is shown as such, with the aircraft's registration; the two-character code in it is kept but not interpreted.
 
 These formats are read from samples, not specifications. Stored messages show them after `fullflight -redecode`.
+
+## Oceanic clearances
+
+A request for an oceanic clearance (`/EGGX.OC1/RCL 030 UAL26-ATSIX/1316 M085F370`: the entry fix and time, Mach and level)
+and the centre's reply (`CLA`: the destination, the track, the route from the entry fix, and the level and Mach to hold) are
+decoded as `oceanic_clearance`. The cleared route is drawn on the map as its own layer, "Oceanic clearance" in the legend
+(dashed teal, a dot on each fix, the track, level and entry in the hover). It is only the route over the ocean, so it is not
+treated as the flight's plan, and a filed plan stays the route that is projected along. Fixes given by coordinates
+(`62N020W`) are placed as written; named ones from what we have learned of them or the navigation database. Seen so far: one clearance
+and two requests, so a form that does not fit is left undecoded. Free text from the crew that mentions a route (a `7B` message)
+is shown as text and not plotted: it has no fixed form.
 
 ## Predicted winds
 

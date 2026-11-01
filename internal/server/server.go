@@ -450,12 +450,8 @@ type pointJSON struct {
 // track returns the positions of one aircraft, default the last 48 hours.
 func (s *Server) track(w http.ResponseWriter, r *http.Request) {
 	hex := strings.ToUpper(r.PathValue("hex"))
-	hours := 48
-	if h, err := strconv.Atoi(r.URL.Query().Get("hours")); err == nil && h > 0 && h <= 24*14 {
-		hours = h
-	}
-	now := s.now()
-	ps, err := s.Store.Track(hex, now.Add(-time.Duration(hours)*time.Hour), now.Add(time.Minute))
+	since, until := s.window(r, 48, 24*14)
+	ps, err := s.Store.Track(hex, since, until)
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
@@ -731,11 +727,20 @@ type messageJSON struct {
 	AFFlight       string        `json:"af_flight,omitempty"`
 	Route          []routeWpJSON `json:"route,omitempty"`
 	Airports       []atisAirport `json:"airports,omitempty"` // the airports a D-ATIS request or reply is for
+	PartOf         int64         `json:"part_of,omitempty"`  // this is part of (or a shorter copy of) that longer message
+	Parts          []partJSON    `json:"parts,omitempty"`    // the parts and shorter copies of this message that arrived as rows of their own
 
 	Wx        *wxJSON        `json:"wx,omitempty"`
 	GS        *float64       `json:"gs,omitempty"`  // knots, as the report gave it
 	Trk       *float64       `json:"trk,omitempty"` // true track, degrees
 	Waypoints []waypointJSON `json:"waypoints,omitempty"`
+}
+
+// partJSON is a block or shorter copy folded under the whole message.
+type partJSON struct {
+	ID    int64     `json:"id"`
+	T     time.Time `json:"t"`
+	Label string    `json:"label"`
 }
 
 // atisAirport is where a D-ATIS message points on the map.
@@ -795,28 +800,33 @@ type waypointJSON struct {
 func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	hex := strings.ToUpper(r.PathValue("hex"))
 	q := r.URL.Query()
-	hours, limit := 48, 300
-	if h, err := strconv.Atoi(q.Get("hours")); err == nil && h > 0 && h <= 24*14 {
-		hours = h
-	}
+	limit := 300
 	if l, err := strconv.Atoi(q.Get("limit")); err == nil && l > 0 && l <= 1000 {
 		limit = l
 	}
-	now := s.now()
-	ms, err := s.Store.Messages(hex, now.Add(-time.Duration(hours)*time.Hour), now.Add(time.Minute), limit)
+	since, until := s.window(r, 48, 24*14)
+	ms, err := s.Store.Messages(hex, since, until, limit)
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
 	}
 	res := &waypoints.Resolver{Store: s.Store, Nav: s.Nav}
 	out := make([]messageJSON, 0, len(ms))
+	partOf, parts := foldParts(ms)
+	byID := make(map[int64]store.Message, len(ms))
 	for _, m := range ms {
-		j := messageJSON{Undecoded: m.Kind == "unknown" || m.Summary == "MIAM (not decoded)" || strings.HasPrefix(m.Summary, "MIAM data block"), ID: m.ID, T: m.T, Label: m.Label, Kind: m.Kind, Direction: m.Direction, Summary: m.Summary,
+		byID[m.ID] = m
+	}
+	for _, m := range ms {
+		j := messageJSON{PartOf: partOf[m.ID], Undecoded: m.Kind == "unknown" || m.Summary == "MIAM (not decoded)" || strings.HasPrefix(m.Summary, "MIAM data block"), ID: m.ID, T: m.T, Label: m.Label, Kind: m.Kind, Direction: m.Direction, Summary: m.Summary,
 			Detail: m.Detail, Raw: m.Text, Tail: m.Tail, Flight: m.Flight, Callsign: m.Callsign, Station: m.Station,
 			RxCount: m.RxCount, Lat: m.Lat, Lon: m.Lon, AltFt: m.AltFt, PosT: m.PosT, Suspect: m.Suspect, TimeNote: m.TimeNote, TimeUnverified: m.TimeFlag,
 			Mismatch: m.Mismatch, AFTail: m.AFTail, AFFlight: m.AFFlight}
 		j.Route = s.routeWaypoints(m.Route)
 		j.Airports = atisAirportsOf(m)
+		for _, id := range parts[m.ID] {
+			j.Parts = append(j.Parts, partJSON{ID: id, T: byID[id].T, Label: byID[id].Label})
+		}
 		if m.WxDir != nil || m.WxKt != nil || m.WxTemp != nil {
 			j.Wx = &wxJSON{DirDeg: m.WxDir, Kt: m.WxKt, TempC: m.WxTemp}
 		}
@@ -1010,4 +1020,19 @@ func (s *Server) setFlightRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, toFlightJSON(sg))
+}
+
+// window is the time range a request asks for: "hours" back from now, or, with "until" (RFC 3339), back from then, so
+// a flight from last week can be fetched by itself instead of among the newest rows of a long window. until is never
+// later than a minute from now.
+func (s *Server) window(r *http.Request, defHours, maxHours int) (since, until time.Time) {
+	hours := defHours
+	if h, err := strconv.Atoi(r.URL.Query().Get("hours")); err == nil && h > 0 && h <= maxHours {
+		hours = h
+	}
+	until = s.now().Add(time.Minute)
+	if u, err := time.Parse(time.RFC3339, r.URL.Query().Get("until")); err == nil && u.Before(until) {
+		until = u
+	}
+	return until.Add(-time.Duration(hours) * time.Hour), until
 }
