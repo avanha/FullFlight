@@ -170,6 +170,18 @@ var migrations = []string{
 		source   TEXT NOT NULL DEFAULT '', -- who gave that
 		misses   INTEGER NOT NULL DEFAULT 0 -- asks since then that found it absent, or without a position
 	 );`,
+	// An origin and destination typed in by hand for a flight whose messages never gave one. The flight is
+	// remembered by the span it had when the entry was made; it applies to whichever flight covers that time.
+	`CREATE TABLE IF NOT EXISTS flight_route (
+		id        INTEGER PRIMARY KEY,
+		hex       TEXT NOT NULL,
+		start_ts  INTEGER NOT NULL,
+		end_ts    INTEGER NOT NULL,
+		from_code TEXT NOT NULL DEFAULT '',
+		to_code   TEXT NOT NULL DEFAULT '',
+		created   INTEGER NOT NULL
+	 );
+	 CREATE INDEX IF NOT EXISTS flight_route_hex ON flight_route (hex, start_ts);`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.

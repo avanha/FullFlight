@@ -330,6 +330,17 @@ on the map reads `SQ23 KJFK → WSSS · 31 Oct · dep 15:56Z` (`out 06:44Z` wher
 its hover gives the airport names and how the departure is known. The aircraft's own hover names its flight, route
 and departure the same way.
 
+**Entering a route by hand.** When the messages never gave a flight's origin or destination, pick the flight in the
+**Flights** selector and press **Set route** under it: type the origin and destination (an IATA or ICAO code; the
+boxes suggest airports as you type) and Save. Either end may be left empty. Anything the messages do say wins, so
+an end they reported shows in the form but cannot be changed, and once a message supplies an end you entered, the
+reported one is shown and your entry is ignored (though kept). Entered ends carry a star where a route is written (`KJFK → VHHH*`, with a note under the selector);
+the airframes page shows the star too. An entry belongs to the one flight it was made for (the span it had at the
+time) and nothing else: the next day's flight with the same number starts blank. **Clear** removes it.
+`PUT /api/flights/{hex}/route` with `{"start": <unix seconds inside the flight>, "from": "KSFO", "to": "VHHH"}` does
+the same (400 for a code that is neither a known airport nor four letters or digits; 404 if the aircraft has no
+flight then; both empty clears the entry) and returns the flight.
+
 The **Flights** selector under the watch list chooses what the map and message list show: the **most
 recent flight** (the default), **all flights**, or any one. In the all-flights view each flight is
 drawn on its own (a line never joins two flights), older ones fainter and flagged with their flight

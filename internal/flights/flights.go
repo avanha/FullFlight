@@ -59,6 +59,8 @@ type Segment struct {
 	Positions   int       `json:"positions"`
 	From        string    `json:"from,omitempty"` // from REP081, where the aircraft sends one
 	To          string    `json:"to,omitempty"`
+	FromManual  bool      `json:"from_manual,omitempty"` // From was entered by hand, because no message gave one
+	ToManual    bool      `json:"to_manual,omitempty"`
 	Departed    time.Time `json:"departed,omitzero"`      // when it left, if we know
 	DepartedHow string    `json:"departed_how,omitempty"` // "takeoff", "adsb", "pushback" or "taxi": see store.Departure
 	Identified  bool      `json:"identified"`             // false: a flight whose number we never saw
@@ -271,7 +273,15 @@ func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 			}
 		}
 	}
-	// 7. when each flight left, from the best evidence there is
+	// 7. an origin or destination typed in by hand fills in one the messages never gave (what they give wins)
+	manual, err := st.ManualRoutes(hexAddr, since, until)
+	if err != nil {
+		return nil, err
+	}
+	for i := range segs {
+		applyManualRoute(&segs[i], manual)
+	}
+	// 8. when each flight left, from the best evidence there is
 	deps, err := st.Departures(hexAddr, since.Add(-DepartureSlack), until)
 	if err != nil {
 		return nil, err
@@ -287,6 +297,30 @@ func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 		segs[n-1].Latest = true
 	}
 	return segs, nil
+}
+
+// applyManualRoute fills in the origin and destination of sg that the messages left empty, from the hand-entered
+// route covering it. Where several cover it (a flight that grew to take in two), the newest wins.
+func applyManualRoute(sg *Segment, manual []store.ManualRoute) {
+	var best *store.ManualRoute
+	for i := range manual {
+		m := &manual[i]
+		if m.Start.After(sg.End) || m.End.Before(sg.Start) {
+			continue
+		}
+		if best == nil || m.Created.After(best.Created) || (m.Created.Equal(best.Created) && m.ID > best.ID) {
+			best = m
+		}
+	}
+	if best == nil {
+		return
+	}
+	if sg.From == "" && best.From != "" {
+		sg.From, sg.FromManual = best.From, true
+	}
+	if sg.To == "" && best.To != "" {
+		sg.To, sg.ToManual = best.To, true
+	}
 }
 
 // departureOf picks the departure that belongs to a flight: the best kind of evidence in its span (a takeoff report

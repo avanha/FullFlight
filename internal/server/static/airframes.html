@@ -97,12 +97,13 @@ function flightCell(a) {
   const td = el('td', 'flight');
   const f = a.last_flight;
   if (!f) return td;
-  const route = f.from || f.to ? `${f.from || '?'} \u2192 ${f.to || '?'}` : '';
+  const end = (code, manual) => (code ? code + (manual ? '*' : '') : '?');   // a star: entered by hand, not reported
+  const route = f.from || f.to ? `${end(f.from, f.from_manual)} \u2192 ${end(f.to, f.to_manual)}` : '';
   td.append(document.createTextNode([f.flight || 'unidentified', route].filter(Boolean).join(' ')));
   const how = {takeoff: 'took off', adsb: 'took off', pushback: 'left the gate', taxi: 'began to taxi'}[f.departed_how];
   td.append(el('small', '', f.departed ? `${how || 'departed'} ${fmt(f.departed)}` : `last heard ${ago(f.end)}`));
   td.title = [f.callsign && `Callsign ${f.callsign}`, [f.from_name, f.to_name].filter(Boolean).join(' \u2192 '),
-    `Flight from ${fmt(f.start)} to ${fmt(f.end)}`].filter(Boolean).join('\n');
+    (f.from_manual || f.to_manual) && '* entered by hand', `Flight from ${fmt(f.start)} to ${fmt(f.end)}`].filter(Boolean).join('\n');
   return td;
 }
 

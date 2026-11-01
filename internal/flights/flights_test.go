@@ -358,3 +358,47 @@ func TestDeparture(t *testing.T) {
 		}
 	}
 }
+
+// A route typed in by hand fills what the messages never said, stays on the flight it was entered for,
+// and gives way to a route the messages do give.
+func TestManualRoute(t *testing.T) {
+	r := newRig(t)
+	spread(at(0, 2, 0), 6*time.Hour, 30*time.Minute, func(x time.Time) { r.said(x, "UA869"); r.fix(x) })
+	spread(at(1, 2, 0), 6*time.Hour, 30*time.Minute, func(x time.Time) { r.said(x, "UA870"); r.fix(x) })
+	segs := r.segments()
+	if len(segs) != 2 || segs[0].From != "" || segs[0].To != "" {
+		t.Fatalf("setup: %+v", segs)
+	}
+	enter := func(sg Segment, from, to string) {
+		if err := r.st.SetManualRoute(hex, sg.Start, sg.End, from, to, at(2, 0, 0)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	enter(segs[0], "KSFO", "VHHH")
+	segs = r.segments()
+	if s := segs[0]; s.From != "KSFO" || s.To != "VHHH" || !s.FromManual || !s.ToManual {
+		t.Errorf("first flight after entry: %+v", s)
+	}
+	if s := segs[1]; s.From != "" || s.To != "" || s.FromManual || s.ToManual {
+		t.Errorf("the entry spilled onto the next flight: %+v", s)
+	}
+
+	// Entering again replaces it; one end alone is allowed.
+	enter(segs[0], "", "RJTT")
+	if s := r.segments()[0]; s.From != "" || s.To != "RJTT" || s.FromManual || !s.ToManual {
+		t.Errorf("after replacing: %+v", s)
+	}
+
+	// A destination the messages give wins; the origin they lack is still filled in.
+	r.route(at(0, 3, 0), "", "EDDM")
+	enter(segs[0], "KSFO", "RJTT")
+	if s := r.segments()[0]; s.To != "EDDM" || s.ToManual || s.From != "KSFO" || !s.FromManual {
+		t.Errorf("data should win over the entry for the destination: %+v", s)
+	}
+
+	// Clearing removes it.
+	enter(segs[0], "", "")
+	if s := r.segments()[0]; s.From != "" || s.FromManual {
+		t.Errorf("after clearing: %+v", s)
+	}
+}

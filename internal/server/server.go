@@ -7,6 +7,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"regexp"
@@ -56,6 +57,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/airframes/{hex}/notes/{id}", s.deleteNote)
 	mux.HandleFunc("GET /api/messages/{hex}", s.messages)
 	mux.HandleFunc("GET /api/flights/{hex}", s.flights)
+	mux.HandleFunc("PUT /api/flights/{hex}/route", s.setFlightRoute)
 	mux.HandleFunc("GET /api/plan/{hex}", s.plans)
 	mux.HandleFunc("GET /api/fixes", s.fixes)
 	mux.HandleFunc("GET /api/airports", s.airports)
@@ -484,6 +486,8 @@ type lastFlightJSON struct {
 	Callsign    string    `json:"callsign,omitempty"`
 	From        string    `json:"from,omitempty"`
 	To          string    `json:"to,omitempty"`
+	FromManual  bool      `json:"from_manual,omitempty"` // entered by hand: see flights.Segment
+	ToManual    bool      `json:"to_manual,omitempty"`
 	FromName    string    `json:"from_name,omitempty"`
 	ToName      string    `json:"to_name,omitempty"`
 	Departed    time.Time `json:"departed,omitzero"`
@@ -514,7 +518,7 @@ func (s *Server) lastFlightFor(hex string, now time.Time) *lastFlightJSON {
 				break
 			}
 		}
-		out = &lastFlightJSON{Flight: sg.Flight, Callsign: sg.Callsign, From: sg.From, To: sg.To, Departed: sg.Departed, DepartedHow: sg.DepartedHow, Start: sg.Start, End: sg.End}
+		out = &lastFlightJSON{Flight: sg.Flight, Callsign: sg.Callsign, From: sg.From, To: sg.To, FromManual: sg.FromManual, ToManual: sg.ToManual, Departed: sg.Departed, DepartedHow: sg.DepartedHow, Start: sg.Start, End: sg.End}
 		if a, ok := airports.Lookup(sg.From); ok {
 			out.FromName = a.Name
 		}
@@ -846,6 +850,17 @@ type flightSegJSON struct {
 	ToName   string `json:"to_name,omitempty"`
 }
 
+func toFlightJSON(sg flights.Segment) flightSegJSON {
+	j := flightSegJSON{Segment: sg}
+	if a, ok := airports.Lookup(sg.From); ok {
+		j.FromName = a.Name
+	}
+	if a, ok := airports.Lookup(sg.To); ok {
+		j.ToName = a.Name
+	}
+	return j
+}
+
 // flights lists the flights an aircraft flew, oldest first. Query: hours (default 96, max 720).
 func (s *Server) flights(w http.ResponseWriter, r *http.Request) {
 	hex := strings.ToUpper(r.PathValue("hex"))
@@ -861,14 +876,98 @@ func (s *Server) flights(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]flightSegJSON, 0, len(segs))
 	for _, sg := range segs {
-		j := flightSegJSON{Segment: sg}
-		if a, ok := airports.Lookup(sg.From); ok {
-			j.FromName = a.Name
-		}
-		if a, ok := airports.Lookup(sg.To); ok {
-			j.ToName = a.Name
-		}
-		out = append(out, j)
+		out = append(out, toFlightJSON(sg))
 	}
 	writeJSON(w, 200, out)
+}
+
+// routeAirport reads an airport typed for a flight's route: empty, or an IATA or ICAO code. A known airport is
+// stored by its ICAO code, the form most messages use. A four-character code the airport list lacks is kept as
+// typed (small fields are not in it); anything else unknown is refused, since it is more likely a typo.
+func routeAirport(in string) (string, error) {
+	code := strings.ToUpper(strings.TrimSpace(in))
+	if code == "" {
+		return "", nil
+	}
+	if a, ok := airports.Lookup(code); ok {
+		if a.ICAO != "" {
+			return a.ICAO, nil
+		}
+		return code, nil
+	}
+	if len(code) == 4 && icaoShape.MatchString(code) {
+		return code, nil
+	}
+	return "", fmt.Errorf("%q is not an airport I know: use its 3-letter IATA or 4-letter ICAO code", in)
+}
+
+var icaoShape = regexp.MustCompile(`^[A-Z0-9]{4}$`)
+
+// setFlightRoute enters the origin and destination of one flight by hand, for when no message gave them. Body:
+// {"start": <unix seconds inside the flight>, "from": "KSFO", "to": "VHHH"}; either airport may be empty, and both
+// empty removes the entry. Anything the messages do say about the route wins over what is entered. Answers with the flight.
+func (s *Server) setFlightRoute(w http.ResponseWriter, r *http.Request) {
+	hex, ok := noteHex(w, r)
+	if !ok {
+		return
+	}
+	var raw struct {
+		Start int64  `json:"start"`
+		From  string `json:"from"`
+		To    string `json:"to"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&raw); err != nil {
+		fail(w, 400, "bad JSON")
+		return
+	}
+	from, err := routeAirport(raw.From)
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	to, err := routeAirport(raw.To)
+	if err != nil {
+		fail(w, 400, err.Error())
+		return
+	}
+	if from != "" && from == to {
+		fail(w, 400, "the origin and destination are the same airport")
+		return
+	}
+	now := s.now()
+	find := func() (flights.Segment, bool, error) {
+		segs, err := flights.Segments(s.Store, hex, now.Add(-720*time.Hour), now.Add(time.Minute))
+		if err != nil {
+			return flights.Segment{}, false, err
+		}
+		at := time.Unix(raw.Start, 0)
+		for _, sg := range segs {
+			if !at.Before(sg.Start) && !at.After(sg.End) {
+				return sg, true, nil
+			}
+		}
+		return flights.Segment{}, false, nil
+	}
+	sg, found, err := find()
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	if !found {
+		fail(w, 404, "that aircraft has no flight at that time (within the last 30 days)")
+		return
+	}
+	if err := s.Store.SetManualRoute(hex, sg.Start, sg.End, from, to, now); err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	s.flightMu.Lock()
+	delete(s.flightCache, hex) // the airframes page should show it now, not in a minute
+	s.flightMu.Unlock()
+	sg, _, err = find()
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, toFlightJSON(sg))
 }

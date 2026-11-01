@@ -151,6 +151,19 @@
   <button class="acchead" id="acchead-msgs" title="Fold the messages away"><span class="chev" id="chev-msgs">&#9662;</span> Messages <span class="count" id="msgcount"></span></button>
   <div class="acccontrols">
   <p class="hint" style="margin:8px 0 0"><label>Flights: <select id="flightsel" style="max-width:100%"><option value="recent">no flights identified yet</option></select></label></p>
+  <p class="hint" id="routeedit" style="margin:4px 0 0" hidden>
+    <button type="button" id="routebtn" title="This flight's messages did not say where it went. Enter the origin and destination yourself; anything the messages do say wins.">Set route</button>
+    <span id="routeform" hidden>
+      <label>From <input id="routefrom" list="aptlist" size="5" maxlength="4" autocomplete="off" placeholder="IATA/ICAO"></label>
+      <label>To <input id="routeto" list="aptlist" size="5" maxlength="4" autocomplete="off" placeholder="IATA/ICAO"></label>
+      <button type="button" id="routesave">Save</button>
+      <button type="button" id="routeclear" title="Forget what you entered for this flight">Clear</button>
+      <button type="button" id="routecancel">Cancel</button>
+    </span>
+    <span id="routenote" hidden>* entered by hand</span>
+    <span id="routemsg" style="color:#b00"></span>
+    <datalist id="aptlist"></datalist>
+  </p>
   <p class="hint" style="margin:8px 0 0"><label>Projection: look ahead
     <select id="ahead"><option value="0">off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></label>
     <span title="Dead reckoning from the newest fix. Never from a fix over an hour old, never more than 90 minutes from the fix, never past a known destination. As its newest fix ages the plane fades and shows the age of the fix; at an hour old it is ringed and no estimate is drawn.">ⓘ</span></p>
@@ -1204,10 +1217,12 @@ const FLIGHT_TOL = 20 * 60000;
 let flightSegs = [], flightChoice = 'recent';   // 'recent', 'all', or a flight's id
 try { const v = localStorage.getItem('flightChoice'); if (v === 'all' || v === 'recent') flightChoice = v; } catch (e) { /* default */ }
 const dayLabel = ms => new Date(ms).toUTCString().slice(5, 11);   // "30 Oct"
-const segLabel = s => `${s.flight || 'unidentified'} \u00b7 ${dayLabel(s.startMs)}${s.from || s.to ? ` \u00b7 ${s.from || '?'}\u2192${s.to || '?'}` : ''}`;
+// An airport entered by hand rather than reported carries a star.
+const routeEnd = (code, manual) => (code ? code + (manual ? '*' : '') : '?');
+const segLabel = s => `${s.flight || 'unidentified'} \u00b7 ${dayLabel(s.startMs)}${s.from || s.to ? ` \u00b7 ${routeEnd(s.from, s.from_manual)}\u2192${routeEnd(s.to, s.to_manual)}` : ''}`;
 // How a flight is written where space is short (the flag on the map, the aircraft's hover): "SQ23 KJFK \u2192 WSSS", then
 // when it left if we know ("dep 15:56Z" for a takeoff, "out 06:44Z" for leaving the gate).
-const routeText = s => (s.from || s.to ? `${s.from || '?'} \u2192 ${s.to || '?'}` : '');
+const routeText = s => (s.from || s.to ? `${routeEnd(s.from, s.from_manual)} \u2192 ${routeEnd(s.to, s.to_manual)}` : '');
 const flightText = s => [s.flight || 'unidentified', routeText(s)].filter(Boolean).join(' ');
 const hhmmZ = ms => new Date(ms).toISOString().slice(11, 16) + 'Z';
 const departShort = s => (s.departed ? `${s.departed_how === 'pushback' || s.departed_how === 'taxi' ? 'out' : 'dep'} ${hhmmZ(Date.parse(s.departed))}` : '');
@@ -1242,7 +1257,72 @@ function syncFlightSelector() {
   sel.replaceChildren(...opts.map(([v, text]) => { const o = document.createElement('option'); o.value = v; o.textContent = text; return o; }));
   sel.value = opts.some(([v]) => v === flightChoice) ? flightChoice : 'recent';
   sel.disabled = !flightSegs.length;
+  syncRouteEditor();
 }
+
+// ---- a route entered by hand -----------------------------------------------------------
+// A flight whose messages never named its origin or destination can be given them here (PUT /api/flights/{hex}/route).
+// What the messages do say always wins, so an end they gave is shown but cannot be edited. Only a single flight is
+// edited: with "all flights" chosen there is nothing to edit.
+function syncRouteEditor() {
+  const sg = chosenFlight();
+  const edit = !!sg && (!sg.from || !sg.to || sg.from_manual || sg.to_manual);
+  $('#routeedit').hidden = !edit;
+  if (!edit) $('#routeform').hidden = true;
+  const manual = !!sg && !!(sg.from_manual || sg.to_manual);
+  $('#routebtn').textContent = manual ? 'Edit route' : 'Set route';
+  $('#routenote').hidden = !manual;
+}
+function openRouteEditor() {
+  const sg = chosenFlight();
+  if (!sg) return;
+  for (const [id, code, manual] of [['#routefrom', sg.from, sg.from_manual], ['#routeto', sg.to, sg.to_manual]]) {
+    const input = $(id);
+    input.value = code || '';
+    input.disabled = !!code && !manual;
+    input.title = input.disabled ? "Reported in this flight's messages" : '';
+  }
+  $('#routemsg').textContent = '';
+  $('#routeform').hidden = false;
+}
+async function saveRoute(clear) {
+  const sg = chosenFlight(), w = watches.find(x => x.id === selected);
+  if (!sg || !w) return;
+  const typed = id => ($(id).disabled || clear ? '' : $(id).value.trim());
+  try {
+    await api(`/api/flights/${w.hex}/route`, {method: 'PUT', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({start: Math.floor(sg.startMs / 1000), from: typed('#routefrom'), to: typed('#routeto')})});
+    $('#routeform').hidden = true;
+    $('#routemsg').textContent = '';
+    refresh();
+  } catch (e) { $('#routemsg').textContent = e.message; }
+}
+let routeTimer = 0, routeSuggestSeq = 0;
+// Airports matching what was typed, offered as the input's suggestions. A convenience: failing to fetch them is not an error.
+function suggestAirports(q) {
+  clearTimeout(routeTimer);
+  q = q.trim();
+  if (q.length < 2) return;
+  routeTimer = setTimeout(async () => {
+    const seq = ++routeSuggestSeq;
+    try {
+      const d = await api('/api/airports?q=' + encodeURIComponent(q));
+      if (seq !== routeSuggestSeq || !d) return;
+      $('#aptlist').replaceChildren(...d.airports.slice(0, 12).map(a => {
+        const o = document.createElement('option');
+        o.value = a.iata || a.icao;
+        o.textContent = `${a.name}${a.city ? ', ' + a.city : ''} (${a.icao})`;
+        return o;
+      }));
+    } catch (e) { /* no suggestions */ }
+  }, 200);
+}
+$('#routebtn').onclick = openRouteEditor;
+$('#routesave').onclick = () => saveRoute(false);
+$('#routeclear').onclick = () => saveRoute(true);
+$('#routecancel').onclick = () => { $('#routeform').hidden = true; $('#routemsg').textContent = ''; };
+$('#routefrom').oninput = e => suggestAirports(e.target.value);
+$('#routeto').oninput = e => suggestAirports(e.target.value);
 function chooseFlight(v) {
   flightChoice = v;
   if (v === 'all' || v === 'recent') { try { localStorage.setItem('flightChoice', v); } catch (e) { /* not saved: fine */ } }

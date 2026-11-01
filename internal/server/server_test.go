@@ -1147,3 +1147,76 @@ func TestWatchesCarryWhatTheLastPollFound(t *testing.T) {
 		t.Errorf("a new watch %d inherited %+v", e2.ID, ws[0].Poll)
 	}
 }
+
+// A route typed in for a flight with none: it is checked, applied to that flight only, shown as entered by hand,
+// and replaced by the messages' own route if one turns up.
+func TestSetFlightRoute(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 31, 22, 0, 0, 0, time.UTC)
+	for i := 0; i < 6; i++ { // one flight, UPS65, with positions and no route anywhere
+		st.AddPosition(store.Position{Hex: "A762CC", T: now.Add(-5*time.Hour + time.Duration(i)*10*time.Minute), Lat: 61 + float64(i)/10, Lon: -150, Callsign: "UPS65", Source: "adsb.lol"})
+	}
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	inFlight := now.Add(-4*time.Hour - 30*time.Minute).Unix()
+	put := func(hex string, start int64, from, to string) (int, string) {
+		return do(t, "PUT", ts.URL+"/api/flights/"+hex+"/route", fmt.Sprintf(`{"start":%d,"from":%q,"to":%q}`, start, from, to))
+	}
+	flightsNow := func() flightSegJSON {
+		_, body := do(t, "GET", ts.URL+"/api/flights/A762CC?hours=96", "")
+		var segs []flightSegJSON
+		if err := json.Unmarshal([]byte(body), &segs); err != nil || len(segs) != 1 {
+			t.Fatalf("flights = %s (%v)", body, err)
+		}
+		return segs[0]
+	}
+	if sg := flightsNow(); sg.From != "" || sg.To != "" {
+		t.Fatalf("setup: %+v", sg)
+	}
+
+	code, body := put("A762CC", inFlight, "hkg", "anc") // IATA, any case
+	var sg flightSegJSON
+	if code != 200 || json.Unmarshal([]byte(body), &sg) != nil || sg.From != "VHHH" || sg.To != "PANC" || !sg.FromManual || !sg.ToManual || sg.FromName == "" || sg.ToName == "" {
+		t.Fatalf("PUT = %d %s", code, body)
+	}
+	if got := flightsNow(); got.From != "VHHH" || got.To != "PANC" || !got.FromManual {
+		t.Errorf("GET after PUT: %+v", got)
+	}
+	for name, c := range map[string]struct {
+		hex      string
+		start    int64
+		from, to string
+		want     int
+	}{
+		"too long":               {"A762CC", inFlight, "HKGGG", "ANC", 400},
+		"three letters, unknown": {"A762CC", inFlight, "ZZZ", "ANC", 400},
+		"same airport":           {"A762CC", inFlight, "ANC", "PANC", 400},
+		"no flight then":         {"A762CC", now.Add(-48 * time.Hour).Unix(), "HKG", "ANC", 404},
+		"no such aircraft":       {"780AB8", inFlight, "HKG", "ANC", 404},
+		"not a code":             {"A762CC", inFlight, "H!G", "ANC", 400},
+		"not a hex":              {"zzz", inFlight, "HKG", "ANC", 400},
+	} {
+		if code, body := put(c.hex, c.start, c.from, c.to); code != c.want {
+			t.Errorf("%s: %d %s, want %d", name, code, body, c.want)
+		}
+	}
+	if got := flightsNow(); got.From != "VHHH" || got.To != "PANC" {
+		t.Errorf("a refused entry changed the flight: %+v", got)
+	}
+
+	// A small field the list lacks, as four characters, is kept as typed; one end alone is fine.
+	if code, body := put("A762CC", inFlight, "", "PA9X"); code != 200 {
+		t.Fatalf("PUT = %d %s", code, body)
+	}
+	if got := flightsNow(); got.From != "" || got.To != "PA9X" || got.FromManual || !got.ToManual {
+		t.Errorf("one end only: %+v", got)
+	}
+
+	// The messages' own route wins.
+	pt := now.Add(-4 * time.Hour)
+	st.AddMessage(store.Message{ID: 7, Hex: "A762CC", T: pt, PosT: &pt, Kind: "miam", Label: "MA", Text: "x", Decoded: `{"fields":{"a350":{"Origin":"VHHH","Dest":"PANC"}}}`})
+	if got := flightsNow(); got.From != "VHHH" || got.To != "PANC" || got.FromManual || got.ToManual {
+		t.Errorf("data should win: %+v", got)
+	}
+}

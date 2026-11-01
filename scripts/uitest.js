@@ -64,9 +64,11 @@ const msgs = [
   {id: 4, t: '2026-10-30T15:30:00Z', kind: 'unknown', summary: 'Undecoded H1', raw: 'r4', label: 'H1', rx_count: 1, undecoded: true},
 ];
 let postReply = null, lastPostBody = null;
+let putReply = {status: 200, body: {}}, lastPut = null;   // PUT /api/flights/{hex}/route
 const fetchLog = [];
 global.fetch = async (url, opts) => {
   fetchLog.push(url);
+  if (opts && opts.method === 'PUT') { lastPut = {url, body: JSON.parse(opts.body)}; return { status: putReply.status, ok: putReply.status < 400, json: async () => putReply.body }; }
   if (opts && opts.method === 'POST') { lastPostBody = JSON.parse(opts.body); return { status: postReply.status, ok: postReply.status < 400, json: async () => postReply.body }; }
   const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : url.startsWith('/api/flights') ? flightData : url.startsWith('/api/plan') ? planData : null;
   return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(body)) };   // a fresh copy each time, like a real response
@@ -1117,6 +1119,76 @@ highlightGroup = null;
   assert.strictEqual(document.querySelector('#notestitle').textContent, 'Notes · ' + NOTEHEX);
   watch.tail = savedTail; watch.type = savedType; delete watch.notes; delete watch.last_note; await t.refresh();
   document.querySelector('#notesclose').onclick();
+
+  // ===== 8s. a route entered by hand ==============================================================
+  {
+    const hexOf = t.watches()[0].hex;
+    const flight = extra => seg('CX900@3', 'CX900', '2026-10-30T10:00:00Z', '2026-10-30T20:00:00Z', {latest: true, ...extra});
+    const startSecs = Date.parse('2026-10-30T10:00:00Z') / 1000;
+    const editor = () => ({hidden: byId['#routeedit'].hidden, button: byId['#routebtn'].textContent, form: byId['#routeform'].hidden, note: byId['#routenote'].hidden});
+    const choose = async c => { t.chooseFlight(c); await settle(); };
+
+    // no route anywhere: the editor is offered
+    await withFlights([flight()], async () => {
+      await choose('recent');
+      assert.deepStrictEqual(editor(), {hidden: false, button: 'Set route', form: true, note: true});
+      byId['#routebtn'].onclick();
+      assert.strictEqual(byId['#routeform'].hidden, false);
+      assert.ok(!byId['#routefrom'].disabled && !byId['#routeto'].disabled, 'both ends can be typed');
+      byId['#routefrom'].value = 'hkg'; byId['#routeto'].value = ' anc ';
+      lastPut = null;
+      await byId['#routesave'].onclick(); await settle();
+      assert.strictEqual(lastPut.url, `/api/flights/${hexOf}/route`);
+      assert.deepStrictEqual(lastPut.body, {start: startSecs, from: 'hkg', to: ' anc '.trim()});
+      assert.strictEqual(byId['#routeform'].hidden, true, 'the form closes once it is saved');
+
+      // the server refuses: the message is shown and the form stays open
+      byId['#routebtn'].onclick();
+      putReply = {status: 400, body: {error: '"ZZZ" is not an airport I know'}};
+      await byId['#routesave'].onclick(); await settle();
+      assert.strictEqual(byId['#routemsg'].textContent, '"ZZZ" is not an airport I know');
+      assert.strictEqual(byId['#routeform'].hidden, false);
+      putReply = {status: 200, body: {}};
+      // Clear sends nothing for either end
+      await byId['#routeclear'].onclick(); await settle();
+      assert.deepStrictEqual(lastPut.body, {start: startSecs, from: '', to: ''});
+      byId['#routebtn'].onclick(); byId['#routecancel'].onclick();
+      assert.strictEqual(byId['#routeform'].hidden, true); assert.strictEqual(byId['#routemsg'].textContent, '');
+
+      // with every flight shown there is nothing to edit
+      await choose('all');
+      assert.strictEqual(byId['#routeedit'].hidden, true);
+    });
+
+    // the messages gave the origin: it is shown, cannot be changed, and is never sent
+    await withFlights([flight({from: 'KJFK', from_name: 'John F Kennedy Intl'})], async () => {
+      await choose('recent');
+      assert.strictEqual(byId['#routeedit'].hidden, false, 'the destination is still missing');
+      byId['#routebtn'].onclick();
+      assert.ok(byId['#routefrom'].disabled && byId['#routefrom'].value === 'KJFK' && !byId['#routeto'].disabled);
+      byId['#routeto'].value = 'VHHH';
+      await byId['#routesave'].onclick(); await settle();
+      assert.deepStrictEqual(lastPut.body, {start: startSecs, from: '', to: 'VHHH'});
+    });
+
+    // a complete route from the messages: nothing to enter
+    await withFlights([flight({from: 'KJFK', to: 'VHHH'})], async () => {
+      await choose('recent');
+      assert.strictEqual(byId['#routeedit'].hidden, true);
+    });
+
+    // entered by hand: starred where the route is written, and the button says Edit
+    await withFlights([flight({from: 'KJFK', to: 'VHHH', to_manual: true})], async () => {
+      await choose('recent');
+      assert.deepStrictEqual(editor(), {hidden: false, button: 'Edit route', form: true, note: false});
+      assert.strictEqual(byId['#flightsel'].children[2].textContent, 'CX900 \u00b7 30 Oct \u00b7 KJFK\u2192VHHH*');
+      byId['#routebtn'].onclick();
+      assert.ok(byId['#routefrom'].disabled && !byId['#routeto'].disabled && byId['#routeto'].value === 'VHHH', 'only the end entered by hand can be edited');
+      byId['#routecancel'].onclick();
+      const r2 = await drawF();
+      assert.ok(flagsOf(r2).some(f => f.o.icon.html.textContent.startsWith('CX900 KJFK \u2192 VHHH* ')), flagsOf(r2).map(f => f.o.icon.html.textContent).join(' | '));
+    });
+  }
 
   // 9. a watch with no aircraft yet clears the map without error
   await t.showTrack({id: 9, hex: ''}, true);

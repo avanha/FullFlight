@@ -944,3 +944,39 @@ func TestUnverifiedPositionsDoNotMakeAFlight(t *testing.T) {
 		t.Errorf("position times = %v", got)
 	}
 }
+
+func TestManualRoutes(t *testing.T) {
+	s := open(t)
+	t0 := now.Add(-10 * time.Hour)
+	t1 := now.Add(-4 * time.Hour)
+	if err := s.SetManualRoute("780AB8", t0, t1, "KSEA", "VHHH", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetManualRoute("780AB8", now.Add(-3*time.Hour), now, "VHHH", "", now); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetManualRoute("A48E3A", t0, t1, "KJFK", "", now); err != nil { // another aircraft
+		t.Fatal(err)
+	}
+	got, err := s.ManualRoutes("780AB8", now.Add(-24*time.Hour), now)
+	if err != nil || len(got) != 2 || got[0].From != "KSEA" || got[0].To != "VHHH" || got[1].From != "VHHH" || got[1].To != "" {
+		t.Fatalf("got %+v, %v", got, err)
+	}
+	if got, _ := s.ManualRoutes("780AB8", now.Add(-24*time.Hour), now.Add(-8*time.Hour)); len(got) != 1 {
+		t.Errorf("only the first overlaps: %+v", got)
+	}
+	// An entry for a span that overlaps an earlier one replaces it.
+	if err := s.SetManualRoute("780AB8", t0.Add(time.Hour), t1.Add(time.Hour), "KSFO", "RJTT", now); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.ManualRoutes("780AB8", now.Add(-24*time.Hour), now.Add(-3*time.Hour-time.Minute)); len(got) != 1 || got[0].From != "KSFO" {
+		t.Errorf("replace: %+v", got)
+	}
+	// Both empty clears it.
+	if err := s.SetManualRoute("780AB8", t0, t1, "", "", now); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.ManualRoutes("780AB8", now.Add(-24*time.Hour), now.Add(-3*time.Hour-time.Minute)); len(got) != 0 {
+		t.Errorf("clear: %+v", got)
+	}
+}
