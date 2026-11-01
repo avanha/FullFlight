@@ -23,6 +23,7 @@
   tr.off td { color: #999; }
   tr.busy td { background: #fffbe6; }
   tr.done td { background: #f0faf0; }
+  tr.before td { color: #888; }
   #empty { color: #777; padding: 16px 8px; }
   #summary { margin: 10px 0; }
   #summary.bad { color: #b45309; }
@@ -88,7 +89,8 @@ let picked = new Set();        // the days ticked
 let running = false, timer = null, wasRunning = false;
 
 const scopeHex = () => $('#scope').value;
-const chosen = () => days.filter(d => picked.has(d.day)).map(d => d.day);
+const todo = () => days.filter(d => !d.done);   // the days with something left to read; the others are listed to show what the cache holds
+const chosen = () => todo().filter(d => picked.has(d.day)).map(d => d.day);
 
 async function fillScope() {
   let ws = [];
@@ -120,7 +122,7 @@ async function loadPlan(reset) {
   try { p = await api(`/api/backfill/plan?hex=${encodeURIComponent(scopeHex())}`); } catch (e) { $('#err').textContent = e.message; return; }
   const before = picked;
   days = p.days;
-  picked = new Set(days.filter(d => reset || !before.size || before.has(d.day)).map(d => d.day));
+  picked = new Set(todo().filter(d => reset || !before.size || before.has(d.day)).map(d => d.day));
   await totals();
 }
 // what the ticked days come to: the server counts the download and what the cache would have to give up
@@ -128,14 +130,14 @@ async function totals() {
   let p;
   try { p = await api(`/api/backfill/plan?hex=${encodeURIComponent(scopeHex())}&days=${chosen().join(',')}`); } catch (e) { $('#err').textContent = e.message; return; }
   renderRows(null);
-  $('#empty').hidden = days.length > 0;
+  $('#empty').hidden = todo().length > 0;
   const n = chosen().length, s = $('#summary');
   s.className = p.too_big ? 'bad' : '';
   s.textContent = n
     ? `${n} day${n === 1 ? '' : 's'} chosen, for ${p.aircraft} aircraft: ${GB(p.download_bytes)} to download. Cache ${GB(p.cache_bytes)} of ${GB(p.cache_limit_bytes)}.` +
       (p.evict && p.evict.length ? ` To make room it would delete the oldest cached ${p.evict.length === 1 ? 'day' : 'days'}: ${p.evict.join(', ')}.` : '') +
       (p.too_big ? ' That does not fit in the cache limit.' : '')
-    : days.length ? 'No days chosen.' : '';
+    : todo().length ? 'No days chosen.' : '';
   $('#start').disabled = running || !n || !!p.too_big;
 }
 
@@ -144,13 +146,13 @@ function renderRows(st) {
   $('#rows').replaceChildren(...days.map(d => {
     const tr = document.createElement('tr');
     const cell = (cls, text) => { const td = document.createElement('td'); td.className = cls; td.textContent = text; tr.append(td); return td; };
-    const box = document.createElement('input'); box.type = 'checkbox'; box.checked = picked.has(d.day); box.disabled = running;
+    const box = document.createElement('input'); box.type = 'checkbox'; box.checked = !d.done && picked.has(d.day); box.disabled = running || !!d.done;
     box.onchange = () => { box.checked ? picked.add(d.day) : picked.delete(d.day); totals(); };
     const first = document.createElement('td'); first.append(box); tr.append(first);
     cell('day', d.day); cell('num', String(d.aircraft));
-    cell('', d.cached ? 'in the cache' : 'to download');
-    cell('num', d.cached ? '—' : `≈${GB(d.bytes)}`);
-    let result = '', cls = picked.has(d.day) ? '' : 'off';
+    cell('', d.cached ? 'in the cache' : d.done ? 'not in the cache' : 'to download');
+    cell('num', d.cached || d.done ? '—' : `≈${GB(d.bytes)}`);
+    let result = d.done ? (d.aircraft === 1 ? 'searched for its aircraft' : `searched for all ${d.aircraft} aircraft`) : '', cls = d.done ? 'before' : picked.has(d.day) ? '' : 'off';
     if (d.day in read) { result = `${read[d.day]} positions added`; cls = 'done'; }
     else if (st && st.running && st.day === d.day) {
       cls = 'busy';
@@ -160,7 +162,7 @@ function renderRows(st) {
     tr.className = cls;
     return tr;
   }));
-  $('#tickall').checked = days.length > 0 && chosen().length === days.length;
+  $('#tickall').checked = todo().length > 0 && chosen().length === todo().length;
 }
 
 function showStatus(st) {
@@ -190,9 +192,9 @@ async function poll() {
 }
 
 $('#scope').onchange = () => loadPlan(true);
-$('#selall').onclick = () => { picked = new Set(days.map(d => d.day)); totals(); };
+$('#selall').onclick = () => { picked = new Set(todo().map(d => d.day)); totals(); };
 $('#selnone').onclick = () => { picked = new Set(); totals(); };
-$('#selcached').onclick = () => { picked = new Set(days.filter(d => d.cached).map(d => d.day)); totals(); };
+$('#selcached').onclick = () => { picked = new Set(todo().filter(d => d.cached).map(d => d.day)); totals(); };
 $('#tickall').onchange = () => ($('#tickall').checked ? $('#selall') : $('#selnone')).onclick();
 $('#start').onclick = async () => {
   $('#err').textContent = '';

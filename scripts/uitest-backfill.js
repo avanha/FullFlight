@@ -19,7 +19,8 @@ function newWorld(search, setup) {
   w.document = {querySelector: s => w.byId[s] ||= new El(s), createElement: t => new El(t)};
   w.enabled = true;
   w.watches = [{hex: '780AB8', tail: 'B-LRM', ident: 'B-LRM'}, {hex: '7C4926', tail: 'VH-OQG', ident: 'VH-OQG'}, {hex: '780AB8', tail: 'B-LRM', ident: 'B-LRM'}];
-  w.days = [{day: '2026-10-31', aircraft: 2, cached: true, bytes: 0}, {day: '2026-10-30', aircraft: 2, cached: false, bytes: 3.5e9}, {day: '2026-10-29', aircraft: 1, cached: false, bytes: 3.5e9}];
+  w.days = [{day: '2026-10-31', aircraft: 2, cached: true, bytes: 0}, {day: '2026-10-30', aircraft: 2, cached: false, bytes: 3.5e9}, {day: '2026-10-29', aircraft: 1, cached: false, bytes: 3.5e9},
+    {day: '2026-10-28', aircraft: 21, cached: true, bytes: 0, done: true}, {day: '2026-10-27', aircraft: 1, cached: false, bytes: 0, done: true}];
   w.cacheBytes = 3.3e9; w.limit = 10e9;
   w.status = {running: false, days_done: 0, days_total: 0, bytes_done: 0, bytes_total: 0, positions_added: 0};
   w.fetch = async (url, opts = {}) => {
@@ -33,7 +34,7 @@ function newWorld(search, setup) {
     const m = url.match(/^\/api\/backfill\/plan\?hex=([^&]*)(?:&days=(.*))?$/);
     if (m) {
       const only = m[2] === undefined ? null : m[2].split(',').filter(Boolean);
-      const days = w.days.map(d => ({...d, selected: only === null || only.includes(d.day)}));
+      const days = w.days.map(d => ({...d, selected: !d.done && (only === null || only.includes(d.day))}));
       const sel = days.filter(d => d.selected), dl = sel.reduce((n, d) => n + d.bytes, 0);
       const tooBig = w.cacheBytes + dl > w.limit && sel.length > 0 && !w.evictable;
       return reply(200, {days, aircraft: sel.length ? 2 : 0, download_bytes: dl, cache_bytes: w.cacheBytes, cache_limit_bytes: w.limit,
@@ -63,8 +64,10 @@ function newWorld(search, setup) {
 
   // every day is listed, with what it would cost, all ticked to start with
   let rows = rowsOf(w);
-  assert.deepStrictEqual(rows.map(r => r.text), [['2026-10-31', '2', 'in the cache', '—', ''], ['2026-10-30', '2', 'to download', '≈3.5 GB', ''], ['2026-10-29', '1', 'to download', '≈3.5 GB', '']]);
-  assert.ok(rows.every(r => r.box.checked && !r.box.disabled), 'all ticked');
+  assert.deepStrictEqual(rows.map(r => r.text), [['2026-10-31', '2', 'in the cache', '—', ''], ['2026-10-30', '2', 'to download', '≈3.5 GB', ''], ['2026-10-29', '1', 'to download', '≈3.5 GB', ''],
+    ['2026-10-28', '21', 'in the cache', '—', 'searched for all 21 aircraft'], ['2026-10-27', '1', 'not in the cache', '—', 'searched for its aircraft']]);
+  // a day already read is listed, greyed, and cannot be ticked, so the cache's contents can be seen
+  assert.deepStrictEqual(rows.map(r => [r.box.checked, r.box.disabled, r.tr.className]), [[true, false, ''], [true, false, ''], [true, false, ''], [false, true, 'before'], [false, true, 'before']]);
   assert.strictEqual(w.byId['#tickall'].checked, true);
   assert.match(w.byId['#summary'].textContent, /^3 days chosen, for 2 aircraft: 7\.0 GB to download\. Cache 3\.3 GB of 10\.0 GB\. That does not fit in the cache limit\.$/, w.byId['#summary'].textContent);
   assert.strictEqual(w.byId['#start'].disabled, true, 'too big for the cache with nothing to give up');
@@ -83,10 +86,10 @@ function newWorld(search, setup) {
   await w.byId['#selnone'].onclick(); await w.settle();
   assert.strictEqual(w.byId['#summary'].textContent, 'No days chosen.'); assert.strictEqual(w.byId['#start'].disabled, true);
   await w.byId['#selcached'].onclick(); await w.settle();
-  assert.deepStrictEqual(rowsOf(w).map(r => r.box.checked), [true, false, false]);
+  assert.deepStrictEqual(rowsOf(w).map(r => r.box.checked), [true, false, false, false, false]);
   assert.match(w.byId['#summary'].textContent, /^1 day chosen, for 2 aircraft: 0\.0 GB to download/);
   await w.byId['#selall'].onclick(); await w.settle();
-  assert.ok(rowsOf(w).every(r => r.box.checked));
+  assert.ok(rowsOf(w).slice(0, 3).every(r => r.box.checked), 'all the days left to read are ticked again');
 
   // a cache that would have to give up an old day says so, and may still start
   w.evictable = true; await w.byId['#selall'].onclick(); await w.settle();

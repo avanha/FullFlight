@@ -58,8 +58,9 @@ type PlanDay struct {
 	Day      string `json:"day"`
 	Aircraft int    `json:"aircraft"` // how many aircraft would be looked for
 	Cached   bool   `json:"cached"`
-	Bytes    int64  `json:"bytes"`    // to download: 0 when cached
-	Selected bool   `json:"selected"` // among the days this plan is for; the totals count only these
+	Bytes    int64  `json:"bytes"`          // to download: 0 when cached
+	Selected bool   `json:"selected"`       // among the days this plan is for; the totals count only these
+	Done     bool   `json:"done,omitempty"` // every aircraft has been searched for on this day; it is listed to show what the cache holds
 }
 
 // Plan is what a backfill would do.
@@ -123,12 +124,14 @@ func (m *Manager) Plan(hexAddr string, only []string) (Plan, error) {
 				todo = append(todo, h)
 			}
 		}
+		_, cacheErr := m.Cache.Parts(day)
 		if len(todo) == 0 {
+			p.Days = append(p.Days, PlanDay{Day: day, Aircraft: len(hs), Cached: cacheErr == nil, Done: true})
 			continue
 		}
 		sort.Strings(todo)
 		pd := PlanDay{Day: day, Aircraft: len(todo), Selected: only == nil || chosen[day]}
-		if _, err := m.Cache.Parts(day); err != nil {
+		if cacheErr != nil {
 			pd.Bytes = EstDayBytes
 		} else {
 			pd.Cached = true
@@ -154,7 +157,10 @@ func (m *Manager) Plan(hexAddr string, only []string) (Plan, error) {
 	p.Aircraft = len(seen)
 	sort.Slice(p.Days, func(i, j int) bool {
 		a, b := p.Days[i], p.Days[j]
-		if a.Cached != b.Cached {
+		if a.Done != b.Done {
+			return !a.Done // what is left to do first
+		}
+		if a.Cached != b.Cached && !a.Done {
 			return a.Cached
 		}
 		return a.Day > b.Day
@@ -234,13 +240,17 @@ func (m *Manager) Start(hexAddr string, only []string) error {
 		return err
 	}
 	var days []PlanDay
+	todo := 0
 	for _, d := range p.Days {
 		if d.Selected {
 			days = append(days, d)
 		}
+		if !d.Done {
+			todo++
+		}
 	}
 	if len(days) == 0 {
-		if len(p.Days) > 0 {
+		if todo > 0 {
 			return errors.New("no days chosen")
 		}
 		return errors.New("nothing to do: every day with data for these aircraft has been searched, or is not published yet")

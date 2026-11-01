@@ -441,7 +441,7 @@ Nothing is downloaded or read unless `enabled` is on and you start it. The hambu
 panel has **Backfill history...**, which opens its own screen (`/backfill.html`; opened from the map with an aircraft
 selected, it starts on that aircraft). The screen lists every day that could be read, with how many aircraft it is for,
 whether it is already in the cache or would be downloaded (a day is 3 to 4 GB, in two or three tar parts), and its size.
-Tick the days to read (all, none, or only the cached ones are one click each); under the list it says what the chosen
+Days already read for all their aircraft stay listed, greyed and not tickable, so what the cache holds can be seen. Tick the days to read (all, none, or only the cached ones are one click each); under the list it says what the chosen
 days come to: the download, the cache's room, and which old days would be deleted to make room. Press Start. Each row
 shows its progress and, once read, how many positions it gave. Stop ends the run after the file in hand; a half-finished
 download is kept and resumed next time. The aircraft can be the one selected or all tracked aircraft.

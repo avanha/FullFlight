@@ -296,8 +296,13 @@ func TestOnlyTheDaysChosenAreRead(t *testing.T) {
 	if _, err := cache.Parts("2026-10-31"); err == nil {
 		t.Error("a day that was not chosen was downloaded")
 	}
-	// the other day is still to do
-	if p, _ = m.Plan("", nil); len(p.Days) != 1 || p.Days[0].Day != "2026-10-31" {
+	// the other day is still to do; the one read stays listed, done and in the cache, and cannot be chosen again
+	p, _ = m.Plan("", nil)
+	if len(p.Days) != 2 || p.Days[0].Day != "2026-10-31" || p.Days[0].Done || p.Days[0].Cached ||
+		p.Days[1].Day != "2026-10-30" || !p.Days[1].Done || !p.Days[1].Cached || p.Days[1].Selected || p.Download != EstDayBytes {
 		t.Errorf("%+v", p.Days)
+	}
+	if _, err := m.Plan("", []string{"2026-10-30"}); err == nil || !strings.Contains(err.Error(), "2026-10-30") {
+		t.Errorf("choosing a day already read: %v", err)
 	}
 }
