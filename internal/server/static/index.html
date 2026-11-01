@@ -154,15 +154,15 @@
   <p class="hint" id="routeedit" style="margin:4px 0 0" hidden>
     <button type="button" id="routebtn" title="This flight's messages did not say where it went. Enter the origin and destination yourself; anything the messages do say wins.">Set route</button>
     <span id="routeform" hidden>
-      <label>From <input id="routefrom" list="aptlist" size="5" maxlength="4" autocomplete="off" placeholder="IATA/ICAO"></label>
-      <label>To <input id="routeto" list="aptlist" size="5" maxlength="4" autocomplete="off" placeholder="IATA/ICAO"></label>
+      <label>From <input id="routefrom" list="routeapts" size="5" maxlength="4" autocomplete="off" placeholder="IATA/ICAO"></label>
+      <label>To <input id="routeto" list="routeapts" size="5" maxlength="4" autocomplete="off" placeholder="IATA/ICAO"></label>
       <button type="button" id="routesave">Save</button>
       <button type="button" id="routeclear" title="Forget what you entered for this flight">Clear</button>
       <button type="button" id="routecancel">Cancel</button>
     </span>
     <span id="routenote" hidden>* entered by hand</span>
     <span id="routemsg" style="color:#b00"></span>
-    <datalist id="aptlist"></datalist>
+    <datalist id="routeapts"></datalist>
   </p>
   <p class="hint" style="margin:8px 0 0"><label>Projection: look ahead
     <select id="ahead"><option value="0">off</option><option value="15">15 min</option><option value="30">30 min</option><option value="60">60 min</option></select></label>
@@ -1308,7 +1308,7 @@ function suggestAirports(q) {
     try {
       const d = await api('/api/airports?q=' + encodeURIComponent(q));
       if (seq !== routeSuggestSeq || !d) return;
-      $('#aptlist').replaceChildren(...d.airports.slice(0, 12).map(a => {
+      $('#routeapts').replaceChildren(...d.airports.slice(0, 12).map(a => {
         const o = document.createElement('option');
         o.value = a.iata || a.icao;
         o.textContent = `${a.name}${a.city ? ', ' + a.city : ''} (${a.icao})`;

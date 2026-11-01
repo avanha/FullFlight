@@ -4,6 +4,17 @@ const fs = require('fs'), vm = require('vm'), assert = require('assert');
 const html = fs.readFileSync(require('path').join(__dirname, '../internal/server/static/index.html'), 'utf8');
 const src = html.match(/<script>\n(const map[\s\S]*?)<\/script>/)[1];
 
+// Two elements with one id make $('#id') find the first, and whatever draws into the second draws into the wrong place
+// (a route-suggestion list once took over the airport list this way). Every page must have each id once, and every
+// list="..." must name an id that exists.
+for (const page of ['index.html', 'airframes.html']) {
+  const text = fs.readFileSync(require('path').join(__dirname, '../internal/server/static', page), 'utf8');
+  const ids = [...text.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
+  const dup = ids.filter((id, i) => ids.indexOf(id) !== i);
+  assert.deepStrictEqual(dup, [], `${page}: duplicate ids ${dup}`);
+  for (const m of text.matchAll(/\blist="([^"]+)"/g)) assert.ok(ids.includes(m[1]), `${page}: list="${m[1]}" names no element`);
+}
+
 // --- a just-enough DOM ---
 class El {
   constructor(tag) { this.tag = tag; this.children = []; this.textContent = ''; this.className = ''; this.hidden = false; this.title = ''; this.dataset = {}; this.style = {};
@@ -50,6 +61,7 @@ const L = {
 };
 // --- the server ---
 const planData = [];     // what /api/plan returns
+const airportData = {total: 1, airports: [{icao: 'FAOR', iata: 'JNB', name: 'O.R. Tambo International Airport', city: 'Johannesburg'}]};   // what /api/airports returns
 const flightData = [];   // what /api/flights returns; empty unless a test sets it
 const storage = {trackMode: 'source'};   // the older tests below look at the per-source lines; the unified track has its own (8c2)
 const watch = {id: 1, kind: 'tail', ident: 'B-LRM', start: '2026-10-30T10:00:00Z', end: '2026-11-01T00:00:00Z', status: 'tracking',
@@ -70,12 +82,12 @@ global.fetch = async (url, opts) => {
   fetchLog.push(url);
   if (opts && opts.method === 'PUT') { lastPut = {url, body: JSON.parse(opts.body)}; return { status: putReply.status, ok: putReply.status < 400, json: async () => putReply.body }; }
   if (opts && opts.method === 'POST') { lastPostBody = JSON.parse(opts.body); return { status: postReply.status, ok: postReply.status < 400, json: async () => postReply.body }; }
-  const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : url.startsWith('/api/flights') ? flightData : url.startsWith('/api/plan') ? planData : null;
+  const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : url.startsWith('/api/flights') ? flightData : url.startsWith('/api/plan') ? planData : url.startsWith('/api/airports') ? airportData : null;
   return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(body)) };   // a fresh copy each time, like a real response
 };
 let intervals = [];
 const ctx = { document, L, fetch, console, Date, Number, Math, Set, Map, setInterval: (f, ms) => intervals.push([f, ms]), FormData: class { constructor(form) { this.v = (form && form.values) || {}; } get(k) { return this.v[k] ?? ''; } },
-  setTimeout: f => { calls.timers.push(f); }, window: {isSecureContext: true},
+  setTimeout: f => { calls.timers.push(f); }, clearTimeout: () => {}, window: {isSecureContext: true},
   mountNotes: (container, hex, opts) => { calls.mounted.push({container, hex, opts}); },
   localStorage: {getItem: k => (k in storage ? storage[k] : null), setItem: (k, v) => { storage[k] = String(v); }},
   navigator: {clipboard: {writeText: async t => { calls.copied.push(t); }}} };
@@ -1158,6 +1170,21 @@ highlightGroup = null;
       // with every flight shown there is nothing to edit
       await choose('all');
       assert.strictEqual(byId['#routeedit'].hidden, true);
+    });
+
+    // typing offers airports (by IATA code, so JNB finds O.R. Tambo) in the route boxes' own list, and leaves the airport tab's alone
+    await withFlights([flight()], async () => {
+      await choose('recent');
+      byId['#routebtn'].onclick();
+      document.querySelector('#aptlist').children = [];
+      calls.timers.length = 0;
+      byId['#routeto'].oninput({target: {value: 'jnb'}});
+      await calls.timers.pop()();
+      const opts = document.querySelector('#routeapts').children;
+      assert.deepStrictEqual(opts.map(o => o.value), ['JNB']);
+      assert.ok(/Tambo/.test(opts[0].textContent) && /FAOR/.test(opts[0].textContent), opts[0].textContent);
+      assert.strictEqual(document.querySelector('#aptlist').children.length, 0, 'the airport tab\'s list is not the suggestions\' list');
+      byId['#routecancel'].onclick();
     });
 
     // the messages gave the origin: it is shown, cannot be changed, and is never sent

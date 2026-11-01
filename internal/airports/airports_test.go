@@ -57,3 +57,23 @@ func TestSearch(t *testing.T) {
 		t.Errorf("blank = %+v", got)
 	}
 }
+
+// Johannesburg is found by its IATA code (typed for a flight's route), by ICAO code and by name.
+func TestJohannesburg(t *testing.T) {
+	if a, ok := Lookup("jnb"); !ok || a.ICAO != "FAOR" {
+		t.Errorf("Lookup(jnb) = %+v, %v", a, ok)
+	}
+	if a, ok := Lookup("FAOR"); !ok || a.IATA != "JNB" {
+		t.Errorf("Lookup(FAOR) = %+v, %v", a, ok)
+	}
+	for _, q := range []string{"JNB", "FAOR", "tambo"} {
+		got, _ := Search(q, 12)
+		found := false
+		for _, a := range got {
+			found = found || a.ICAO == "FAOR"
+		}
+		if !found {
+			t.Errorf("Search(%q) does not find O.R. Tambo: %+v", q, got)
+		}
+	}
+}
