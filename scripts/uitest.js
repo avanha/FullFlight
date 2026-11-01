@@ -1077,7 +1077,7 @@ highlightGroup = null;
     assert.ok(Math.abs(dots[0].ll[0] - 10) < 1e-3 && Math.abs(dots[0].ll[1] - 20.3) < 2e-3, 'half way between the fixes: ' + JSON.stringify(dots[0].ll));
     assert.ok(!labelOf(r2) && rings().length === 0, 'the airports show only when the message is selected');
     const tt = lines(dots[0].tooltip);
-    assert.ok(tt[0] === 'D-ATIS arrival request: RJBB / KIX' && tt.includes('position estimated between the fixes either side') && tt.includes('click to show the airports'), tt.join(' | '));
+    assert.ok(tt[0] === 'D-ATIS arrival request: RJBB' && tt.includes('position estimated between the fixes either side') && tt.includes('click to show the airports'), tt.join(' | '));
     // it is on the legend, as its own layer
     const entry = Object.keys(calls.legendExtra).find(k => /D-ATIS requests/.test(k));
     assert.ok(entry && calls.legendExtra[entry] === groups.find(g => g === calls.legendExtra[entry]), 'D-ATIS requests have a legend entry');
@@ -1089,12 +1089,12 @@ highlightGroup = null;
     assert.strictEqual(rings().length, 1);
     assert.strictEqual(JSON.stringify(rings()[0].ll), '[34.43,135.24]');
     const lab = labelOf({markers: calls.markers});
-    assert.strictEqual(lab.o.icon.html.textContent, 'ATIS KIX arr');
+    assert.strictEqual(lab.o.icon.html.textContent, 'ATIS RJBB arr');
     assert.strictEqual(lab.o.draggable, true, 'it can be dragged');
     assert.ok(Math.abs(lab.ll[0] - 37.43) < 1e-6 && Math.abs(lab.ll[1] - 138.64) < 1e-6, 'held up and to the right of the airport: ' + JSON.stringify(lab.ll));
     assert.ok(calls.lines.some(l => l.o.color === '#7c3aed' && JSON.stringify(l.ll[0]) === '[34.43,135.24]'), 'a line joins it back to the airport');
     const tl = lines(rings()[0].tooltip);
-    assert.ok(tl[0] === 'D-ATIS: RJBB / KIX' && tl.includes('arrival request'), tl.join(' | '));
+    assert.ok(tl[0] === 'D-ATIS: RJBB' && tl.includes('arrival request'), tl.join(' | '));
     const fits = calls.fitBounds;
     t.pickMessage(402);   // the same message again (a refresh does this): no new zoom
     assert.strictEqual(calls.fitBounds, fits, 'in view already, and not refitted');
@@ -1108,13 +1108,13 @@ highlightGroup = null;
     // dragging the label keeps the new place as an offset from the airport, and it is used the next time
     calls.markers.length = 0;
     t.pickMessage(402);
-    const lab2 = labelOf({markers: calls.markers}, 'ATIS KIX arr');
+    const lab2 = labelOf({markers: calls.markers}, 'ATIS RJBB arr');
     lab2.ll = [30.43, 130.24];
     lab2.handlers.dragend();
     assert.strictEqual(storage.calloutPos, JSON.stringify({'atis:RJBB': [-50, 40]}), storage.calloutPos);
     calls.markers.length = 0;
     t.pickMessage(403); t.pickMessage(402);
-    const again = labelOf({markers: calls.markers}, 'ATIS KIX arr');
+    const again = labelOf({markers: calls.markers}, 'ATIS RJBB arr');
     assert.ok(Math.abs(again.ll[0] - 30.43) < 1e-6 && Math.abs(again.ll[1] - 130.24) < 1e-6, 'it stays where it was put: ' + JSON.stringify(again.ll));
     again.ll = [0, 0];
     mapHandlers.zoomend();
@@ -1483,7 +1483,7 @@ highlightGroup = null;
         {icao: 'HKGA', iata: 'GAS', name: 'Garissa Airport', city: 'Garissa', lat: -0.46, lon: 39.64});
       await type('#routeto', 'HKG');
       const rows = () => list().children.map(li => li.children[0].textContent + ' | ' + li.children[1].textContent);
-      assert.deepStrictEqual(rows(), ['VHHH / HKG | Hong Kong International Airport', 'HKGA / GAS | Garissa Airport'], 'the exact code first, as in the tab, and not filtered away');
+      assert.deepStrictEqual(rows(), ['VHHH | Hong Kong International Airport', 'HKGA | Garissa Airport'], 'the exact code first, written as ICAO whatever was typed, and not filtered away');
       assert.strictEqual(list().hidden, false);
       assert.strictEqual(document.querySelector('#aptlist').children.length, 0, 'the airport tab\'s list is not the suggestions\' list');
 
@@ -1498,7 +1498,7 @@ highlightGroup = null;
       assert.ok(parseInt(list().style.maxHeight) >= 100 && parseInt(list().style.maxHeight) <= 260);
       box(120, 300, 324); await type('#routeto', 'HKG');
 
-      // arrows move through it, Escape closes it, and a click takes one (the box gets the IATA code)
+      // arrows move through it, Escape closes it, and a click takes one (the box gets the ICAO code)
       byId['#routeto'].onkeydown({key: 'ArrowDown', ...noop});
       byId['#routeto'].onkeydown({key: 'ArrowDown', ...noop});
       assert.strictEqual(list().children[1].className, 'sel');
@@ -1509,16 +1509,16 @@ highlightGroup = null;
       assert.strictEqual(list().hidden, true);
       await type('#routeto', 'HKG');
       list().children[1].onmousedown(noop);
-      assert.strictEqual(byId['#routeto'].value, 'GAS');
+      assert.strictEqual(byId['#routeto'].value, 'HKGA');
       assert.strictEqual(list().hidden, true);
 
       // Enter takes the first match when a list is showing, as it does in the tab; with no list it saves
       await type('#routefrom', 'HKG');
       byId['#routefrom'].onkeydown({key: 'Enter', ...noop});
-      assert.strictEqual(byId['#routefrom'].value, 'HKG');
+      assert.strictEqual(byId['#routefrom'].value, 'VHHH');
       lastPut = null;
       byId['#routefrom'].onkeydown({key: 'Enter', ...noop}); await settle();
-      assert.ok(lastPut && lastPut.body.from === 'HKG', 'Enter with no list saves');
+      assert.ok(lastPut && lastPut.body.from === 'VHHH', 'Enter with no list saves');
 
       // leaving the box closes the list, and an answer that arrives after that does not bring it back
       byId['#routebtn'].onclick();
@@ -1530,7 +1530,7 @@ highlightGroup = null;
 
       airportData.airports.splice(0, airportData.airports.length, ...keep);
       await type('#routeto', 'jnb');
-      assert.strictEqual(rows()[0].startsWith('FAOR / JNB | O.R. Tambo'), true, rows()[0]);
+      assert.strictEqual(rows()[0].startsWith('FAOR | O.R. Tambo'), true, rows()[0]);
       byId['#routecancel'].onclick();
       assert.strictEqual(list().hidden, true);
     });

@@ -1172,3 +1172,33 @@ func TestLateMessagesCountFromTheirOwnTime(t *testing.T) {
 		t.Errorf("messages in the window it arrived in = %+v", ms)
 	}
 }
+
+// An operations event that gives a day of the month and a time of day ("27", "11:58Z"), and an ACMF report with a dated position,
+// count from that time, however late they arrive: United's UA26 messages from the 27th, delivered by a VHF station two days later,
+// are not evidence of the flight in progress on the 29th.
+func TestOpsDaysAndDatedReportsCountFromTheirOwnTime(t *testing.T) {
+	s := open(t)
+	rx := time.Date(2026, 10, 29, 17, 38, 50, 0, time.UTC)
+	s.AddMessage(Message{ID: 1, Hex: "A2551D", T: rx, Label: "49", Text: "a", Kind: "ops_report", Flight: "UA26",
+		Decoded: `{"fields":{"ops":{"event":"ICCL","flight":"UA26","info":{"day":"27","time":"11:58Z"}}}}`})
+	p := time.Date(2026, 10, 27, 12, 12, 0, 0, time.UTC)
+	s.AddMessage(Message{ID: 2, Hex: "A2551D", T: rx.Add(time.Minute), Label: "H1", Text: "b", Kind: "acmf_report", Callsign: "UAL26", PosT: &p,
+		Decoded: `{"fields":{"origin":"EGLL","dest":"KDEN"}}`})
+	// a month on: a day later in the month than the arrival can only be the month before
+	s.AddMessage(Message{ID: 3, Hex: "A2551D", T: time.Date(2026, 11, 1, 0, 30, 0, 0, time.UTC), Label: "49", Text: "c", Kind: "ops_report", Flight: "UA27",
+		Decoded: `{"fields":{"ops":{"event":"ICCL","flight":"UA27","info":{"day":"31","time":"23:50Z"}}}}`})
+	// a time of day alone (no day) and an ordinary message count from arrival
+	s.AddMessage(Message{ID: 4, Hex: "A2551D", T: rx.Add(2 * time.Minute), Label: "49", Text: "d", Kind: "ops_report", Flight: "UA26",
+		Decoded: `{"fields":{"ops":{"event":"WXRQ","flight":"UA26","info":{"day":"27"}}}}`})
+
+	ev, err := s.FlightEvidence("A2551D", time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC), time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC))
+	want := []time.Time{time.Date(2026, 10, 27, 11, 58, 0, 0, time.UTC), p, time.Date(2026, 10, 29, 17, 40, 50, 0, time.UTC), time.Date(2026, 10, 31, 23, 50, 0, 0, time.UTC)}
+	if err != nil || len(ev) != len(want) {
+		t.Fatalf("%+v %v", ev, err)
+	}
+	for i, w := range want {
+		if !ev[i].T.Equal(w) {
+			t.Errorf("sighting %d at %v, want %v", i, ev[i].T, w)
+		}
+	}
+}

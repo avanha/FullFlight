@@ -49,7 +49,7 @@ Type into the web UI (or `POST /api/watches {"input": "...", "until": "<RFC3339>
   countries hand out addresses by a rule (`internal/regs`). Anywhere else the hex comes from what we have already seen, or airframes.io (asked at
   most once an hour per registration).
 
-Add an optional destination, IATA or ICAO: `UA869 2026-10-31 SFO`.
+Add an optional destination, as its 4-letter ICAO code (the 3-letter IATA code is accepted too): `UA869 2026-10-31 KSFO`. Airports are shown by their ICAO codes throughout the page.
 
 - **With a destination**, the watch ends when the aircraft is on the ground
   within 10 nm of that airport (or was last seen low, within 15 nm, and has been
@@ -421,8 +421,15 @@ The flights are always worked out from a week before the window asked for, and t
 a flight that began before the page's last four days is whole, with the same identity (and so the same entry in the Flights
 selector) as in the month's list, and the earlier flight a late report belongs to is known even when it is outside the window.
 
+**Why late.** About half of the VHF messages that carry the aircraft's own time arrive more than an hour after it; none of the
+satellite ones do (365 checked). The late ones come from particular volunteer stations, some of them always: one Slovak station
+never delivered a message less than ten and a half hours late, from ten hours to two days after. It is not a wrong clock (the lag
+changes) and not one lump flushed after an outage (the messages stay in order and keep their spacing, stretched to about twice
+the time: events 32 minutes apart arrive 61 minutes apart). We cannot see inside the feeders; replay of a recording is a likely cause.
+
 **Messages count from when they were sent.** Where a message carries a full date and time from the aircraft (an A350 or RTR
-report's own time, an operations event, a REP081's seconds into the month) that is the time it counts as, for the flight it is
+report's own time, an operations event's time or its day of the month and time of day, a REP081's seconds into the month, the
+position time of an ACMF, AOC, *POS or POSRPT report) that is the time it counts as, for the flight it is
 evidence of and for the list of messages: `/api/messages` takes its window by that time, and says `at` on a message whose time
 differs from its arrival. A flight's messages delivered days late are then the flight's own, and no longer make a flight of their
 own in the middle of the next one. A message with no time of its own (ATIS requests, CPDLC, AFN logons and the like) can only

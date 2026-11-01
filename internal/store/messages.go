@@ -597,13 +597,27 @@ func (s *Store) GroundStops(hexAddr string, since, until time.Time) ([]GroundSto
 // REP081 report, another A350 report (or its XML maintenance report, or a takeoff report) that names the route, a 787 ACMF report, an airline (label 83) position report and a filed flight plan (arguments:
 // hex, from, to).
 // atTime is the time a message counts as, for the flight it belongs to. The time the aircraft put in it counts, however late it
-// was delivered: an operations event's own time, the time in an A350 report, a REP081's (seconds into the month). One about a flight
-// that has not left yet (Qantas sends the next flight's data while the aircraft is still on its way in) counts from when that
-// flight is due to leave. Any other counts from when it arrived.
+// was delivered: an operations event's own time, the time in an A350 report, a REP081's (seconds into the month), the position
+// time of the report kinds that carry a date (ACMF, AOC position, *POS, POSRPT), an operations event's day of the month and time
+// of day. One about a flight that has not left yet (Qantas sends the next flight's data while the aircraft is still on its way
+// in) counts from when that flight is due to leave. Any other counts from when it arrived.
 const atTime = `COALESCE(CASE WHEN json_valid(decoded) THEN CAST(strftime('%s', json_extract(decoded, '$.fields.ops.at')) AS INTEGER) END,
 	` + a350Event + `,
 	CASE WHEN kind = 'miam' AND json_valid(decoded) AND json_extract(decoded, '$.fields.rep081') IS NOT NULL THEN pos_ts END,
+	CASE WHEN kind IN ('acmf_report', 'aoc_position', 'pos_report', 'posrpt') THEN pos_ts END,
+	` + opsDayTime + `,
 	MAX(ts, COALESCE(CASE WHEN json_valid(decoded) THEN CAST(strftime('%s', json_extract(decoded, '$.fields.ops.sched')) AS INTEGER) END, 0)))`
+
+// opsDayTime is the time of an operations event that gives a day of the month and a time of day ("27", "11:58Z"): that day of the
+// month in the month it arrived, or the month before if that would be after it arrived. Such events are often delivered late.
+const opsDayTime = `CASE WHEN json_valid(decoded) AND json_extract(decoded, '$.fields.ops.info.time') LIKE '__:__%'
+		AND json_extract(decoded, '$.fields.ops.info.day') GLOB '[0-9]*' THEN
+	(SELECT CASE WHEN this <= ts + 3600 THEN this ELSE prev END
+	 FROM (SELECT
+		CAST(strftime('%s', ts, 'unixepoch', 'start of month', '+' || (d - 1) || ' days', '+' || hh || ' hours', '+' || mm || ' minutes') AS INTEGER) AS this,
+		CAST(strftime('%s', ts, 'unixepoch', 'start of month', '-1 month', '+' || (d - 1) || ' days', '+' || hh || ' hours', '+' || mm || ' minutes') AS INTEGER) AS prev
+		FROM (SELECT CAST(json_extract(decoded, '$.fields.ops.info.day') AS INTEGER) AS d, CAST(substr(json_extract(decoded, '$.fields.ops.info.time'), 1, 2) AS INTEGER) AS hh,
+			CAST(substr(json_extract(decoded, '$.fields.ops.info.time'), 4, 2) AS INTEGER) AS mm) WHERE d BETWEEN 1 AND 31)) END`
 
 // opsWindow bounds the messages to look at for a time window: a report can be delivered days after its event.
 const opsWindow = `ts BETWEEN ?2 - 172800 AND ?3 + 604800`

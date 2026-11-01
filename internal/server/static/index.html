@@ -161,7 +161,7 @@
     <input name="input" placeholder="UA869 2026-10-31 [SFO]   or   CPA113   or   B-LRM   or   780AB8" required autocomplete="off">
     <input name="until" type="datetime-local" title="Optional end (tail/hex only; default 36 h)">
     <button>Watch</button>
-    <span class="info" title="Flight + date waits for takeoff; an optional destination (IATA or ICAO) ends the watch on arrival there instead of after a long ground stop. A tail or hex tracks now until the end time (default 36 h).">&#9432;</span>
+    <span class="info" title="Flight + date waits for takeoff; an optional destination (its 4-letter ICAO code, e.g. KDEN; the IATA code works too) ends the watch on arrival there instead of after a long ground stop. A tail or hex tracks now until the end time (default 36 h).">&#9432;</span>
   </form>
   <div id="err"></div>
   <div id="note" class="hint"></div>
@@ -182,8 +182,8 @@
   <p class="hint" id="routeedit" style="margin:4px 0 0" hidden>
     <button type="button" id="routebtn" title="This flight's messages did not say where it went. Enter the origin and destination yourself; anything the messages do say wins.">Set route</button>
     <span id="routeform" hidden>
-      <label>From <input id="routefrom" size="5" maxlength="4" autocomplete="off" placeholder="IATA/ICAO"></label>
-      <label>To <input id="routeto" size="5" maxlength="4" autocomplete="off" placeholder="IATA/ICAO"></label>
+      <label>From <input id="routefrom" size="5" maxlength="4" autocomplete="off" placeholder="ICAO"></label>
+      <label>To <input id="routeto" size="5" maxlength="4" autocomplete="off" placeholder="ICAO"></label>
       <button type="button" id="routesave">Save</button>
       <button type="button" id="routeclear" title="Forget what you entered for this flight">Clear</button>
       <button type="button" id="routecancel">Cancel</button>
@@ -1415,7 +1415,7 @@ function placeSuggestions() {
   ul.style.bottom = wantBelow ? 'auto' : height - box.top + 2 + 'px';
 }
 function pickAirport(a) {
-  if (routeInput) routeInput.value = a.iata || a.icao;
+  if (routeInput) routeInput.value = a.icao;
   hideSuggestions();
 }
 function suggestAirports(input) {
@@ -1547,7 +1547,7 @@ function atisSpot(m, pts, msgs) {
   return g ? {lat: g.lat, lon: g.lon, est: true} : null;
 }
 
-const atisNames = m => m.airports.map(a => a.iata ? `${a.code} / ${a.iata}` : a.code).join(', ');
+const atisNames = m => m.airports.map(a => a.code).join(', ');
 
 function drawAtisMarks(pts, msgs) {
   for (const m of msgs) {
@@ -1572,11 +1572,11 @@ function drawAtisAirports(m, group) {
   for (const a of m.airports) {
     const at = ll(a.lat, a.lon);
     where.push(at);
-    const lines = [`D-ATIS: ${a.iata ? a.code + ' / ' + a.iata : a.code}`, a.name, a.type ? `${a.type} ${m.kind === 'weather_report' ? 'information' : 'request'}` : '', fmt(m.t)];
+    const lines = [`D-ATIS: ${a.code}`, a.name, a.type ? `${a.type} ${m.kind === 'weather_report' ? 'information' : 'request'}` : '', fmt(m.t)];
     L.circleMarker(at, {radius: 6, color: '#7c3aed', weight: 2, fillColor: '#fff', fillOpacity: 1}).addTo(group).bindTooltip(tip(...lines));
     const el = document.createElement('div');
     el.className = 'box atis';
-    el.textContent = `ATIS ${a.iata || a.code}${a.type ? ' ' + a.type.slice(0, 3) : ''}`;
+    el.textContent = `ATIS ${a.code}${a.type ? ' ' + a.type.slice(0, 3) : ''}`;
     callout(group, at, 'atis:' + a.code, el, {color: '#7c3aed', z: 300}).bindTooltip(tip(...lines));
   }
   if (spot) where.push(ll(spot.lat, spot.lon));
@@ -2150,7 +2150,8 @@ async function drawAllFixes() {
 const airportGroup = L.layerGroup().addTo(map);
 let airportData = null, airportChosen = null, airportTimer = null, airportSeq = 0;
 const LANDING_RADIUS_NM = 15;
-const airportCodes = a => a.icao + (a.iata ? ' / ' + a.iata : '');
+// Airports are written by their four-letter ICAO codes everywhere (the three-letter IATA code can still be typed to find one).
+const airportCodes = a => a.icao;
 
 function airportLines(a) {
   const lines = [[a.name, a.city && !a.name.includes(a.city) ? a.city : ''].filter(Boolean).join(' · ')];

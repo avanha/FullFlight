@@ -836,7 +836,14 @@ func TestPosReportIsPlacedAtItsOwnTime(t *testing.T) {
 	if _, err := Ingest(st, "A762CC", msg(1, f)); err != nil {
 		t.Fatal(err)
 	}
-	ms, _ := st.Messages("A762CC", f.Received.Add(-time.Hour), f.Received.Add(time.Hour), 5)
+	// (listed with the time it was made, not the day it arrived)
+	ms, _ := st.Messages("A762CC", time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC), time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC), 5)
+	if len(ms) != 1 {
+		t.Fatalf("listed at the time it was made: %d messages", len(ms))
+	}
+	if again, _ := st.Messages("A762CC", f.Received.Add(-time.Hour), f.Received.Add(time.Hour), 5); len(again) != 0 {
+		t.Errorf("and not among the messages of the day it arrived: %d", len(again))
+	}
 	m := ms[0]
 	if m.Kind != "pos_report" || m.PosT == nil || !m.PosT.Equal(time.Date(2026, 10, 28, 10, 29, 0, 0, time.UTC)) {
 		t.Fatalf("kind %q posT %v", m.Kind, m.PosT)
@@ -922,7 +929,7 @@ func TestPOSRPTIsPlacedAtItsOwnTime(t *testing.T) {
 	if _, err := Ingest(st, "A63DFF", msg(1, f)); err != nil {
 		t.Fatal(err)
 	}
-	ms, _ := st.Messages("A63DFF", f.Received.Add(-time.Hour), f.Received.Add(time.Hour), 5)
+	ms, _ := st.Messages("A63DFF", time.Date(2026, 10, 30, 19, 0, 0, 0, time.UTC), time.Date(2026, 10, 30, 20, 30, 0, 0, time.UTC), 5) // (listed where it was made)
 	m := ms[0]
 	if m.Kind != "posrpt" || m.PosT == nil || !m.PosT.Equal(time.Date(2026, 10, 30, 19, 41, 0, 0, time.UTC)) || m.Lat == nil {
 		t.Fatalf("kind %q posT %v", m.Kind, m.PosT)
