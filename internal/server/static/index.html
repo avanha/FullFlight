@@ -512,7 +512,7 @@ const POLL_RESULT = {heard: '', not_seen: 'not in the answer', no_position: 'in 
 function pollText(w) {
   const p = w.poll;
   if (!p) return '';
-  return [`ADS-B ${w.status === 'paused' ? 'paused, last asked' : 'asked'} ${ago(p.asked)}`, POLL_RESULT[p.outcome] ?? p.outcome,
+  return [`ADS-B ${w.status === 'paused' ? 'paused, last req' : 'req'} ${ago(p.asked)}`, POLL_RESULT[p.outcome] ?? p.outcome,
     p.heard ? `heard ${ago(p.heard)}${p.source ? ' (' + p.source + ')' : ''}` : 'never heard',
     p.misses > 1 ? `${p.misses} asks without it` : ''].filter(Boolean).join(' \u00b7 ');
 }

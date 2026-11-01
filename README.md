@@ -70,13 +70,13 @@ Every hex/tail pairing ever seen (from ADS-B or airframes.io) is kept in the
 `airframe` table forever, independent of watches; see `GET /api/airframes`.
 
 **What the last ADS-B ask found.** Each card has a line saying when the ADS-B sources were last asked about the
-aircraft and what came back, so "why is there no track?" can be answered from the page: `ADS-B asked 3m ago · not in the
+aircraft and what came back, so "why is there no track?" can be answered from the page: `ADS-B req 3m ago · not in the
 answer · heard 12m ago (adsb.fi) · 4 asks without it`. The result is one of *heard* (a fresh position, stored), *not in the
 answer* (the sources answered and the aircraft was not in it), *in the answer, no usable position* (it was there, without a
 position or with one over a minute old: the tooltip says which) and *the ask failed* (no source could answer, shown in
 orange, with the error in the tooltip; this is not counted against the aircraft). "Heard" is when the newest position it ever
 gave was taken, and by which source; "asks without it" counts since then. A quiet aircraft is asked about only every three
-minutes, so "asked 3m ago" is normal for one. A paused watch shows when it was last asked. The state is kept per watch in
+minutes, so "req 3m ago" is normal for one. A paused watch shows when it was last requested. The state is kept per watch in
 the database (`poll_state`) and goes with it, so a watch that is removed and added again starts clean. It records the ADS-B
 ask only: a position found by flight number through AeroDataBox is not counted as heard here.
 
