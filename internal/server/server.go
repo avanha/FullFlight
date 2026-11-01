@@ -738,6 +738,7 @@ type messageJSON struct {
 	Lon            *float64      `json:"lon,omitempty"`
 	AltFt          *float64      `json:"alt_ft,omitempty"`
 	PosT           *time.Time    `json:"pos_t,omitempty"`
+	At             *time.Time    `json:"at,omitempty"` // when it counts for its flight, if not when it arrived: the aircraft's own time on a message delivered late
 	Suspect        string        `json:"suspect,omitempty"`
 	TimeNote       string        `json:"time_note,omitempty"`
 	TimeUnverified bool          `json:"time_unverified,omitempty"`
@@ -841,6 +842,10 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 			Detail: m.Detail, Raw: m.Text, Tail: m.Tail, Flight: m.Flight, Callsign: m.Callsign, Station: m.Station,
 			RxCount: m.RxCount, Lat: m.Lat, Lon: m.Lon, AltFt: m.AltFt, PosT: m.PosT, Suspect: m.Suspect, TimeNote: m.TimeNote, TimeUnverified: m.TimeFlag,
 			Mismatch: m.Mismatch, AFTail: m.AFTail, AFFlight: m.AFFlight}
+		if !m.At.IsZero() && !m.At.Equal(m.T) {
+			at := m.At
+			j.At = &at
+		}
 		j.Route = s.routeWaypoints(m.Route)
 		j.Airports = atisAirportsOf(m)
 		for _, id := range parts[m.ID] {

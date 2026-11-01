@@ -53,6 +53,10 @@ type Message struct {
 	TimeNote string
 	TimeFlag bool
 
+	// At is the time the message counts as for the flight it belongs to (atTime), set by Messages: the time the aircraft put in
+	// it where it gave a full date and time, else when it arrived.
+	At time.Time
+
 	// Weather at the report, and the speed and track it gave.
 	WxDir, WxKt, WxTemp *float64
 	GS, Trk             *float64
@@ -134,7 +138,7 @@ const messageCols = `id, hex, ts, label, block_id, msg_num, direction, source_ty
 	af_tail, af_flight, af_dep, af_dest, mismatch, from_hex, to_hex, af_dir, time_note, time_flag,
 	wx_dir, wx_kt, wx_temp, gs, trk, fixes`
 
-func scanMessages(rows *sql.Rows) ([]Message, error) {
+func scanMessages(rows *sql.Rows, withAt bool) ([]Message, error) {
 	defer rows.Close()
 	var out []Message
 	for rows.Next() {
@@ -142,13 +146,21 @@ func scanMessages(rows *sql.Rows) ([]Message, error) {
 		var t int64
 		var posT *int64
 		var tflag int
-		if err := rows.Scan(&m.ID, &m.Hex, &t, &m.Label, &m.BlockID, &m.MsgNum, &m.Direction, &m.SourceType, &m.Station, &m.Freq,
+		var at int64
+		dest := []any{&m.ID, &m.Hex, &t, &m.Label, &m.BlockID, &m.MsgNum, &m.Direction, &m.SourceType, &m.Station, &m.Freq,
 			&m.Text, &m.RxCount, &m.Kind, &m.Tail, &m.Callsign, &m.Flight, &m.Summary, &m.Detail, &m.Decoded, &m.Route,
 			&m.Lat, &m.Lon, &m.AltFt, &posT, &m.Suspect, &m.AFTail, &m.AFFlight, &m.AFDep, &m.AFDest, &m.Mismatch, &m.FromHex, &m.ToHex, &m.AFDir, &m.TimeNote, &tflag,
-			&m.WxDir, &m.WxKt, &m.WxTemp, &m.GS, &m.Trk, &m.Fixes); err != nil {
+			&m.WxDir, &m.WxKt, &m.WxTemp, &m.GS, &m.Trk, &m.Fixes}
+		if withAt {
+			dest = append(dest, &at)
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
 		m.T, m.TimeFlag = time.Unix(t, 0).UTC(), tflag == 1
+		if withAt {
+			m.At = time.Unix(at, 0).UTC()
+		}
 		if posT != nil {
 			v := time.Unix(*posT, 0).UTC()
 			m.PosT = &v
@@ -161,12 +173,13 @@ func scanMessages(rows *sql.Rows) ([]Message, error) {
 // Messages returns an aircraft's messages in [since, until), oldest first,
 // limited to the most recent limit rows.
 func (s *Store) Messages(hexAddr string, since, until time.Time, limit int) ([]Message, error) {
-	rows, err := s.db.Query(`SELECT `+messageCols+` FROM message WHERE hex=? AND ts>=? AND ts<?
-		ORDER BY ts DESC, id DESC LIMIT ?`, hexAddr, ts(since), ts(until), limit)
+	// by the time each counts as (atTime), not the time it arrived: a message delivered days late belongs to the flight it was sent in
+	rows, err := s.db.Query(`SELECT `+messageCols+`, `+atTime+` AS at FROM message WHERE hex=?1 AND ts>=?2 AND `+atTime+` >= ?2 AND `+atTime+` < ?3
+		ORDER BY at DESC, id DESC LIMIT ?4`, hexAddr, ts(since), ts(until), limit)
 	if err != nil {
 		return nil, err
 	}
-	out, err := scanMessages(rows)
+	out, err := scanMessages(rows, true)
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 { // oldest first
 		out[i], out[j] = out[j], out[i]
 	}
@@ -179,7 +192,7 @@ func (s *Store) AllMessages() ([]Message, error) {
 	if err != nil {
 		return nil, err
 	}
-	return scanMessages(rows)
+	return scanMessages(rows, false)
 }
 
 // UpdateDecoded rewrites the columns derived from the raw text, leaving the
@@ -583,20 +596,26 @@ func (s *Store) GroundStops(hexAddr string, since, until time.Time) ([]GroundSto
 // routeReportsSQL selects (t, origin, dest, source, rx: when it arrived) from the kinds of message that say where a flight is going: a
 // REP081 report, another A350 report (or its XML maintenance report, or a takeoff report) that names the route, a 787 ACMF report, an airline (label 83) position report and a filed flight plan (arguments:
 // hex, from, to).
-// atTime is the time an airline's operations message counts as. A report that gives the time of its event counts from
-// then, however late it was delivered. One about a flight that has not left yet (Qantas sends the next flight's data while
-// the aircraft is still on its way in) counts from when that flight is due to leave. Any other counts from when it arrived.
+// atTime is the time a message counts as, for the flight it belongs to. The time the aircraft put in it counts, however late it
+// was delivered: an operations event's own time, the time in an A350 report, a REP081's (seconds into the month). One about a flight
+// that has not left yet (Qantas sends the next flight's data while the aircraft is still on its way in) counts from when that
+// flight is due to leave. Any other counts from when it arrived.
 const atTime = `COALESCE(CASE WHEN json_valid(decoded) THEN CAST(strftime('%s', json_extract(decoded, '$.fields.ops.at')) AS INTEGER) END,
+	` + a350Event + `,
+	CASE WHEN kind = 'miam' AND json_valid(decoded) AND json_extract(decoded, '$.fields.rep081') IS NOT NULL THEN pos_ts END,
 	MAX(ts, COALESCE(CASE WHEN json_valid(decoded) THEN CAST(strftime('%s', json_extract(decoded, '$.fields.ops.sched')) AS INTEGER) END, 0)))`
 
 // opsWindow bounds the messages to look at for a time window: a report can be delivered days after its event.
 const opsWindow = `ts BETWEEN ?2 - 172800 AND ?3 + 604800`
 
-// a350Time is when an A350 report counts as made: the time the aircraft put in it. These are stored in the aircraft and often
-// delivered long after (most arrive hours late and many days), so the time of arrival would put an earlier flight's route inside
-// a later one. A report that gave no time (a zero time, year 1) counts from when it arrived.
-const a350Time = `COALESCE(CASE WHEN json_valid(decoded) THEN
-	(SELECT t FROM (SELECT CAST(strftime('%s', COALESCE(json_extract(decoded, '$.fields.a350.Time'), json_extract(decoded, '$.fields.rtr.Time'), json_extract(decoded, '$.fields.takeoff.Time'))) AS INTEGER) AS t) WHERE t > 946684800) END, ts)`
+// a350Event is the time the aircraft put in an A350 report, if it did. These reports are stored in the aircraft and often
+// delivered long after (most arrive hours late and many days), so the time of arrival would put an earlier flight's report inside
+// a later one. A report that gave no time (a zero time, year 1) has none.
+const a350Event = `CASE WHEN json_valid(decoded) THEN
+	(SELECT t FROM (SELECT CAST(strftime('%s', COALESCE(json_extract(decoded, '$.fields.a350.Time'), json_extract(decoded, '$.fields.rtr.Time'), json_extract(decoded, '$.fields.takeoff.Time'))) AS INTEGER) AS t) WHERE t > 946684800) END`
+
+// a350Time is when an A350 report counts as made: its own time, or when it arrived if it gave none.
+const a350Time = `COALESCE(` + a350Event + `, ts)`
 
 var routeReportsSQL = `
 	SELECT COALESCE(pos_ts, ts) AS t, COALESCE(json_extract(decoded, '$.fields.rep081.Origin'), '') AS origin,

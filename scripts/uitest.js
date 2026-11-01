@@ -1312,6 +1312,14 @@ highlightGroup = null;
     } finally { pts.splice(0, pts.length, ...saved); }
   }
 
+  // ===== 8r10. a message delivered late counts from when it was sent ==============================================
+  {
+    const rt = m => vm.runInContext(`reportTime(${JSON.stringify(m)})`, ctx);
+    assert.strictEqual(rt({t: '2026-10-29T02:19:20Z'}), '2026-10-29T02:19:20Z', 'an ordinary message counts from its arrival');
+    assert.strictEqual(rt({t: '2026-10-29T02:19:20Z', at: '2026-10-27T05:00:00Z'}), '2026-10-27T05:00:00Z', 'one delivered late, from when it was sent');
+    assert.strictEqual(rt({t: '2026-10-29T02:19:20Z', at: '2026-10-27T05:00:00Z', lat: 1, lon: 2, pos_t: '2026-10-27T05:01:00Z'}), '2026-10-27T05:01:00Z', 'a position is placed by its own time');
+  }
+
   // ===== 8s. how what was typed is read ===========================================================
   const submit = async (input, reply) => {
     postReply = reply;

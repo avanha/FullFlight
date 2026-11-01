@@ -421,6 +421,13 @@ The flights are always worked out from a week before the window asked for, and t
 a flight that began before the page's last four days is whole, with the same identity (and so the same entry in the Flights
 selector) as in the month's list, and the earlier flight a late report belongs to is known even when it is outside the window.
 
+**Messages count from when they were sent.** Where a message carries a full date and time from the aircraft (an A350 or RTR
+report's own time, an operations event, a REP081's seconds into the month) that is the time it counts as, for the flight it is
+evidence of and for the list of messages: `/api/messages` takes its window by that time, and says `at` on a message whose time
+differs from its arrival. A flight's messages delivered days late are then the flight's own, and no longer make a flight of their
+own in the middle of the next one. A message with no time of its own (ATIS requests, CPDLC, AFN logons and the like) can only
+count from its arrival.
+
 **A stale callsign at power-up.** An aircraft that has sat for hours sends its last callsign again when it wakes, and changes it
 to the next flight's a couple of seconds later (ZIPAIR's TZP1, then TZP22). Those first sightings, after an hour's silence
 and under the old number, are the next flight's when it carries on under the new one at least five times in the next ten

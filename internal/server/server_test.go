@@ -1553,3 +1553,35 @@ func TestFlightWatchesShowALookupHold(t *testing.T) {
 		}
 	}
 }
+
+func TestLateMessagesCarryWhenTheyCount(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 14, 0, 0, 0, time.UTC)
+	sent := time.Date(2026, 10, 27, 5, 0, 0, 0, time.UTC)
+	st.AddMessage(store.Message{ID: 1, Hex: "780AA4", T: now.Add(-time.Hour), Label: "H1", Text: "a", Kind: "miam", Flight: "CX301",
+		Decoded: `{"fields":{"a350":{"Time":"2026-10-27T05:00:00Z","Origin":"VHHH","Dest":"EDDM"}}}`})
+	st.AddMessage(store.Message{ID: 2, Hex: "780AA4", T: now.Add(-30 * time.Minute), Label: "B9", Text: "b", Kind: "datis_request"})
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+
+	// in the window of the flight it was sent in: listed, with when it arrived and when it counts
+	_, body := do(t, "GET", ts.URL+"/api/messages/780AA4?hours=3&until=2026-10-27T06:00:00Z", "")
+	var ms []struct {
+		ID int64
+		T  time.Time
+		At *time.Time `json:"at"`
+	}
+	if json.Unmarshal([]byte(body), &ms) != nil || len(ms) != 1 || ms[0].ID != 1 || ms[0].At == nil || !ms[0].At.Equal(sent) || !ms[0].T.Equal(now.Add(-time.Hour)) {
+		t.Fatalf("%s", body)
+	}
+	// in the window it arrived in: only the one that counts from its arrival, which says nothing extra
+	_, body = do(t, "GET", ts.URL+"/api/messages/780AA4?hours=3", "")
+	var later []struct {
+		ID int64
+		At *time.Time `json:"at"`
+	}
+	if json.Unmarshal([]byte(body), &later) != nil || len(later) != 1 || later[0].ID != 2 || later[0].At != nil {
+		t.Errorf("%s", body)
+	}
+}

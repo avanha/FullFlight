@@ -1138,3 +1138,37 @@ func TestA350RouteReportsCountFromTheirOwnTime(t *testing.T) {
 		t.Errorf("%+v", rs)
 	}
 }
+
+// A message counts as the time the aircraft put in it, where that is a full date and time, not as the time it arrived: an A350
+// report delivered two days late is evidence of its flight at the time it was sent, and is listed with that flight.
+func TestLateMessagesCountFromTheirOwnTime(t *testing.T) {
+	s := open(t)
+	sent := time.Date(2026, 10, 27, 5, 0, 0, 0, time.UTC)
+	rx := sent.Add(45 * time.Hour)
+	// an A350 report (its own time), a REP081 (its position time is when it was made), and an ordinary message with no time of its own
+	s.AddMessage(Message{ID: 1, Hex: "780AA4", T: rx, Label: "H1", Text: "a", Kind: "miam", Flight: "CX301",
+		Decoded: `{"fields":{"a350":{"Time":"2026-10-27T05:00:00Z","Origin":"VHHH","Dest":"EDDM"}}}`})
+	p := sent.Add(time.Minute)
+	s.AddMessage(Message{ID: 2, Hex: "780AA4", T: rx.Add(time.Minute), Label: "H1", Text: "b", Kind: "miam", Flight: "CX301", PosT: &p,
+		Decoded: `{"fields":{"rep081":{"Origin":"VHHH","Dest":"EDDM"}}}`})
+	s.AddMessage(Message{ID: 3, Hex: "780AA4", T: rx.Add(2 * time.Minute), Label: "B9", Text: "c", Kind: "datis_request"})
+	// an A350 report with no time of its own counts from its arrival
+	s.AddMessage(Message{ID: 4, Hex: "780AA4", T: rx.Add(3 * time.Minute), Label: "H1", Text: "d", Kind: "miam", Flight: "CX833",
+		Decoded: `{"fields":{"a350":{"Time":"0001-01-01T00:00:00Z"}}}`})
+
+	ev, err := s.FlightEvidence("780AA4", sent.Add(-time.Hour), rx.Add(time.Hour))
+	if err != nil || len(ev) != 3 || !ev[0].T.Equal(sent) || ev[0].ID != "CX301" || !ev[1].T.Equal(p) || !ev[2].T.Equal(rx.Add(3*time.Minute)) || ev[2].ID != "CX833" {
+		t.Fatalf("evidence = %+v %v", ev, err)
+	}
+
+	// listed with the flight it was sent in, saying when it arrived
+	ms, err := s.Messages("780AA4", sent.Add(-time.Hour), sent.Add(time.Hour), 100)
+	if err != nil || len(ms) != 2 || ms[0].ID != 1 || !ms[0].At.Equal(sent) || !ms[0].T.Equal(rx) || ms[1].ID != 2 {
+		t.Fatalf("messages in the flight's window = %+v %v", ms, err)
+	}
+	// ... and not with the flight it arrived in
+	ms, _ = s.Messages("780AA4", rx.Add(-time.Hour), rx.Add(time.Hour), 100)
+	if len(ms) != 2 || ms[0].ID != 3 || ms[1].ID != 4 || !ms[0].At.Equal(ms[0].T) {
+		t.Errorf("messages in the window it arrived in = %+v", ms)
+	}
+}

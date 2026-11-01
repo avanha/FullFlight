@@ -1770,7 +1770,7 @@ async function showTrack(w, focus) {
 // ---- message list ---------------------------------------------------------
 // A position message is listed at the time the report itself carries, which can differ from when
 // airframes.io logged it (this station's messages arrive about 3 minutes before the time inside them).
-const reportTime = m => (m.lat != null && m.pos_t) ? m.pos_t : m.t;
+const reportTime = m => (m.lat != null && m.pos_t) ? m.pos_t : (m.at || m.t);   // (at: a message delivered late counts from when it was sent)
 // An ADS-C report gives its predicted waypoints as coordinates; where we know their names, say so.
 function routeNames(m) {
   const named = (m.route || []).filter(p => p.kind !== 'fixed' && p.name);
