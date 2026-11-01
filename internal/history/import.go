@@ -16,6 +16,9 @@ type Result struct {
 	Skipped   int            // aircraft already searched for in this day
 	Found     int            // aircraft that had a trace
 	Positions map[string]int // positions added, by upper-case hex, for those that gave any
+	Members   int            // files in the archive
+	Traces    int            // of them, aircraft trace files
+	Elapsed   time.Duration
 }
 
 // Total is the number of positions added.
@@ -59,10 +62,11 @@ func ImportDay(st *store.Store, c Cache, day string, hexes []string, now time.Ti
 	}
 	added := map[string]int{}
 	found := map[string]bool{}
-	err = Scan(parts, want, func(hex string, r io.Reader) error {
+	began := time.Now()
+	stats, err := Scan(parts, want, func(hex string, r io.Reader) error {
 		ps, err := ParseTrace(r)
 		if err != nil {
-			return err
+			return fmt.Errorf("%w (readsb's trace format may have changed: expected gzipped JSON with a \"trace\" list of [offset, lat, lon, alt, ...] rows)", err)
 		}
 		h := strings.ToUpper(hex)
 		n, err := st.AddHistory(h, ps)
@@ -73,6 +77,7 @@ func ImportDay(st *store.Store, c Cache, day string, hexes []string, now time.Ti
 		added[h] += n
 		return nil
 	})
+	res.Members, res.Traces, res.Elapsed = stats.Members, stats.Traces, time.Since(began)
 	if err != nil {
 		return res, err
 	}

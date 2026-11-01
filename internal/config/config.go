@@ -39,11 +39,11 @@ type Config struct {
 	} `yaml:"navdata"`
 
 	// Backfill is the optional history of an aircraft's track from before we followed it, from the daily archives adsb.lol
-	// publishes. The days are downloaded by hand into CacheDir and read from there; nothing is fetched unless Enabled.
+	// publishes. Days are downloaded into CacheDir when a backfill is started from the menu; nothing is fetched unless Enabled.
 	Backfill struct {
 		Enabled     bool   `yaml:"enabled"`
 		CacheDir    string `yaml:"cache_dir"`     // where the downloaded days are kept
-		CacheMaxGiB int    `yaml:"cache_max_gib"` // the cache's limit, default 20; nothing enforces it yet, as days are put there by hand
+		CacheMaxGiB int    `yaml:"cache_max_gib"` // oldest days are deleted beyond this; default 20
 	} `yaml:"backfill"`
 
 	Poll struct {

@@ -416,23 +416,39 @@ ADS-B polling only records what is in the air while an aircraft is being followe
 tracking data as an archive (<https://github.com/adsblol/globe_history_2026>, one release a day, available from about
 03:30Z the next day), and the app can read the track of the aircraft it holds anything for from there.
 
-A day is 3 to 4 GB, in two or three tar parts (`v2026.10.31-planes-readsb-prod-0.tar.aa`, `.ab`, ...). The app never
-downloads them: put them, with those names, in `adsblol/` under the cache directory, and ask for the day to be read.
-
     backfill:
       enabled: true
-      cache_dir: /Volumes/External/FullFlightCache   # holds adsblol/v2026.10.31-planes-readsb-prod-0.tar.aa ...
-      cache_max_gib: 100                             # not enforced yet
+      cache_dir: /Volumes/External/FullFlightCache   # must exist; holds adsblol/v2026.10.31-planes-readsb-prod-0.tar.aa ...
+      cache_max_gib: 100                             # the oldest days are deleted to stay within this
 
-    fullflight -backfill 2026-10-31          # stop the app first
+Nothing is downloaded or read unless `enabled` is on and you start it. Then the hamburger menu at the top right of the left
+panel has **Backfill history...**. It lists the days that would be read, how many are already in the cache and how many
+would be downloaded (a day is 3 to 4 GB, in two or three tar parts), and what would be deleted from the cache to make room.
+Choose the selected aircraft or all tracked aircraft, and press Start. Stop ends it after the file in hand; a half-finished
+download is kept and resumed next time.
 
-It reads the day once for every aircraft with a watch, a position or a message (about ten seconds for a day), and adds
-each one's points as positions marked `adsb.lol-hist`. A point within ten seconds of a position we already hold is
-left out, so overlap with polling is not doubled; points the archive marks stale are left out too. The database
-remembers which aircraft were looked for in which day (including those with no trace), so running it again reads nothing
-for them, and only an aircraft added since needs the day's files again. A day that is incomplete (a part missing or cut
-short) is refused and nothing is marked. The flights then divide on the new positions as for any others: a flight no
+Which days: for each aircraft, those it has positions or messages on and the day either side, that are already published and
+not yet searched for that aircraft. Each day is downloaded once into the cache (parts are written as `name.part` and renamed
+when complete and the size GitHub gave, so a file without `.part` is whole), then read once for every aircraft that needs it
+(about ten seconds a day). Days you downloaded by hand work too, if the files are named as in the release and placed in
+`adsblol/` under the cache directory. `fullflight -backfill 2026-10-31` reads one cached day from the command line (stop the
+app first).
+
+Each aircraft's points are added as positions marked `adsb.lol-hist`. A point within ten seconds of a position we already
+hold is left out, so overlap with polling is not doubled; points the archive marks stale are left out too. The database
+remembers which aircraft were looked for in which day (including those with no trace), so nothing is read twice for them, and
+only an aircraft added since needs a day again, from the cache if it is still there. The cache limit never deletes a day a
+running backfill still has to read; if it cannot make room it says so and stops. A day that is incomplete (a part missing or
+cut short) is refused and nothing is marked. The flights then divide on the new positions as for any others: a flight no
 message mentioned now starts where the aircraft really took off.
+
+**When it does not work.** adsb.lol's layout is theirs to change, so every step logs what it saw. Look in the log for lines
+starting `backfill:`. On success they give the release found, each part, the download's size and speed, and per day how many
+positions were added. On failure they carry a `hint` saying what to check: GitHub's rate limit (60 lookups an hour; the reset
+time is logged), no release for the day (not published yet, or the tag naming changed), assets renamed (their names are
+listed), the release JSON changed shape, a host that ignored the resume request, a stalled or cut-off download, a part of the
+wrong size, an archive with no `traces/xx/trace_full_<hex>.json` files (the first names in it are listed) or a trace file that
+is not readable. The tests for each are in `internal/history`.
 
 ## Waypoints named in CPDLC reports
 

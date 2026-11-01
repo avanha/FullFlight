@@ -182,9 +182,20 @@ func main() {
 	fetcher := &datalink.Fetcher{Store: st, Source: afClient, Search: afClient, Log: log}
 	go fetcher.Run(ctx)
 
+	api := &server.Server{Store: st, Nav: nav, Username: cfg.Auth.Username, Password: cfg.Auth.Password}
+	if cfg.Backfill.Enabled {
+		if fi, err := os.Stat(cfg.Backfill.CacheDir); err != nil || !fi.IsDir() {
+			log.Warn("backfill cache directory is not there; backfill will fail until it is", "dir", cfg.Backfill.CacheDir, "err", err)
+		}
+		api.Backfill = &history.Manager{Store: st, Cache: history.Cache{Dir: cfg.Backfill.CacheDir}, Log: log,
+			MaxBytes: int64(cfg.Backfill.CacheMaxGiB) << 30,
+			Fetch:    &history.Fetcher{UserAgent: version.UserAgent(), Log: log}}
+		go func() { <-ctx.Done(); api.Backfill.Cancel() }()
+		log.Info("backfill enabled", "cache", cfg.Backfill.CacheDir, "limit_gib", cfg.Backfill.CacheMaxGiB)
+	}
 	srv := &http.Server{
 		Addr:              cfg.Listen,
-		Handler:           (&server.Server{Store: st, Nav: nav, Username: cfg.Auth.Username, Password: cfg.Auth.Password}).Handler(),
+		Handler:           api.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {

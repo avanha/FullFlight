@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/avanha/fullflight/internal/history"
 	"github.com/avanha/fullflight/internal/navdata"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/watchlist"
@@ -1452,5 +1453,52 @@ func TestJoinFlightsByHand(t *testing.T) {
 	}
 	if again := list(); len(again) != 2 {
 		t.Errorf("two again: %+v", again)
+	}
+}
+
+func TestBackfillEndpoints(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	off := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer off.Close()
+	if code, body := do(t, "GET", off.URL+"/api/backfill", ""); code != 200 || !strings.Contains(body, `"enabled":false`) {
+		t.Errorf("off: %d %s", code, body)
+	}
+	if code, body := do(t, "GET", off.URL+"/api/backfill/plan", ""); code != 409 || !strings.Contains(body, "backfill.enabled") {
+		t.Errorf("plan while off: %d %s", code, body)
+	}
+	if code, _ := do(t, "POST", off.URL+"/api/backfill", ""); code != 409 {
+		t.Errorf("start while off: %d", code)
+	}
+
+	st.AddPosition(store.Position{Hex: "7C4926", T: time.Date(2026, 10, 31, 22, 0, 0, 0, time.UTC), Lat: 1, Lon: 1, Source: "adsb.lol"})
+	m := &history.Manager{Store: st, Cache: history.Cache{Dir: t.TempDir()}, MaxBytes: 100 << 30, Now: func() time.Time { return now }}
+	on := httptest.NewServer((&Server{Store: st, Backfill: m, Now: func() time.Time { return now }}).Handler())
+	defer on.Close()
+	_, body := do(t, "GET", on.URL+"/api/backfill", "")
+	var status struct {
+		Enabled    bool  `json:"enabled"`
+		CacheLimit int64 `json:"cache_limit_bytes"`
+	}
+	if json.Unmarshal([]byte(body), &status) != nil || !status.Enabled || status.CacheLimit != 100<<30 {
+		t.Errorf("on: %s", body)
+	}
+	_, body = do(t, "GET", on.URL+"/api/backfill/plan?hex=7c4926", "")
+	var plan struct {
+		Days     []struct{ Day string }
+		Aircraft int
+	}
+	if json.Unmarshal([]byte(body), &plan) != nil || plan.Aircraft != 1 || len(plan.Days) != 2 || plan.Days[0].Day != "2026-10-31" {
+		t.Errorf("plan: %s", body)
+	}
+	if _, body = do(t, "GET", on.URL+"/api/backfill/plan?hex=ABCDEF", ""); !strings.Contains(body, `"days":[]`) {
+		t.Errorf("an aircraft with no data plans no days: %s", body)
+	}
+	if code, _ := do(t, "POST", on.URL+"/api/backfill", `{"hex":"nonsense"}`); code != 400 {
+		t.Errorf("bad hex: %d", code)
+	}
+	if code, body := do(t, "POST", on.URL+"/api/backfill", `{"hex":"ABCDEF"}`); code != 400 || !strings.Contains(body, "nothing to do") {
+		t.Errorf("nothing to do: %d %s", code, body)
 	}
 }

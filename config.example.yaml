@@ -27,6 +27,6 @@ aerodatabox:                   # optional: find a flight by number when ADS-B ha
   every: 30m                   # least time between lookups for one watch; each one uses your quota
 
 backfill:                      # optional: fill in the track from before an aircraft was followed, from adsb.lol's daily archives
-  enabled: false               # each day is 3 to 4 GB; nothing is downloaded or read unless this is on
+  enabled: false               # each day is 3 to 4 GB; nothing is downloaded unless this is on and you start it from the menu
   cache_dir: ""                # where the downloaded days are kept, e.g. /Volumes/External/FullFlightCache; must exist
-  cache_max_gib: 20            # the cache's size limit (not enforced yet: days are put in the cache by hand)
+  cache_max_gib: 20            # the oldest days are deleted from the cache to stay within this

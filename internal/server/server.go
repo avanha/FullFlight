@@ -19,6 +19,7 @@ import (
 	"github.com/avanha/fullflight/internal/airlines"
 	"github.com/avanha/fullflight/internal/airports"
 	"github.com/avanha/fullflight/internal/flights"
+	"github.com/avanha/fullflight/internal/history"
 	"github.com/avanha/fullflight/internal/landing"
 	"github.com/avanha/fullflight/internal/navdata"
 	"github.com/avanha/fullflight/internal/regs"
@@ -36,6 +37,7 @@ type Server struct {
 	Username string
 	Password string // empty disables auth (config only allows that on loopback)
 	Now      func() time.Time
+	Backfill *history.Manager // nil when backfill is off in the config
 
 	flightMu    sync.Mutex
 	flightCache map[string]cachedFlight // hex -> the aircraft's last flight, for the airframes page
@@ -62,6 +64,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/plan/{hex}", s.plans)
 	mux.HandleFunc("GET /api/fixes", s.fixes)
 	mux.HandleFunc("GET /api/airports", s.airports)
+	mux.HandleFunc("GET /api/backfill", s.backfillStatus)
+	mux.HandleFunc("GET /api/backfill/plan", s.backfillPlan)
+	mux.HandleFunc("POST /api/backfill", s.backfillStart)
+	mux.HandleFunc("DELETE /api/backfill", s.backfillCancel)
 	return s.auth(mux)
 }
 
