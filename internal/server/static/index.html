@@ -91,6 +91,8 @@
   .callout:active { cursor: grabbing; }
   .callout.box { background: #fff; color: #111; border: 1px solid #888; border-radius: 4px; padding: 3px 6px; font: 12px system-ui, sans-serif; width: max-content; max-width: 260px; white-space: normal; overflow-wrap: break-word; }
   .callout.atis { border-color: #7c3aed; }
+  .atis-dot-wrap { background: none; border: none; }
+  .atis-dot { width: 6px; height: 6px; margin: 4px; transform: rotate(45deg); background: #7c3aed; cursor: pointer; }   /* the 14 px box around it is what is clicked */
   .fflag.latest { background: #c00; }
   .wpt-wrap { background: none; border: none; }
   .wpt { width: 8px; height: 8px; margin: 3px; transform: rotate(45deg); background: #fff; border: 2px solid #1d3557; box-sizing: content-box; }
@@ -216,6 +218,8 @@
 <script>
 const map = L.map('map').setView([30, -40], 3);
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 18, attribution: '&copy; OpenStreetMap'}).addTo(map);
+// A hover popup sits a little way from its point instead of touching it, so the point and the track around it stay in view.
+if (L.Tooltip && L.Tooltip.mergeOptions) L.Tooltip.mergeOptions({offset: [16, 0]});
 const layer = L.layerGroup().addTo(map);      // track, message positions, route: redrawn on refresh
 const highlight = L.layerGroup().addTo(map);  // ring around the selected message's position
 
@@ -233,6 +237,7 @@ const SOURCES = {
   posrpt:       {name: 'POSRPT', color: '#364fc7', dash: '6 2 1 2',    weight: 2, gapMin: 60},
   posa1:        {name: 'POSA1', color: '#d9480f', dash: '3 3 1 3',    weight: 2, gapMin: 60},
   sbpos:        {name: 'SB',    color: '#087f5b', dash: '7 3 1 3',    weight: 2, gapMin: 60},
+  ops_report:   {name: 'Airline', color: '#a16207', dash: '4 2 1 2',   weight: 2, gapMin: 60},
   lookup:       {name: 'AeroDataBox', color: '#6c757d', dash: '1 6', weight: 2, gapMin: 180},
 };
 for (const src of Object.values(SOURCES)) src.group = L.layerGroup().addTo(map);
@@ -258,6 +263,7 @@ const planGroup = L.layerGroup().addTo(map);  // the filed flight plan: planned 
 const trackGroup = L.layerGroup().addTo(map);   // the unified track: one line through every plausible report
 let trackCtx = null, srcLines = [];   // what the lines are drawn from (so they can be redrawn), and the by-source lines in their groups
 const bridgeGroup = L.layerGroup().addTo(map);  // estimated path across a silence between two fixes
+const atisGroup = L.layerGroup().addTo(map);    // a diamond on the track where a D-ATIS request was sent
 const windGroup = L.layerGroup().addTo(map);    // a wind barb on every report that gives wind direction and speed
 // ---- weather radar -------------------------------------------------------------------------------------
 // RainViewer's global radar composite (frames every 10 minutes), switched on from the legend and remembered. Its tiles
@@ -413,6 +419,7 @@ L.control.layers(null, {
   '<span style="color:#777;font-weight:bold">&middot;&middot;&middot;</span> Estimated path': bridgeGroup,
   '<span style="color:#666;font-weight:bold">&middot;&middot;&middot;</span> Projection': projGroup,
   '<span style="font-weight:bold">&#8627;</span> Wind barbs': windGroup,
+  '<span style="color:#7c3aed;font-weight:bold">&#9670;</span> D-ATIS requests': atisGroup,
 }, {collapsed: false, position: 'bottomleft'}).addTo(map);
 // ---- longitude frame --------------------------------------------------------------------
 // The map's longitude is continuous (181 is the same place as -179, drawn one world over), so near
@@ -1468,20 +1475,52 @@ function drawFlightFlags(pts, msgs, chosen) {
   }
 }
 
-// The airports a crew asked D-ATIS about show where they were looking: a ring on each, with a label.
-function drawAtisAirports(msgs) {
-  const by = new Map();
-  for (const m of msgs) if (m.airport) { const e = by.get(m.airport.code) || {a: m.airport, ms: []}; e.ms.push(m); by.set(m.airport.code, e); }
-  for (const {a, ms} of by.values()) {
+// ---- D-ATIS requests ---------------------------------------------------------------------
+// A D-ATIS request carries no position, so it is marked on the track where the aircraft probably was (between the fixes either
+// side of it); clicking the diamond selects the message, and selecting it shows the airports it asked about.
+function atisSpot(m, pts, msgs) {
+  if (m.lat != null) return {lat: m.lat, lon: m.lon, est: false};
+  const g = ghostAt(Date.parse(reportTime(m)), pts, msgs);
+  return g ? {lat: g.lat, lon: g.lon, est: true} : null;
+}
+
+const atisNames = m => m.airports.map(a => a.iata ? `${a.code} / ${a.iata}` : a.code).join(', ');
+
+function drawAtisMarks(pts, msgs) {
+  for (const m of msgs) {
+    if (!(m.airports && m.airports.length) || m.suspect) continue;
+    const spot = atisSpot(m, pts, msgs);
+    if (!spot) continue;
+    const el = document.createElement('div');
+    el.className = 'atis-dot';
+    L.marker(ll(spot.lat, spot.lon), {icon: L.divIcon({className: 'atis-dot-wrap', iconSize: [14, 14], iconAnchor: [7, 7], html: el}), zIndexOffset: 500}).addTo(atisGroup)
+      .bindTooltip(tip(`D-ATIS ${m.airports[0].type || ''} ${m.kind === 'weather_report' ? 'information' : 'request'}: ${atisNames(m)}`.replace(/\s+/g, ' '), fmtTime(reportTime(m)),
+        spot.est ? 'position estimated between the fixes either side' : '', 'click to show the airports'))
+      .on('click', () => pickMessage(m.id));
+  }
+}
+
+// The airports the selected D-ATIS message names: a ring on each, with a label held away from it. The map zooms out to
+// take them in when they are out of view, once for each message picked (not again at every refresh).
+let atisFitFor = null;
+function drawAtisAirports(m, group) {
+  const spot = atisSpot(m, lastTrack.pts, lastTrack.msgs);
+  const where = [];
+  for (const a of m.airports) {
     const at = ll(a.lat, a.lon);
-    const types = [...new Set(ms.map(m => m.airport.type).filter(Boolean))];
-    const lines = [`D-ATIS: ${a.iata ? a.code + ' / ' + a.iata : a.code}`, a.name, `${types.join(' and ') || 'requested'} · ${ms.length} request${ms.length === 1 ? '' : 's'}`,
-                   ...ms.slice(-3).map(m => fmt(m.t))];
-    L.circleMarker(at, {radius: 6, color: '#7c3aed', weight: 2, fillColor: '#fff', fillOpacity: 1}).addTo(layer).bindTooltip(tip(...lines));
+    where.push(at);
+    const lines = [`D-ATIS: ${a.iata ? a.code + ' / ' + a.iata : a.code}`, a.name, a.type ? `${a.type} ${m.kind === 'weather_report' ? 'information' : 'request'}` : '', fmt(m.t)];
+    L.circleMarker(at, {radius: 6, color: '#7c3aed', weight: 2, fillColor: '#fff', fillOpacity: 1}).addTo(group).bindTooltip(tip(...lines));
     const el = document.createElement('div');
     el.className = 'box atis';
-    el.textContent = `ATIS ${a.iata || a.code}${types.length ? ' ' + types.map(x => x.slice(0, 3)).join('/') : ''}`;
-    callout(layer, at, 'atis:' + a.code, el, {color: '#7c3aed', z: 300}).bindTooltip(tip(...lines));
+    el.textContent = `ATIS ${a.iata || a.code}${a.type ? ' ' + a.type.slice(0, 3) : ''}`;
+    callout(group, at, 'atis:' + a.code, el, {color: '#7c3aed', z: 300}).bindTooltip(tip(...lines));
+  }
+  if (spot) where.push(ll(spot.lat, spot.lon));
+  if (atisFitFor !== m.id) {
+    atisFitFor = m.id;
+    const view = map.getBounds().pad(-0.1);
+    if (where.some(p => !view.contains(p))) map.fitBounds(where, {padding: [50, 50], maxZoom: map.getZoom ? map.getZoom() : 18});   // out, never in
   }
 }
 
@@ -1533,7 +1572,7 @@ async function showTrack(w, focus) {
     // A target not yet matched to an aircraft has nothing to show, and nothing of the previous target may stay.
     ++showSeq;   // a fetch for the previous target still in flight must not draw over this
     planeMark = null;
-    layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); planGroup.clearLayers(); bridgeGroup.clearLayers(); windGroup.clearLayers(); highlight.clearLayers();
+    layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); planGroup.clearLayers(); bridgeGroup.clearLayers(); windGroup.clearLayers(); atisGroup.clearLayers(); highlight.clearLayers();
     Object.values(SOURCES).forEach(src => src.group.clearLayers());   // the report dots and each source's track
     trackGroup.clearLayers(); srcLines = []; trackCtx = null;
     lastData = null; lastTrack = {pts: [], msgs: []}; drawProjection(); markers.clear(); renderMessages([]);
@@ -1563,6 +1602,7 @@ async function showTrack(w, focus) {
   wptGroup.clearLayers();
   predGroup.clearLayers();
   windGroup.clearLayers();
+  atisGroup.clearLayers();
   markers.clear();
 
   // (The track lines are drawn by drawTrackLines, once the plan is known.)
@@ -1591,7 +1631,7 @@ async function showTrack(w, focus) {
   }
   drawWaypoints(msgs);
   drawFlightFlags(pts, msgs, chosen);
-  drawAtisAirports(msgs);
+  drawAtisMarks(pts, msgs);
 
   // The aircraft: a plane at its newest trustworthy fix, from ADS-B or from a datalink report. (Not
   // simply the last ADS-B point: that can be hours older than a report, e.g. once it is mid-ocean.)
@@ -1618,8 +1658,7 @@ async function showTrack(w, focus) {
   applyHighlight();
   // Choosing a target: centre and zoom on its newest fix. (A refresh leaves the view alone.)
   if (focus === 'flight') {
-    const pointsOf = [...pts.map(p => ll(p.lat, p.lon)), ...msgs.filter(m => m.lat != null && !m.suspect).map(m => ll(m.lat, m.lon)),
-                      ...msgs.filter(m => m.airport).map(m => ll(m.airport.lat, m.airport.lon))];   // and the airports asked about
+    const pointsOf = [...pts.map(p => ll(p.lat, p.lon)), ...msgs.filter(m => m.lat != null && !m.suspect).map(m => ll(m.lat, m.lon))];
     if (pointsOf.length) map.fitBounds(pointsOf, {maxZoom: 8, padding: [30, 30]});
   } else if (focus) {
     const f = latestFix(pts, msgs);
@@ -1701,7 +1740,9 @@ function applyHighlight(pan) {
   drawPredictions();                                               // the selected report's predictions, replacing the last one's
   rows.forEach((el, id) => el.classList.toggle('sel', id === selectedMsg));
   const m = lastMsgs.find(x => x.id === selectedMsg);
-  if (!m) return;
+  if (!m) { atisFitFor = null; return; }
+  if (m.airports && m.airports.length) drawAtisAirports(m, highlight);   // the airports a D-ATIS message asked about
+  else atisFitFor = null;
   if (m.lat == null) { drawGhost(m, pan); return; }   // no position of its own: a ghost where the flight path puts it
   L.circleMarker(ll(m.lat, m.lon), {radius: 13, color: '#0a58ca', weight: 3, fillColor: '#ffd43b', fillOpacity: .35, interactive: false}).addTo(highlight);
   if (pan && !map.getBounds().pad(-0.1).contains(ll(m.lat, m.lon))) map.panTo(ll(m.lat, m.lon));

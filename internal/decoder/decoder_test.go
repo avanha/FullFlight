@@ -1208,3 +1208,84 @@ func TestPWI(t *testing.T) {
 		t.Error("an empty PWI decoded")
 	}
 }
+
+// Real airline operations messages: Qantas movements, flight data link and weather requests, Air Canada's movement,
+// event, flight information, load sheet and dangerous goods messages, pre-departure clearances, the ATIS and METAR
+// sent to the aircraft, and data link disconnects. What each says is its summary.
+func TestOpsMessages(t *testing.T) {
+	for _, c := range []struct{ label, text, want string }{
+		{"81", "\r\nMVA\r\nQFA0008/24.VHOQG.YSSY\r\nAA2008/2012", "Qantas QF8 arrival at YSSY: on 20:08Z, in 20:12Z"},
+		{"80", "\r\nMVA\r\nQFA0007/25.VHOQG.YSSY\r\nAD0213/0233 EA1725 KDFW", "Qantas QF7 departure YSSY→KDFW: out 02:13Z, off 02:33Z, ETA 17:25Z"},
+		{"80", "\r\nMVA\r\nQFA0008/  .VHOQG.    \r\nAD2022                 \r\nSI DR2022", "Qantas QF8 departure: out 20:22Z"},
+		{"RF", ",FDASUB01261101034409,SYD,,SIN,,QF001,261101,0530,388,,VH-OQG,/351247,361,,1,AC2A", "Qantas flight data submitted: QF1 YSSY→WSSS, scheduled 05:30Z"},
+		{"RF", ",FDAACK01261101034415/351247,361,,1,47D1", "Qantas flight data acknowledged"},
+		{"5U", "\r\nWX REQUEST\r\nQFA0001/27\r\nACTUAL\r\nEGLL EHAM LFPG", "Weather request (METAR) for EGLL, EHAM, LFPG"},
+		{"5U", "M75AFJ0880  01 WXRQ   0880/31 NFFN/CYVR .DQ-FAM\n\t/TYP 1/STA KSFO/STA KPDX/STA CYVR", "Weather request NFFN→CYVR for KSFO, KPDX, CYVR"},
+		{"5U", "U06AQF0018\n\tWX REQUEST\n\tQFA0018/25\n\tATIS   \n\tYSSY YMML", "D-ATIS request for YSSY, YMML"},
+		{"4T", "ATD AC0025/31/31 YVR 1921Z", "Air Canada AC25 left the gate at CYVR: out 19:21Z"},
+		{"4T", "AGFSR AC0025/31/31/YVRPVG/2218Z/833/5847.5N15356.8W/340/CRUISE/0593/0199/M41/214017/0295/***/493/1921/1940/****/****", "Air Canada AC25 position report CYVR→ZSPD: 58.792N 153.947W, FL340, cruise"},
+		{"4Q", "TDX AC0025/31/31 YVR 1921Z 1940Z 833  \r0791/089528 L A", "Air Canada AC25 left the gate and took off at CYVR: out 19:21Z, off 19:40Z"},
+		{"4Q", "KQ1 AC0020/31/31 SIN YVR/0037/0057/1427/1434", "Air Canada AC20 movements WSSS→CYVR: out 00:37Z, off 00:57Z, on 14:27Z, in 14:34Z"},
+		{"49", "01ICCL    ACA025/311941CYVRZSPD\r\n+ 1888221.4+ 13.0", "Air Canada AC25 event ICCL CYVR→ZSPD at 19:41Z"},
+		{"49", "01DCAPUAL27     /260855KDENEGLL\r\n+ 1258150.5+ 12.0", "United UA27 event DCAP KDEN→EGLL at 08:55Z"},
+		{"17", "01TOICCKK206    /301712EHAMZSPD\r\n201   196.7 +15.1", "China Cargo CK206 event TOIC EHAM→ZSPD at 17:12Z"},
+		{"4C", "-FLT CA01 0025/31/YVR/PVG/CYVR/ZSPD/ACA025\r\n\r\n", "Air Canada flight information AC25 CYVR→ZSPD"},
+		{"4M", "-// LDF MA01 S4APRD1 31OCT/1914 YVR  ACK C-FNOH/833/0025 24721685000\r\n 0025/31/YVR/PVG/01\r\n\r\nLOAD FINAL       AC0025  31OCT   YVR/PVG\r\nFIN833 CFNOH     OFP-1   LS-1     EDNO-1\r\n\r\nZFW    168.5                 CRW PAX INF\r\nTOW    247.2                 3/9 294   2\r\nTOWCG   26.0                 \r\n\r\nFOB*    79.2                  0A  0B  0C\r\nUNU      0.0                  30 131 133\r\nTOF     78.7\r\n\r\n                             FWD AFT BLK\r\nLM      17.1        LIVE     [ ] [ ] [ ]\r\nCT      45.0        PRSHBLE  [Y] [Y] [ ]\r\nRM      17.1        DG       [Y] [ ] [ ]\r\n            \r\n            \r\nRMKS   [EMS/23P RRY/23P                ]\r\n       [                               ]\r\n       [                               ]\r\n       [                               ]\r\n       [                               ]\r\n       [                               ]\r\n       [                               ]\r\n                                        \r\n        EMER RESPONSE GUIDE DRILL CODES \r\nFWD    [9L, 7L, 2L                     ]\r\nAFT    [                               ]\r\nBLK    [                               ]\r\n\r\nVIC RAVANESE             +1-905-861-7403\r\n-- PART 1 OF 4 --\r\n\r\n", "Air Canada load sheet (final) AC25 CYVR→ZSPD: zero fuel 168.5 t, take-off 247.2 t, fuel 79.2 t, 294 passengers"},
+		{"4P", "-// PNT PA04 S4APRD1 31OCT/1914 YVR      C-FNOH/833/0025 24721685000\r\n\r\nLOAD FINAL NOTOC AC0025  31OCT  YVR/PVG   FIN833 CFNOH  OFP-1   LS-1  EDNO-1\r\n\r\n        SPECIAL LOAD - NOTIFICATION TO CAPTAIN\r\n        ======================================\r\nTHIS IS TO CONFIRM THAT THERE IS NO EVIDENCE OF DAMAGED OR LEAKING PACKAGES AND\r\nTHAT ULDS CONTAINING DANGEROUS GOODS LOADED ON THE AIRCRAFT ARE FREE FROM ANY\r\nEVIDENCE OF LEAKAGE OR DAMAGE. ALL BULK LOADED DANGEROUS GOODS PACKAGES HAVE\r\nBEEN SECURED AGAINST MOVEMENT IN FLIGHT.\r\n\r\nLA PRESENTE CONFIRME QUE, SELON TOUTE APPARENCE, AUCUNE EXPEDITION (COLIS OU\r\nUC) DE MARCHANDISES DANGEREUSES ENDOMMAGEES OU COMPORTANT UNE FUITE N'A ETE\r\nCHARGEE A BORD DE L'APPAREIL. TOUTES LES EXPEDITIONS DE MARCHANDISES DANGEREUSES\r\nCHARGEES EN SOUTE ONT ETE ARRIMEES POUR EVITER LEUR DEPLACEMENT DURANT LE VOL.\r\n\r\nVERIFIED/VERIFIE BY/PAR: AC075707\r\n-- PART 4 OF 4 --\r\n\r\n", "Air Canada dangerous goods notice (NOTOC) AC25 CYVR→ZSPD"},
+		{"A3", "/PVGDCYA.DC1/CLD 1245 261029 ZSPD\n\tPDC 999\n\tUPS81 CLRD TO PANC OFF 34L VIA LAMEN2\n\tSQUAWK 6331 ADT 1245 NEXT FREQ 121.950 ATIS Y\n\tINITIAL ALT 900M\n\tFL 7500M\n\tWHEN AIRBORNE CTC APP125.40 W/O INSTRUC78B0", "Departure clearance UPS81 ZSPD→PANC: runway 34L, LAMEN2, squawk 6331"},
+		{"A4", "/PVGDCYA.FS1/FSM 1245 261029 ZSPD\n\tUPS81 RCD RECEIVED\n\tREQUEST BEING PROCESSED\n\tSTANDBY29F9", "ZSPD clearance service: UPS81 request received, standby"},
+		{"A4", "/MADAAYA.FS1/FSM 0501 261024 LEZG\n\tAN B-LRM RAI REJECTED\n\tERROR IN MESSAGE\n\tRESUBMIT YOUR REQUEST\n\tUNKNOWN AIRPORT CODEA062", "LEZG clearance service: B-LRM request rejected (unknown airport code)"},
+		{"3T", "CYXS  2SA   METAR CYXS 010200Z AUTO\n\t   16007KT 9SM CLR     \n\t   M01/M03 A2996 RMK   \n\t   SLP186= \n\tMETAR CYXS 010100Z AUTO\n\t   17006KT 9SM CLR     \n\t   M00/M03 A2996 RMK   \n\t   SLP186=", "METAR CYXS 02:00Z: 160°/7 kt, 9 SM, CLR, -1/-3 °C, QNH 29.96"},
+		{"A9", "/DATSCXS.TI2/HNL  ARR ATIS P\n\t1453Z -  HNL ATIS INFO P\n\t1453Z. 06008KT 10SM\n\tFEW022 BKN030 OVC060\n\t26/22 A2988 (TWO NINER\n\tEIGHT EIGHT) RMK AO2\n\tSLP118 T02560222 53000.\n\tLNDG/DEPG RWYS 4/8 EXP\n\tRNAV OR VISUAL APCH. RWY\n\t4R CLSD. TWY, E BTN TWY,\n\tA AND TWY B CLSD, TWY, H\n\tBTN RWY, 8L AND TWY A\n\tCLSD, TWY, C BTN RWY, 4R\n\tAND TWY RT CLSD, TWY, K\n\tBTN RWY, 4L AND RWY 4R\n\tCLSD, TWY A BTN RWY 4L\n\tAND TWY K CLSD. TWY W\n\tCLSD. SOUTH TEE HANGAR\n\tENTRANCE CLSD. TWY C BTN\n\tRWY 4L AND TAXI LANE 1\n\tCLSD. TWY T CLSD TWY P\n\tCLSD. RWY 8R DEP END\n\tBARRIER OTS. ILS RWY  8L\n\tOTS, EWABE OM OTS. HNL\n\tTACAN AZM OTS. CKH TACAN\n\tAZM OTS. READ BACK ALL\n\tCONTROL INSTRUCTIONS.\n\tINCR BIRD STRIKE HAZ ALL\n\tRWYS. NUMEROUS CRANES IN\n\tTHE VCNTY HNL ARPT CHECK\n\tNOTAMS FOR ADNL INFO.\n\tAIRMET S UPDATE 1 VALID.\n\tMORE INFO AT HNL AFSS.\n\tWARNING RWY 8L IS\n\tSHORTENED 7000 FT\n\tAVAILABLE LAST EXIT TWY\n\tY, S, D INTERSECTION. GC\n\tAND CD FREQUENCY 118.1.\n\t...ADVS YOU HAVE INFO P.2961", "D-ATIS arrival information P for PHNL: 060°/8 kt, 10 SM, FEW022 BKN030 OVC060, 26/22 °C, QNH 29.88"},
+		{"B6", "J70ACX0749/CGKCDYA.DIS..B-LRD20CDE6", "Data link disconnect: B-LRD"},
+		{"B6", "J20ADL0038/ANCATYA.DIS.N501DN800610", "Data link disconnect: N501DN"},
+	} {
+		r, err := Decode(Message{Label: c.label, Text: c.text})
+		if err != nil || r.Summary != c.want {
+			t.Errorf("%s %.50q: %v %q, want %q", c.label, c.text, r.Kind, r.Summary, c.want)
+		}
+	}
+
+	op := func(label, text string) (Result, OpsReport) {
+		r, _ := Decode(Message{Label: label, Text: text})
+		o, _ := r.Fields["ops"].(OpsReport)
+		return r, o
+	}
+	// the times and route that the flight's route and departure come from
+	r, o := op("80", "\r\nMVA\r\nQFA0007/25.VHOQG.YSSY\r\nAD0213/0233 EA1725 KDFW")
+	if r.Kind != KindOps || o.Origin != "YSSY" || o.Dest != "KDFW" || o.Out != "0213" || o.Off != "0233" || o.ETA != "1725" || r.Identity.Flight != "QF7" || r.Dir != Downlink {
+		t.Errorf("Qantas departure: %+v %+v", o, r.Identity)
+	}
+	r, o = op("4Q", "KQ1 AC0020/31/31 SIN YVR/0037/0057/1427/1434")
+	if o.Origin != "WSSS" || o.Dest != "CYVR" || o.Out != "0037" || o.Off != "0057" || o.On != "1427" || o.In != "1434" {
+		t.Errorf("Air Canada movements: %+v", o)
+	}
+	// asterisks stand for a time not yet known
+	if _, o = op("4T", "PSHBK AC0025/31/31 YVR 1921Z/****Z/****Z/1922Z"); o.Out != "1921" || o.Off != "" {
+		t.Errorf("pushback: %+v", o)
+	}
+	// the position report is a position
+	r, _ = op("4T", "AGFSR AC0025/31/31/YVRPVG/2218Z/833/5847.5N15356.8W/340/CRUISE/0593/0199/M41/214017/0295/***/493/1921/1940/****/****")
+	if r.Pos == nil || r.Pos.Basis != BasisDay || r.Pos.Secs != 22*3600+18*60 || *r.Pos.AltFt != 34000 || r.Wx == nil || *r.Wx.TempC != -41 || *r.Wx.WindDirDeg != 214 || *r.Wx.WindKt != 17 {
+		t.Errorf("position: %+v %+v", r.Pos, r.Wx)
+	}
+	near(t, "lat", r.Pos.Lat, 58+47.5/60, 1e-9)
+	near(t, "lon", r.Pos.Lon, -(153 + 56.8/60), 1e-9)
+	// a clearance names the runway, SID and squawk
+	if _, o = op("A3", "/PVGDCYA.DC1/CLD 1245 261029 ZSPD\n\tPDC 999\n\tUPS81 CLRD TO PANC OFF 34L VIA LAMEN2\n\tSQUAWK 6331 ADT 1245 NEXT FREQ 121.950 ATIS Y\n\tINITIAL ALT 900M\n\tFL 7500M\n\tWHEN AIRBORNE CTC APP125.40 W/O INSTRUC78B0"); o.Origin != "ZSPD" || o.Dest != "PANC" || o.Runway != "34L" || o.SID != "LAMEN2" || o.Squawk != "6331" {
+		t.Errorf("clearance: %+v", o)
+	}
+	// the ATIS has the weather in it
+	r, _ = Decode(Message{Label: "A9", Text: "/DATSCXS.TI2/HNL  ARR ATIS P\n\t1453Z -  HNL ATIS INFO P\n\t1453Z. 06008KT 10SM\n\tFEW022 BKN030 OVC060\n\t26/22 A2988 (TWO NINER\n\tEIGHT EIGHT) RMK AO2\n\tSLP118 T02560222 53000.\n\tLNDG/DEPG RWYS 4/8 EXP\n\tRNAV OR VISUAL APCH. RWY\n\t4R CLSD. TWY, E BTN TWY,\n\tA AND TWY B CLSD, TWY, H\n\tBTN RWY, 8L AND TWY A\n\tCLSD, TWY, C BTN RWY, 4R\n\tAND TWY RT CLSD, TWY, K\n\tBTN RWY, 4L AND RWY 4R\n\tCLSD, TWY A BTN RWY 4L\n\tAND TWY K CLSD. TWY W\n\tCLSD. SOUTH TEE HANGAR\n\tENTRANCE CLSD. TWY C BTN\n\tRWY 4L AND TAXI LANE 1\n\tCLSD. TWY T CLSD TWY P\n\tCLSD. RWY 8R DEP END\n\tBARRIER OTS. ILS RWY  8L\n\tOTS, EWABE OM OTS. HNL\n\tTACAN AZM OTS. CKH TACAN\n\tAZM OTS. READ BACK ALL\n\tCONTROL INSTRUCTIONS.\n\tINCR BIRD STRIKE HAZ ALL\n\tRWYS. NUMEROUS CRANES IN\n\tTHE VCNTY HNL ARPT CHECK\n\tNOTAMS FOR ADNL INFO.\n\tAIRMET S UPDATE 1 VALID.\n\tMORE INFO AT HNL AFSS.\n\tWARNING RWY 8L IS\n\tSHORTENED 7000 FT\n\tAVAILABLE LAST EXIT TWY\n\tY, S, D INTERSECTION. GC\n\tAND CD FREQUENCY 118.1.\n\t...ADVS YOU HAVE INFO P.2961"})
+	w, _ := r.Fields["weather"].(WeatherReport)
+	if r.Kind != KindWeather || w.Airport != "PHNL" || w.Info != "P" || w.Time != "1453" || *w.WindDir != 60 || *w.WindKt != 8 || *w.TempC != 26 || *w.DewC != 22 || w.QNH != "29.88" || w.Type != "arrival" {
+		t.Errorf("ATIS: %v %+v", r.Kind, w)
+	}
+	// a request is still a request, a message of another label is left alone, and the Fiji POSRPT is not mistaken for ops
+	if r, _ = Decode(Message{Label: "B9", Text: "/CYVR.TI2/030CYVRAA396"}); r.Kind != KindDATIS || r.Summary != "D-ATIS arrival request for CYVR" {
+		t.Errorf("request: %v %q", r.Kind, r.Summary)
+	}
+	if r, _ = Decode(Message{Label: "4T", Text: "hello"}); r.Kind != KindUnknown {
+		t.Errorf("unrecognised 4T: %v", r.Kind)
+	}
+}

@@ -460,3 +460,39 @@ func TestShortStopDoesNotSplit(t *testing.T) {
 		t.Errorf("a stop with no departure yet is one flight: %s", names(segs))
 	}
 }
+
+// Qantas sends the next flight's data while the aircraft is still on its way in: QF64 was landing at Sydney when QF1's
+// flight data (scheduled two hours later) arrived. Those messages belong to QF1, from the time it is due to leave: they
+// must not cut QF64 in two or give it QF1's route.
+func TestNextFlightsDataBeforeLandingDoesNotMuddleTheCurrentOne(t *testing.T) {
+	r := newRig(t)
+	sched := at(0, 5, 30)
+	next := func(x time.Time) {
+		r.msg(store.Message{T: x, Kind: "ops_report", Flight: "QF1", Callsign: "QFA1", Label: "RF",
+			Decoded: `{"fields":{"ops":{"event":"FDACOM","origin":"YSSY","dest":"WSSS","flight":"QF1","sched":"` + sched.Format(time.RFC3339) + `"}}}`})
+	}
+	spread(at(0, 0, 0), 3*time.Hour+50*time.Minute, 10*time.Minute, func(x time.Time) { r.said(x, "QF64"); r.fix(x) }) // lands 03:50
+	next(at(0, 3, 26))
+	next(at(0, 3, 31))
+	next(at(0, 3, 44))
+	r.route(at(0, 3, 40), "FAOR", "YSSY")
+
+	until := at(0, 4, 30) // the aircraft is at the gate; QF1 has not left
+	segs, err := Segments(r.st, hex, day0.Add(-24*time.Hour), until)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(segs) != 1 || segs[0].Flight != "QF64" || segs[0].From != "FAOR" || segs[0].To != "YSSY" {
+		t.Fatalf("before QF1 leaves: %s %+v", names(segs), segs)
+	}
+
+	// once it has gone, QF1 is its own flight, with the route its data gave
+	spread(at(0, 5, 40), 90*time.Minute, 10*time.Minute, func(x time.Time) { r.said(x, "QF1"); r.fix(x) })
+	segs, err = Segments(r.st, hex, day0.Add(-24*time.Hour), at(0, 8, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names(segs) != "QF64|QF1|" || segs[1].From != "YSSY" || segs[1].To != "WSSS" || segs[0].To != "YSSY" {
+		t.Errorf("after: %s %+v", names(segs), segs)
+	}
+}

@@ -303,6 +303,17 @@ func summarize(r Result) string {
 		return "Media advisory"
 	case KindDATIS:
 		return fmt.Sprintf("D-ATIS %v request for %v", r.Fields["atis_type"], r.Fields["airport"])
+	case KindWeather:
+		if w, ok := r.Fields["weather"].(WeatherReport); ok {
+			return w.atisSummary()
+		}
+		return "Weather report"
+	case KindDisconnect:
+		s := "Data link disconnect"
+		if r.Identity.Tail != "" {
+			s += ": " + r.Identity.Tail
+		}
+		return s
 	case KindACMF:
 		return acmfSummary(r)
 	case KindAOC:

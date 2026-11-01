@@ -307,9 +307,14 @@ type Route struct {
 // LastRoute returns the newest origin/destination reported by the aircraft in a
 // message that names one, with the time of that report.
 func (s *Store) LastRoute(hexAddr string) (Route, bool) {
+	return s.LastRouteAt(hexAddr, time.Now())
+}
+
+// LastRouteAt is LastRoute as of a time: a report about a flight not due to leave until later does not count yet.
+func (s *Store) LastRouteAt(hexAddr string, at time.Time) (Route, bool) {
 	var r Route
 	var t int64
-	err := s.db.QueryRow(`SELECT t, origin, dest, src FROM (`+routeReportsSQL+`) ORDER BY t DESC LIMIT 1`, hexAddr, 0, 1<<40).Scan(&t, &r.From, &r.To, &r.Source)
+	err := s.db.QueryRow(`SELECT t, origin, dest, src FROM (`+routeReportsSQL+`) ORDER BY t DESC LIMIT 1`, hexAddr, 0, at.Unix()).Scan(&t, &r.From, &r.To, &r.Source)
 	if err != nil {
 		return Route{}, false
 	}
@@ -332,6 +337,7 @@ func (s *Store) LastFlight(hexAddr string) (FlightID, bool) {
 	var t int64
 	err := s.db.QueryRow(`SELECT ts, flight, callsign FROM message
 		WHERE hex=? AND (flight != '' OR callsign != '') AND mismatch NOT LIKE '%which is hex%' AND time_flag=0
+		  AND `+atTime+` <= ts + 60 -- not a flight that has yet to leave
 		ORDER BY ts DESC, id DESC LIMIT 1`, hexAddr).Scan(&t, &f.Flight, &f.Callsign)
 	if err != nil {
 		return FlightID{}, false
@@ -485,9 +491,12 @@ type Evidence struct {
 // FlightEvidence returns every sighting of the flight identity in [since, until], oldest first.
 // Messages whose text names a different aircraft are left out.
 func (s *Store) FlightEvidence(hexAddr string, since, until time.Time) ([]Evidence, error) {
+	// (a message about a flight that has not left yet counts from its scheduled departure: see atTime)
 	rows, err := s.db.Query(`
-		SELECT ts, CASE WHEN flight != '' THEN flight ELSE callsign END FROM message
-		  WHERE hex=?1 AND ts BETWEEN ?2 AND ?3 AND (flight != '' OR callsign != '') AND mismatch NOT LIKE '%which is hex%' AND time_flag=0
+		SELECT t, id FROM (
+			SELECT `+atTime+` AS t, CASE WHEN flight != '' THEN flight ELSE callsign END AS id FROM message
+			  WHERE hex=?1 AND ts BETWEEN ?2 - 172800 AND ?3 AND (flight != '' OR callsign != '') AND mismatch NOT LIKE '%which is hex%' AND time_flag=0)
+		  WHERE t BETWEEN ?2 AND ?3
 		UNION ALL
 		SELECT ts, callsign FROM position WHERE hex=?1 AND ts BETWEEN ?2 AND ?3 AND callsign != ''
 		ORDER BY 1`, hexAddr, ts(since), ts(until))
@@ -570,7 +579,11 @@ func (s *Store) GroundStops(hexAddr string, since, until time.Time) ([]GroundSto
 // routeReportsSQL selects (t, origin, dest, source) from the kinds of message that say where a flight is going: a
 // REP081 report, another A350 report (or its XML maintenance report, or a takeoff report) that names the route, a 787 ACMF report, an airline (label 83) position report and a filed flight plan (arguments:
 // hex, from, to).
-const routeReportsSQL = `
+// atTime is the time an airline's operations message counts as: when it arrived, or, for one about a flight that has not left
+// yet (Qantas sends the next flight's data while the aircraft is still on its way in), when that flight is due to leave.
+const atTime = `MAX(ts, COALESCE(CASE WHEN json_valid(decoded) THEN CAST(strftime('%s', json_extract(decoded, '$.fields.ops.sched')) AS INTEGER) END, 0))`
+
+var routeReportsSQL = `
 	SELECT COALESCE(pos_ts, ts) AS t, COALESCE(json_extract(decoded, '$.fields.rep081.Origin'), '') AS origin,
 		json_extract(decoded, '$.fields.rep081.Dest') AS dest, 'REP081' AS src
 	FROM message WHERE hex=?1 AND kind='miam' AND COALESCE(pos_ts, ts) BETWEEN ?2 AND ?3 AND time_flag=0
@@ -584,6 +597,11 @@ const routeReportsSQL = `
 	SELECT ts, json_extract(decoded, '$.fields.departure.Origin'), json_extract(decoded, '$.fields.departure.Dest'), 'airline report'
 	FROM message WHERE hex=?1 AND kind IN ('departure_report', 'miam') AND ts BETWEEN ?2 AND ?3 AND time_flag=0
 	  AND COALESCE(json_extract(decoded, '$.fields.departure.Dest'), '') != ''
+	UNION ALL
+	SELECT t, origin, dest, 'airline report' FROM (
+		SELECT ` + atTime + ` AS t, COALESCE(json_extract(decoded, '$.fields.ops.origin'), '') AS origin, json_extract(decoded, '$.fields.ops.dest') AS dest
+		FROM message WHERE hex=?1 AND kind='ops_report' AND ts BETWEEN ?2 - 172800 AND ?3 AND time_flag=0
+		  AND json_valid(decoded) AND COALESCE(json_extract(decoded, '$.fields.ops.dest'), '') != '') WHERE t BETWEEN ?2 AND ?3
 	UNION ALL
 	SELECT COALESCE(pos_ts, ts), COALESCE(json_extract(decoded, '$.fields.origin'), ''), json_extract(decoded, '$.fields.dest'),
 		CASE kind WHEN 'acmf_report' THEN 'ACMF' ELSE 'airline report' END
@@ -666,8 +684,12 @@ func timeBefore(when time.Time, hms string) (time.Time, bool) {
 func (s *Store) Departures(hexAddr string, since, until time.Time) ([]Departure, error) {
 	rows, err := s.db.Query(`
 		WITH m AS (SELECT ts, CASE WHEN json_valid(decoded) THEN decoded ELSE '{}' END AS decoded FROM message
-		           WHERE hex=?1 AND ts BETWEEN ?2 AND ?3 AND time_flag=0 AND kind IN ('miam', 'departure_report'))
+		           WHERE hex=?1 AND ts BETWEEN ?2 AND ?3 AND time_flag=0 AND kind IN ('miam', 'departure_report', 'ops_report'))
 		SELECT ts, 'takeoff', json_extract(decoded, '$.fields.takeoff.Off') FROM m WHERE json_extract(decoded, '$.fields.takeoff.Off') IS NOT NULL
+		UNION ALL
+		SELECT ts, 'takeoff', json_extract(decoded, '$.fields.ops.off') FROM m WHERE json_extract(decoded, '$.fields.ops.off') IS NOT NULL
+		UNION ALL
+		SELECT ts, 'pushback', json_extract(decoded, '$.fields.ops.out') FROM m WHERE json_extract(decoded, '$.fields.ops.out') IS NOT NULL
 		UNION ALL
 		SELECT ts, 'pushback', json_extract(decoded, '$.fields.departure.Events.out."OUT EVENT"') FROM m WHERE json_extract(decoded, '$.fields.departure.Events.out."OUT EVENT"') IS NOT NULL
 		UNION ALL

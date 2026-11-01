@@ -980,3 +980,58 @@ func TestManualRoutes(t *testing.T) {
 		t.Errorf("clear: %+v", got)
 	}
 }
+
+// An airline's movement message names the route and when the flight left, hours after it did (Qantas sent QF7's
+// departure report 11 hours into the flight).
+func TestOpsReportsGiveRouteAndDeparture(t *testing.T) {
+	s := open(t)
+	at := time.Date(2026, 10, 25, 13, 23, 0, 0, time.UTC)
+	s.AddMessage(Message{ID: 1, Hex: "7C4926", T: at, Label: "80", Text: "a", Kind: "ops_report",
+		Decoded: `{"fields":{"ops":{"event":"AD","origin":"YSSY","dest":"KDFW","out":"0213","off":"0233"}}}`})
+	s.AddMessage(Message{ID: 2, Hex: "7C4926", T: at.Add(time.Hour), Label: "81", Text: "b", Kind: "ops_report",
+		Decoded: `{"fields":{"ops":{"event":"AA","dest":"YSSY","on":"1409"}}}`}) // an arrival names no origin, and no departure
+
+	r, ok := s.LastRoute("7C4926")
+	if !ok || r.From != "" || r.To != "YSSY" {
+		t.Errorf("newest route = %+v %v (the arrival, which has only a destination)", r, ok)
+	}
+	rs, err := s.RouteReports("7C4926", at.Add(-time.Hour), at.Add(time.Minute))
+	if err != nil || len(rs) != 1 || rs[0].From != "YSSY" || rs[0].To != "KDFW" {
+		t.Errorf("route reports = %+v %v", rs, err)
+	}
+	ds, err := s.Departures("7C4926", at.Add(-24*time.Hour), at.Add(2*time.Hour))
+	if err != nil || len(ds) != 2 {
+		t.Fatalf("departures = %+v %v", ds, err)
+	}
+	if ds[0].How != "pushback" || !ds[0].T.Equal(time.Date(2026, 10, 25, 2, 13, 0, 0, time.UTC)) ||
+		ds[1].How != "takeoff" || !ds[1].T.Equal(time.Date(2026, 10, 25, 2, 33, 0, 0, time.UTC)) {
+		t.Errorf("departures = %+v", ds)
+	}
+}
+
+// A message about a flight that has not left yet does not name the flight in progress, nor give its route, until the
+// flight is due.
+func TestMessagesAboutAFlightNotYetDueAreHeldBack(t *testing.T) {
+	s := open(t)
+	at := time.Date(2026, 11, 1, 3, 0, 0, 0, time.UTC)
+	sched := time.Date(2026, 11, 1, 5, 30, 0, 0, time.UTC)
+	s.AddMessage(Message{ID: 1, Hex: "7C4926", T: at, Label: "B6", Text: "a", Kind: "adsc", Flight: "QF64"})
+	s.AddMessage(Message{ID: 2, Hex: "7C4926", T: at.Add(26 * time.Minute), Label: "RF", Text: "b", Kind: "ops_report", Flight: "QF1", Callsign: "QFA1",
+		Decoded: `{"fields":{"ops":{"event":"FDACOM","origin":"YSSY","dest":"WSSS","sched":"` + sched.Format(time.RFC3339) + `"}}}`})
+	s.AddMessage(Message{ID: 3, Hex: "7C4926", T: at.Add(10 * time.Minute), Label: "81", Text: "c", Kind: "ops_report", Flight: "QF64",
+		Decoded: `{"fields":{"ops":{"event":"AA","dest":"YSSY","on":"0310"}}}`})
+
+	if f, ok := s.LastFlight("7C4926"); !ok || f.Flight != "QF64" {
+		t.Errorf("last flight = %+v %v, want the one in progress", f, ok)
+	}
+	if r, ok := s.LastRouteAt("7C4926", at.Add(time.Hour)); !ok || r.To != "YSSY" {
+		t.Errorf("route at 04:00 = %+v %v", r, ok)
+	}
+	if r, ok := s.LastRouteAt("7C4926", sched.Add(time.Minute)); !ok || r.To != "WSSS" || !r.T.Equal(sched) {
+		t.Errorf("route after the departure was due = %+v %v", r, ok)
+	}
+	ev, _ := s.FlightEvidence("7C4926", at.Add(-time.Hour), at.Add(8*time.Hour))
+	if len(ev) != 3 || ev[2].ID != "QF1" || !ev[2].T.Equal(sched) {
+		t.Errorf("evidence = %+v (QF1 counts from %v)", ev, sched)
+	}
+}

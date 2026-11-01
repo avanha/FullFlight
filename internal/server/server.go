@@ -233,7 +233,7 @@ type routeJSON struct {
 }
 
 func (s *Server) route(hex string) *routeJSON {
-	r, ok := s.Store.LastRoute(hex)
+	r, ok := s.Store.LastRouteAt(hex, s.now())
 	if !ok {
 		return nil
 	}
@@ -268,7 +268,7 @@ func (s *Server) lastPosition(hex string) *lastPos {
 		best = &lastPos{T: p.T, Kind: "ADS-B", Lat: p.Lat, Lon: p.Lon, AltFt: p.AltFt}
 	}
 	if m, ok := s.Store.LastMessagePosition(hex); ok && (best == nil || m.T.After(best.T)) {
-		kind := map[string]string{"adsc": "ADS-C", "cpdlc": "CPDLC", "miam": "REP081", "fms_position": "FMS", "acmf_report": "ACMF", "aoc_position": "AOC", "pos_report": "POS", "posrpt": "POSRPT", "posa1": "POSA1", "sbpos": "SB"}[m.Kind]
+		kind := map[string]string{"adsc": "ADS-C", "cpdlc": "CPDLC", "miam": "REP081", "fms_position": "FMS", "acmf_report": "ACMF", "aoc_position": "AOC", "pos_report": "POS", "posrpt": "POSRPT", "posa1": "POSA1", "sbpos": "SB", "ops_report": "Airline"}[m.Kind]
 		if kind == "" {
 			kind = m.Kind
 		}
@@ -730,7 +730,7 @@ type messageJSON struct {
 	AFTail         string        `json:"af_tail,omitempty"`
 	AFFlight       string        `json:"af_flight,omitempty"`
 	Route          []routeWpJSON `json:"route,omitempty"`
-	Airport        *atisAirport  `json:"airport,omitempty"` // the airport a D-ATIS request or reply is for
+	Airports       []atisAirport `json:"airports,omitempty"` // the airports a D-ATIS request or reply is for
 
 	Wx        *wxJSON        `json:"wx,omitempty"`
 	GS        *float64       `json:"gs,omitempty"`  // knots, as the report gave it
@@ -748,22 +748,26 @@ type atisAirport struct {
 	Type string  `json:"type,omitempty"` // arrival or departure
 }
 
-var atisSummary = regexp.MustCompile(`^D-ATIS (\w+) request for ([A-Z0-9]{4})$`)
+// A D-ATIS request ("D-ATIS arrival request for CYVR", or "D-ATIS request for YSSY, YMML" from Qantas) or the
+// broadcast sent back ("D-ATIS arrival information P for PHNL: 060°/8 kt ...").
+var atisSummary = regexp.MustCompile(`^D-ATIS (?:(arrival|departure) )?(?:request|information(?: [A-Z])?) for ([A-Z0-9]{4}(?:, [A-Z0-9]{4})*)`)
 
-// atisAirportOf finds the airport a D-ATIS message names (from its summary), when we know where it is.
-func atisAirportOf(m store.Message) *atisAirport {
-	if m.Kind != "datis_request" {
+// atisAirportsOf finds the airports a D-ATIS message names (from its summary), those we know where to put.
+func atisAirportsOf(m store.Message) []atisAirport {
+	if m.Kind != "datis_request" && m.Kind != "weather_report" && m.Kind != "ops_report" {
 		return nil
 	}
 	f := atisSummary.FindStringSubmatch(m.Summary)
 	if f == nil {
 		return nil
 	}
-	a, ok := airports.Lookup(f[2])
-	if !ok {
-		return nil
+	var out []atisAirport
+	for _, code := range strings.Split(f[2], ", ") {
+		if a, ok := airports.Lookup(code); ok {
+			out = append(out, atisAirport{Code: a.ICAO, IATA: a.IATA, Name: a.Name, Lat: a.Lat, Lon: a.Lon, Type: f[1]})
+		}
 	}
-	return &atisAirport{Code: a.ICAO, IATA: a.IATA, Name: a.Name, Lat: a.Lat, Lon: a.Lon, Type: f[1]}
+	return out
 }
 
 // wxJSON is the weather at a report: wind direction (the way it blows FROM, true), speed and temperature.
@@ -812,7 +816,7 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 			RxCount: m.RxCount, Lat: m.Lat, Lon: m.Lon, AltFt: m.AltFt, PosT: m.PosT, Suspect: m.Suspect, TimeNote: m.TimeNote, TimeUnverified: m.TimeFlag,
 			Mismatch: m.Mismatch, AFTail: m.AFTail, AFFlight: m.AFFlight}
 		j.Route = s.routeWaypoints(m.Route)
-		j.Airport = atisAirportOf(m)
+		j.Airports = atisAirportsOf(m)
 		if m.WxDir != nil || m.WxKt != nil || m.WxTemp != nil {
 			j.Wx = &wxJSON{DirDeg: m.WxDir, Kt: m.WxKt, TempC: m.WxTemp}
 		}

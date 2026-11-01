@@ -11,24 +11,27 @@ import (
 type Kind string
 
 const (
-	KindADSC      Kind = "adsc"
-	KindCPDLC     Kind = "cpdlc"
-	KindAFN       Kind = "afn"
-	KindMIAM      Kind = "miam"
-	KindMedia     Kind = "media_advisory"
-	KindDATIS     Kind = "datis_request"
-	KindFMS       Kind = "fms_position"
-	KindPlan      Kind = "flight_plan"
-	KindProgress  Kind = "progress"
-	KindACMF      Kind = "acmf_report"
-	KindAOC       Kind = "aoc_position"
-	KindDeparture Kind = "departure_report"
-	KindPWI       Kind = "wind_forecast"
-	KindPOS       Kind = "pos_report"
-	KindPOSRPT    Kind = "posrpt"
-	KindPOSA1     Kind = "posa1"
-	KindSBPOS     Kind = "sbpos"
-	KindUnknown   Kind = "unknown"
+	KindADSC       Kind = "adsc"
+	KindCPDLC      Kind = "cpdlc"
+	KindAFN        Kind = "afn"
+	KindMIAM       Kind = "miam"
+	KindMedia      Kind = "media_advisory"
+	KindDATIS      Kind = "datis_request"
+	KindFMS        Kind = "fms_position"
+	KindPlan       Kind = "flight_plan"
+	KindProgress   Kind = "progress"
+	KindACMF       Kind = "acmf_report"
+	KindAOC        Kind = "aoc_position"
+	KindDeparture  Kind = "departure_report"
+	KindPWI        Kind = "wind_forecast"
+	KindOps        Kind = "ops_report"
+	KindWeather    Kind = "weather_report"
+	KindDisconnect Kind = "disconnect"
+	KindPOS        Kind = "pos_report"
+	KindPOSRPT     Kind = "posrpt"
+	KindPOSA1      Kind = "posa1"
+	KindSBPOS      Kind = "sbpos"
+	KindUnknown    Kind = "unknown"
 )
 
 // Message is the raw input. Label and Dir may be empty/Unknown, in which case
@@ -143,6 +146,8 @@ func classify(label, body string) (Kind, string, Direction) {
 		k, defLabel = KindAOC, "83"
 	case strings.Contains(body, ".AFN/"):
 		k, defLabel = KindAFN, "B0"
+	case strings.Contains(body, ".DIS."):
+		k, defLabel = KindDisconnect, "B6"
 	case strings.Contains(body, ".TI2/"):
 		k, defLabel = KindDATIS, "B9"
 	case label == "SA" || strings.HasPrefix(body, "0E") || strings.HasPrefix(body, "0L"):
@@ -181,6 +186,12 @@ func Decode(m Message) (Result, error) {
 		return r, nil
 	}
 	if r, ok := decodePWI(m); ok {
+		return r, nil
+	}
+	if r, ok := decodeOps(m); ok {
+		return r, nil
+	}
+	if r, ok := decodeWeather(m); ok {
 		return r, nil
 	}
 	prefix, body := SplitPrefix(m.Text)
@@ -326,6 +337,8 @@ func Decode(m Message) (Result, error) {
 		parseAFN(body, &r)
 	case KindDATIS:
 		parseDATIS(body, &r)
+	case KindDisconnect:
+		parseDisconnect(body, &r)
 	case KindMedia:
 		parseMedia(body, &r)
 	}

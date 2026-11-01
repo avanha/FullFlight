@@ -98,6 +98,12 @@ func parseAFN(body string, r *Result) {
 
 // parseDATIS decodes a D-ATIS request: airport and A(rrival)/D(eparture).
 func parseDATIS(body string, r *Result) {
+	if w, ok := readATIS(body); ok { // the broadcast itself, sent to the aircraft
+		r.Kind = KindWeather
+		r.Fields["weather"] = w
+		r.Fields["airport"], r.Fields["atis_type"] = w.Airport, w.Type
+		return
+	}
 	m := datisRe.FindStringSubmatch(body)
 	if m == nil {
 		return

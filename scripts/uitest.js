@@ -60,6 +60,7 @@ const L = {
   control: { layers: (base, overlays) => ({ addTo() { if (!calls.legend) calls.legend = overlays; else calls.legendExtra = overlays; return this; } }) },
   circleMarker(ll, o) { const l = new Layer(); l.ll = ll; l.o = o; calls.circles.push(l); return l; },
   marker(ll, o) { const l = new Layer(); l.ll = ll; l.o = o; calls.markers.push(l); return l; },
+  Tooltip: { mergeOptions(o) { calls.tooltipDefaults = o; } },
   divIcon: o => o, featureGroup: () => ({ getBounds: () => ({}) }),
 };
 // --- the server ---
@@ -263,8 +264,8 @@ highlightGroup = null;
   };
   const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
   // the legend lists all five sources
-  assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS', 'ACMF', 'AOC', 'POS', 'POSRPT', 'POSA1', 'SB', 'AeroDataBox']);
-  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Satellite (IR)|Waypoints|Predictions|Planned route|Estimated path|Projection|Wind barbs', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
+  assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS', 'ACMF', 'AOC', 'POS', 'POSRPT', 'POSA1', 'SB', 'Airline', 'AeroDataBox']);
+  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Satellite (IR)|Waypoints|Predictions|Planned route|Estimated path|Projection|Wind barbs|D-ATIS requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
   // each source gets its own colour and style
   for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {
     const r = await lineOf([], [at2(0, 41, -105, kind), at2(10, 41.1, -104, kind), at2(20, 41.2, -103, kind)]);
@@ -1058,49 +1059,74 @@ highlightGroup = null;
 
   // ===== 8r2. labels held away from their points, and the airports a crew asked D-ATIS about ==========
   {
+    assert.strictEqual(JSON.stringify(calls.tooltipDefaults), '{"offset":[16,0]}', 'hover popups sit clear of their points');
     const KIX = {code: 'RJBB', iata: 'KIX', name: 'Kansai International Airport', lat: 34.43, lon: 135.24, type: 'arrival'};
-    const atis = (id, hh, extra = {}) => ({id, t: `2026-10-30T${hh}:00:00Z`, kind: 'datis_request', summary: 'D-ATIS arrival request for RJBB', raw: 'r', label: 'B9', rx_count: 1, airport: KIX, ...extra});
-    const AM = [fmsg(401, 30, 12, 21.0, {gs: 480, trk: 90}), atis(402, '13'), atis(403, '14')];
-    const labelOf = r => r.markers.find(m => m.o.icon && m.o.icon.html && /atis/.test(m.o.icon.html.className));
+    const LHR = {code: 'EGLL', iata: 'LHR', name: 'Heathrow', lat: 51.47, lon: -0.46, type: 'departure'};
+    // sent at 11:03, between the ADS-B fixes at 11:02 and 11:04 (longitude 20.2 and 20.4)
+    const atis = (id, airports, extra = {}) => ({id, t: '2026-10-30T11:03:00Z', kind: 'datis_request', summary: 'D-ATIS arrival request for RJBB', raw: 'r', label: 'B9', rx_count: 1, airports, ...extra});
+    const AM = [fmsg(401, 30, 12, 21.0, {gs: 480, trk: 90}), atis(402, [KIX]), atis(403, [LHR], {t: '2026-10-30T11:03:30Z'})];
+    const dotsOf = r => r.markers.filter(m => m.o.icon && m.o.icon.className === 'atis-dot-wrap');
+    const labelOf = (r, text) => r.markers.find(m => m.o.icon && m.o.icon.html && /callout/.test(m.o.icon.html.className) && (!text || m.o.icon.html.textContent === text));
+    const rings = () => calls.circles.filter(c => c.o.color === '#7c3aed');
     storage.calloutPos = '{}';
     let r2 = await draw(FPTS, AM, true);
-    // the airport: a ring on it, one label for two requests, and the map fits it
-    const ring = r2.circles.filter(c => c.o.color === '#7c3aed');
-    assert.strictEqual(ring.length, 1, 'one ring for the airport, not one per request');
-    assert.strictEqual(JSON.stringify(ring[0].ll), '[34.43,135.24]');
-    const lab = labelOf(r2);
-    assert.ok(lab, 'a label for the airport');
-    assert.strictEqual(lab.o.icon.html.textContent, 'ATIS KIX arr');
-    assert.strictEqual(lab.o.draggable, true, 'and it can be dragged');
-    assert.ok(Math.abs(lab.ll[0] - 37.43) < 1e-6 && Math.abs(lab.ll[1] - 138.64) < 1e-6, 'held up and to the right of the airport: ' + JSON.stringify(lab.ll));
-    const lead = r2.lines.find(l => l.o.color === '#7c3aed');
-    assert.strictEqual(JSON.stringify(lead.ll[0]), '[34.43,135.24]', 'a line joins it back to the airport');
-    const tl = lines(ring[0].tooltip);
-    assert.ok(tl[0] === 'D-ATIS: RJBB / KIX' && tl.includes('arrival · 2 requests'), tl.join(' | '));
-    // choosing a flight fits the map to the airport as well as the track
-    const fits = calls.fitBounds;
-    await draw(FPTS, AM, 'flight');
-    assert.strictEqual(calls.fitBounds, fits + 1, 'the map is fitted to the flight');
-    const noAtis = await draw(FPTS, FMSGS, true);
-    assert.strictEqual(labelOf(noAtis), undefined, 'no airport, no label');
 
-    // dragging it: the new place is kept as an offset from the airport, and used the next time
-    lab.ll = [30.43, 130.24];
-    lab.handlers.dragend();
+    // on the track there is a diamond for each request, at the place between the fixes either side; the airports are not drawn yet
+    const dots = dotsOf(r2);
+    assert.strictEqual(dots.length, 2, 'one for each request');
+    assert.ok(Math.abs(dots[0].ll[0] - 10) < 1e-3 && Math.abs(dots[0].ll[1] - 20.3) < 2e-3, 'half way between the fixes: ' + JSON.stringify(dots[0].ll));
+    assert.ok(!labelOf(r2) && rings().length === 0, 'the airports show only when the message is selected');
+    const tt = lines(dots[0].tooltip);
+    assert.ok(tt[0] === 'D-ATIS arrival request: RJBB / KIX' && tt.includes('position estimated between the fixes either side') && tt.includes('click to show the airports'), tt.join(' | '));
+    // it is on the legend, as its own layer
+    const entry = Object.keys(calls.legendExtra).find(k => /D-ATIS requests/.test(k));
+    assert.ok(entry && calls.legendExtra[entry] === groups.find(g => g === calls.legendExtra[entry]), 'D-ATIS requests have a legend entry');
+
+    // clicking the diamond selects the message and shows its airports: a ring, and a label held up and to the right
+    calls.circles.length = 0; calls.markers.length = 0; calls.lines.length = 0;
+    dots[0].handlers.click();
+    assert.strictEqual(t.selectedMsg, 402);
+    assert.strictEqual(rings().length, 1);
+    assert.strictEqual(JSON.stringify(rings()[0].ll), '[34.43,135.24]');
+    const lab = labelOf({markers: calls.markers});
+    assert.strictEqual(lab.o.icon.html.textContent, 'ATIS KIX arr');
+    assert.strictEqual(lab.o.draggable, true, 'it can be dragged');
+    assert.ok(Math.abs(lab.ll[0] - 37.43) < 1e-6 && Math.abs(lab.ll[1] - 138.64) < 1e-6, 'held up and to the right of the airport: ' + JSON.stringify(lab.ll));
+    assert.ok(calls.lines.some(l => l.o.color === '#7c3aed' && JSON.stringify(l.ll[0]) === '[34.43,135.24]'), 'a line joins it back to the airport');
+    const tl = lines(rings()[0].tooltip);
+    assert.ok(tl[0] === 'D-ATIS: RJBB / KIX' && tl.includes('arrival request'), tl.join(' | '));
+    const fits = calls.fitBounds;
+    t.pickMessage(402);   // the same message again (a refresh does this): no new zoom
+    assert.strictEqual(calls.fitBounds, fits, 'in view already, and not refitted');
+
+    // an airport out of view makes the map zoom out to take it in, once
+    t.pickMessage(403);
+    assert.strictEqual(calls.fitBounds, fits + 1, 'zoomed out to show the airport (the fake map has Heathrow out of view)');
+    t.pickMessage(403);
+    assert.strictEqual(calls.fitBounds, fits + 1, 'but not again at a refresh');
+
+    // dragging the label keeps the new place as an offset from the airport, and it is used the next time
+    calls.markers.length = 0;
+    t.pickMessage(402);
+    const lab2 = labelOf({markers: calls.markers}, 'ATIS KIX arr');
+    lab2.ll = [30.43, 130.24];
+    lab2.handlers.dragend();
     assert.strictEqual(storage.calloutPos, JSON.stringify({'atis:RJBB': [-50, 40]}), storage.calloutPos);
-    r2 = await draw(FPTS, AM, true);
-    const again = labelOf(r2);
+    calls.markers.length = 0;
+    t.pickMessage(403); t.pickMessage(402);
+    const again = labelOf({markers: calls.markers}, 'ATIS KIX arr');
     assert.ok(Math.abs(again.ll[0] - 30.43) < 1e-6 && Math.abs(again.ll[1] - 130.24) < 1e-6, 'it stays where it was put: ' + JSON.stringify(again.ll));
-    // zooming moves nothing on the page but the map's pixels per degree, so every label is placed again
     again.ll = [0, 0];
     mapHandlers.zoomend();
     assert.ok(Math.abs(again.ll[0] - 30.43) < 1e-6, 'placed again after a zoom');
-    // double-click puts it back
     let stopped = false;
     again.o.icon.html.ondblclick({stopPropagation() { stopped = true; }});
     assert.ok(stopped && Math.abs(again.ll[0] - 37.43) < 1e-6 && storage.calloutPos === '{}', 'double-click returns it to the default place');
-  }
 
+    // no airports, no diamonds
+    const none = await draw(FPTS, FMSGS, true);
+    assert.strictEqual(dotsOf(none).length, 0);
+  }
 
   // ===== 8s. how what was typed is read ===========================================================
   const submit = async (input, reply) => {

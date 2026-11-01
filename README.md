@@ -336,7 +336,12 @@ A flight's **route** is the origin and destination the aircraft reported most of
 A350 reports, ACMF and airline position reports, `*POS` at the top of descent, Delta's departure report and UPS's three route messages, a filed
 plan), and **when it left** is the best evidence there is: a takeoff report's takeoff time, else ADS-B seeing it leave
 the ground, else a gate time from a departure report. Both are worked out afresh each time, so a flight that has
-only its number at first gains its route and departure time as the reports come in. The flag at the start of a flight
+only its number at first gains its route and departure time as the reports come in.
+A message about a flight that has not left yet counts from the time that flight is due to leave, not from when it
+arrived. Qantas sends the next flight's data (`FDASUB`, `FDACOM`, with the scheduled time) while the aircraft is still on
+its way in, and without this QF1's messages cut QF64 in two just before it landed and gave it QF1's route. The same
+rule keeps such a message from naming the flight in progress or its route on the current-flight panel until the flight
+is due. The flag at the start of a flight
 on the map reads `SQ23 KJFK → WSSS · 31 Oct · dep 15:56Z` (`out 06:44Z` where only the gate time is known), and
 its hover gives the airport names and how the departure is known. The aircraft's own hover names its flight, route
 and departure the same way.
@@ -344,12 +349,13 @@ and departure the same way.
 **Labels are held away from what they name.** A flag, the chosen airport or fix, and the D-ATIS airports below each
 sit about 35 pixels up and to the right of their point, joined to it by a line, so they do not hide the route around
 it. Drag one anywhere; it keeps that place relative to its point at any zoom, and the browser remembers it (the 200
-most recent). Double-click a label to put it back.
+most recent). Double-click a label to put it back. Hover popups on route points and reports also sit 16 pixels to the side of their point, not on it.
 
-**D-ATIS airports.** When the crew asked for an airport's ATIS (or the airport's reply came back), that airport gets
-a violet ring and a label `ATIS KIX arr`, with the airport, the kind of request and the last few times in its hover.
-Choosing a flight fits the map to its track *and* those airports, so the airports the crew was looking at, such as a
-destination and its alternates, are all in view.
+**D-ATIS requests.** A D-ATIS request carries no position, so it is marked on the track with a violet diamond at the
+place the aircraft probably was, between the fixes either side of it (the legend entry "D-ATIS requests" switches them off).
+Click a diamond, or choose the message in the list, to select it: the airports it asked about then get a violet ring and a
+label held away from them (draggable, like the others), and the map zooms out to take them in if they are out of view. It
+does this once for each message picked, not again at every refresh. The airports are shown only for the selected message.
 
 **Entering a route by hand.** When the messages never gave a flight's origin or destination, pick the flight in the
 **Flights** selector and press **Set route** under it: type the origin and destination (an IATA or ICAO code; the
@@ -437,6 +443,35 @@ ADS-C gives waypoints as coordinates only. Where those coordinates match a waypo
 reports, or one in the navigation database, the list adds the name (`ADS-C report ... · next OLGAN,
 then KAPPU`) and the tooltip says which. CPDLC position reports list the names they carried. Run
 `fullflight -redecode` to give already-stored messages the names.
+
+## Airline operations messages
+
+Several airlines send their own movement and operations messages. They are decoded as `ops_report` messages, and the
+route and times in them join the evidence for a flight's route and departure.
+
+- **Qantas movements** (labels `80` departure, `81` arrival): `MVA QFA0007/25.VHOQG.YSSY AD0213/0233 EA1725 KDFW` is
+  out of the gate 02:13Z, off 02:33Z, ETA 17:25Z at KDFW; `AA2008/2012` is on at 20:08Z, in at 20:12Z. The aircraft
+  sends them when a ground station is in range, so one can arrive hours after the event; the time is placed on the
+  most recent day that is not after the message arrived.
+- **Qantas flight data link** (`RF`): the flight's number, route and scheduled time (`,FDASUB…,SYD,,DFW,,QF007,261025,0205,388,,VH-OQG`)
+  appear in the submit, commit and status-request messages. The acknowledgements and replies carry numbers only, which are kept as sent.
+- **Air Canada** (`4T`, `4Q`): `ATD`/`PSHBK` (left the gate), `TDX` (out and off), `ARV`/`TAR` (on and in), `KQ1`
+  (all four times and the route), and `AGFSR`, an in-flight position report with altitude, phase, temperature and
+  wind, which is drawn on the map as an "Airline" position. `4C` is the flight information sent before departure,
+  `4M` the load sheet (zero fuel, take-off and fuel weights in tonnes, passengers) and `4P` the dangerous goods notice.
+- **Ground events** (`49`, `17`): `01ICCL ACA025/311941CYVRZSPD` names an event, the flight, the time and the route.
+  Air Canada, United, China Cargo and Zipair send them. The four-letter event codes are shown as sent: I do not know them.
+- **Pre-departure clearances** (`A3`, `A4`, Beijing and Shanghai): the runway, SID and squawk
+  (`ACA030 CLRD TO CYVR OFF 36R VIA MUGL7X SQUAWK 0075`), and the status of a request.
+- **Weather requests** (`5U`): Qantas asking for D-ATIS, TAF or METAR for a list of airports, and Fiji Airways and Delta's `WXRQ`.
+
+A **D-ATIS reply** sent to the aircraft is decoded as a `weather_report`: "D-ATIS arrival information P for PHNL:
+060°/8 kt, 10 SM, FEW022 BKN030 OVC060, 26/22 °C, QNH 29.88". A METAR uplinked to the aircraft (label `3T`) reads the
+same way. The weather is not drawn on the map. D-ATIS requests and replies show the airports they name on the map.
+
+A **data link disconnect** (`.DIS.`) is shown as such, with the aircraft's registration; the two-character code in it is kept but not interpreted.
+
+These formats are read from samples, not specifications. Stored messages show them after `fullflight -redecode`.
 
 ## Predicted winds
 

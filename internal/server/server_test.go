@@ -1228,23 +1228,50 @@ func TestMessagesDATISAirport(t *testing.T) {
 	st.AddMessage(store.Message{ID: 1, Hex: "C023C8", T: now.Add(-time.Hour), Label: "B9", Text: "a", Kind: "datis_request", Summary: "D-ATIS arrival request for RJBB"})
 	st.AddMessage(store.Message{ID: 2, Hex: "C023C8", T: now.Add(-50 * time.Minute), Label: "B9", Text: "b", Kind: "datis_request", Summary: "D-ATIS departure request for ZZZZ"})
 	st.AddMessage(store.Message{ID: 3, Hex: "C023C8", T: now.Add(-40 * time.Minute), Label: "SA", Text: "c", Kind: "media_advisory", Summary: "Link"})
+	st.AddMessage(store.Message{ID: 4, Hex: "C023C8", T: now.Add(-30 * time.Minute), Label: "5U", Text: "d", Kind: "ops_report", Summary: "D-ATIS request for YSSY, YMML"})
+	st.AddMessage(store.Message{ID: 5, Hex: "C023C8", T: now.Add(-20 * time.Minute), Label: "A9", Text: "e", Kind: "weather_report", Summary: "D-ATIS arrival information P for PHNL: 060°/8 kt, 10 SM"})
 	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
 	defer ts.Close()
 	_, body := do(t, "GET", ts.URL+"/api/messages/C023C8", "")
 	var ms []struct {
-		ID      int64 `json:"id"`
-		Airport *struct {
+		ID       int64 `json:"id"`
+		Airports []struct {
 			Code, IATA, Type string
 			Lat, Lon         float64
-		} `json:"airport"`
+		} `json:"airports"`
 	}
-	if err := json.Unmarshal([]byte(body), &ms); err != nil || len(ms) != 3 {
+	if err := json.Unmarshal([]byte(body), &ms); err != nil || len(ms) != 5 {
 		t.Fatalf("%v: %s", err, body)
 	}
-	if a := ms[0].Airport; a == nil || a.Code != "RJBB" || a.IATA != "KIX" || a.Type != "arrival" || a.Lat < 34 || a.Lat > 35 {
-		t.Errorf("RJBB request: %+v", ms[0].Airport)
+	if len(ms[0].Airports) != 1 || ms[0].Airports[0].Code != "RJBB" || ms[0].Airports[0].IATA != "KIX" || ms[0].Airports[0].Type != "arrival" || ms[0].Airports[0].Lat < 34 || ms[0].Airports[0].Lat > 35 {
+		t.Errorf("RJBB request: %+v", ms[0].Airports)
 	}
-	if ms[1].Airport != nil || ms[2].Airport != nil {
-		t.Errorf("an unknown airport and a non-ATIS message get none: %+v %+v", ms[1].Airport, ms[2].Airport)
+	if len(ms[1].Airports) != 0 || len(ms[2].Airports) != 0 {
+		t.Errorf("an unknown airport and a non-ATIS message get none: %+v %+v", ms[1].Airports, ms[2].Airports)
+	}
+	// Qantas asks for two at once, and a broadcast sent back names its airport too
+	if len(ms[3].Airports) != 2 || ms[3].Airports[1].Code != "YMML" || len(ms[4].Airports) != 1 || ms[4].Airports[0].Code != "PHNL" {
+		t.Errorf("two airports, and a reply: %+v %+v", ms[3].Airports, ms[4].Airports)
+	}
+}
+
+// A watch started from the airframes page is by registration, with the hex the page already has: a registration whose
+// address does not follow from it would otherwise sit unresolved until a lookup found it.
+func TestTailWatchWithKnownHex(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	ts := httptest.NewServer((&Server{Store: st, Now: time.Now}).Handler())
+	defer ts.Close()
+	code, body := do(t, "POST", ts.URL+"/api/watches", `{"input":"tail:B-LRM","hex":"780ab8"}`)
+	if code != 201 || !strings.Contains(body, `"kind":"tail"`) || !strings.Contains(body, `"hex":"780AB8"`) {
+		t.Errorf("tail with hex: %d %s", code, body)
+	}
+	// a US registration keeps the address that follows from it, whatever was sent; a bad hex is ignored
+	code, body = do(t, "POST", ts.URL+"/api/watches", `{"input":"tail:N575UP","hex":"123456"}`)
+	if code != 201 || strings.Contains(body, "123456") {
+		t.Errorf("US tail: %d %s", code, body)
+	}
+	code, body = do(t, "POST", ts.URL+"/api/watches", `{"input":"tail:B-LRD","hex":"nonsense"}`)
+	if code != 201 || strings.Contains(body, "nonsense") {
+		t.Errorf("bad hex: %d %s", code, body)
 	}
 }
