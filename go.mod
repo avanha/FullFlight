@@ -3,6 +3,7 @@ module github.com/avanha/fullflight
 go 1.27.3
 
 require (
+	github.com/avanha/golibacars v0.1.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.61.0
 )
