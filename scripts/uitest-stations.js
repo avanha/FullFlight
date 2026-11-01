@@ -5,7 +5,10 @@ const html = fs.readFileSync(path.join(__dirname, '../internal/server/static/sta
 const src = html.match(/<script>\n(\/\/ ---- the stations page[\s\S]*?)<\/script>/)[1];
 
 class El {
-  constructor(tag) { this.tag = tag; this.children = []; this.textContent = ''; this.className = ''; this.hidden = false; this.disabled = false; this.value = ''; this.checked = false; this.title = ''; }
+  constructor(tag) { this.tag = tag; this.children = []; this.textContent = ''; this.className = ''; this.hidden = false; this.disabled = false; this.value = ''; this.checked = false; this.title = ''; this.style = {}; this.attrs = {}; }
+  setAttribute(k, v) { this.attrs[k] = v; }
+  getBoundingClientRect() { return {left: 100, top: 50, width: 1000, height: 600}; }
+  setPointerCapture(id) { this.captured = id; }
   append(...n) { this.children.push(...n); }
   replaceChildren(...n) { this.children = n; }
   scrollIntoView() { this.scrolled = true; }
@@ -38,13 +41,16 @@ function newWorld(setup) {
   };
   const Layer = class { constructor(ll, o) { this.ll = ll; this.o = o; this.handlers = {}; } addTo(g) { g.items.push(this); w.markers.push(this); return this; }
     bindTooltip(t) { this.tip = t; return this; } on(ev, fn) { this.handlers[ev] = fn; return this; } getLatLng() { return this.ll; } openTooltip() { this.opened = true; return this; } };
-  const map = {fits: [], views: [], setView(ll, z) { this.views.push([ll, z]); return this; }, fitBounds(b, o) { this.fits.push([b, o]); }, getZoom: () => 3};
+  const map = {fits: [], views: [], resizes: 0, setView(ll, z) { this.views.push([ll, z]); return this; }, fitBounds(b, o) { this.fits.push([b, o]); }, getZoom: () => 3, invalidateSize() { this.resizes++; }};
   w.map = map;
   const L = {map: () => map, tileLayer: (u) => { w.tileUrls.push(u); return {addTo() { return this; }}; },
     layerGroup: () => { const g = {items: [], addTo() { return this; }, clearLayers() { this.items = []; }}; w.group = g; return g; },
     circleMarker: (ll, o) => new Layer(ll, o)};
+  w.stored = {}; w.narrow = false;
   if (setup) setup(w);
-  const ctx = {document: w.document, fetch: w.fetch, L, Date, Math, Set, Map, JSON, Object, String, Promise, console, Number};
+  const ctx = {document: w.document, fetch: w.fetch, L,
+    localStorage: {getItem: k => (k in w.stored ? w.stored[k] : null), setItem: (k, v) => { w.stored[k] = String(v); }, removeItem: k => { delete w.stored[k]; }},
+    window: {matchMedia: () => ({matches: w.narrow}), addEventListener: (ev, fn) => { if (ev === 'resize') w.resize = fn; }}, Date, Math, Set, Map, JSON, Object, String, Promise, console, Number};
   vm.createContext(ctx);
   vm.runInContext(src, ctx);
   w.ctx = ctx;
@@ -145,5 +151,39 @@ const names = w => rows(w).map(tr => tr.children[0].textContent);
   // no source of positions configured: no button
   w = newWorld(x => { x.body = {can_fetch: false, stations: [LATE]}; }); await w.settle();
   assert.strictEqual(w.byId['#refresh'].hidden, true);
+  // the divider between the table and the map: dragged, limited, kept, reset, and moved from the keyboard
+  w = newWorld(); await w.settle();
+  const sp = w.byId['#split'], dv = w.byId['#divider'];
+  assert.strictEqual(sp.style.gridTemplateColumns, '', 'the default layout comes from the stylesheet');
+  assert.match(html, /grid-template-columns: 45% 8px minmax\(0, 1fr\)/, 'which gives the map more than half');
+  dv.onpointerdown({pointerId: 7, preventDefault() {}});
+  assert.strictEqual(dv.captured, 7, 'the pointer is followed outside the divider'); assert.strictEqual(dv.className, 'drag');
+  const before = w.map.resizes;
+  dv.onpointermove({clientX: 100 + 300});   // 300 px into a 1000 px wide area
+  assert.strictEqual(sp.style.gridTemplateColumns, '30% 8px minmax(0, 1fr)'); assert.ok(w.map.resizes > before, 'the map is told it was resized');
+  assert.strictEqual(w.stored.stationsSplit, undefined, 'not kept until let go');
+  dv.onpointermove({clientX: 100 + 20}); assert.strictEqual(sp.style.gridTemplateColumns, '15% 8px minmax(0, 1fr)', 'the table keeps a sliver, at least');
+  dv.onpointermove({clientX: 100 + 990}); assert.strictEqual(sp.style.gridTemplateColumns, '85% 8px minmax(0, 1fr)', 'and the map too');
+  dv.onpointermove({clientX: 100 + 250});
+  dv.onpointerup(); assert.strictEqual(dv.className, ''); assert.strictEqual(w.stored.stationsSplit, '25');
+  dv.onpointermove({clientX: 100 + 600}); assert.strictEqual(sp.style.gridTemplateColumns, '25% 8px minmax(0, 1fr)', 'moving without the button down does nothing');
+  dv.onkeydown({key: 'ArrowRight', preventDefault() {}}); assert.strictEqual(w.stored.stationsSplit, '28');
+  dv.onkeydown({key: 'ArrowLeft', preventDefault() {}}); dv.onkeydown({key: 'ArrowUp', preventDefault() {}}); assert.strictEqual(w.stored.stationsSplit, '22');
+  assert.strictEqual(dv.attrs['aria-valuenow'], '22');
+  dv.ondblclick(); assert.strictEqual(sp.style.gridTemplateColumns, ''); assert.strictEqual(w.stored.stationsSplit, undefined, 'back to the default');
+  // where it was left is where it opens next time; a nonsense value is ignored
+  w = newWorld(x => { x.stored.stationsSplit = '38'; }); await w.settle();
+  assert.strictEqual(w.byId['#split'].style.gridTemplateColumns, '38% 8px minmax(0, 1fr)');
+  w = newWorld(x => { x.stored.stationsSplit = '3'; }); await w.settle();
+  assert.strictEqual(w.byId['#split'].style.gridTemplateColumns, '');
+  // narrow, with the map under the table: the divider moves the other way, by height
+  w = newWorld(x => { x.narrow = true; x.stored.stationsSplit = '40'; }); await w.settle();
+  assert.strictEqual(w.byId['#split'].style.gridTemplateRows, '40% 8px minmax(0, 1fr)'); assert.strictEqual(w.byId['#split'].style.gridTemplateColumns, '');
+  assert.strictEqual(w.byId['#divider'].attrs['aria-orientation'], 'horizontal');
+  w.byId['#divider'].onpointerdown({pointerId: 1, preventDefault() {}}); w.byId['#divider'].onpointermove({clientY: 50 + 300, clientX: 5}); assert.strictEqual(w.byId['#split'].style.gridTemplateRows, '50% 8px minmax(0, 1fr)');
+  w.byId['#divider'].onpointerup();
+  // the window is widened past the point where they stack: the same share applies to the columns
+  w.narrow = false; w.resize();
+  assert.strictEqual(w.byId['#split'].style.gridTemplateColumns, '50% 8px minmax(0, 1fr)'); assert.strictEqual(w.byId['#split'].style.gridTemplateRows, '');
   console.log('stations page checks passed');
 })().catch(e => { console.error('FAILED:', e.message); if (process.env.UITEST_STACK) console.error(e.stack.split('\n').slice(1, 4).join('\n')); process.exit(1); });

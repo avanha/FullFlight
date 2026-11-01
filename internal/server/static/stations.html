@@ -14,9 +14,11 @@
   #fetched { color: #555; font-size: 12px; }
   #err { color: #b00; padding: 0 16px; font-size: 13px; }
   #err:empty { display: none; }
-  #split { flex: 1; display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); min-height: 0; }
+  #split { flex: 1; display: grid; grid-template-columns: 45% 8px minmax(0, 1fr); min-height: 0; }
   #tablewrap { overflow: auto; min-width: 0; }
-  #map { min-height: 300px; border-left: 1px solid #ccc; }
+  #map { min-height: 200px; min-width: 0; }
+  #divider { background: #e3e6ec; cursor: col-resize; touch-action: none; border-left: 1px solid #ccc; border-right: 1px solid #ccc; }
+  #divider:hover, #divider:focus, #divider.drag { background: #b9c3d6; outline: none; }
   table { border-collapse: collapse; width: 100%; }
   th { position: sticky; top: 0; background: #fff; text-align: left; font-size: 12px; color: #555; padding: 6px 8px; border-bottom: 2px solid #ccc; white-space: nowrap; cursor: pointer; user-select: none; }
   th.num, td.num { text-align: right; }
@@ -32,7 +34,7 @@
   #empty { color: #777; padding: 20px 16px; }
   #legend { font-size: 12px; color: #444; padding: 6px 16px; border-top: 1px solid #ddd; background: #fafbfc; }
   #legend .chip { margin-right: 6px; }
-  @media (max-width: 900px) { #split { grid-template-columns: 1fr; grid-template-rows: 55% 45%; } #map { border-left: none; border-top: 1px solid #ccc; } }
+  @media (max-width: 900px) { #split { grid-template-columns: 1fr; grid-template-rows: 50% 8px minmax(0, 1fr); } #divider { cursor: row-resize; border: none; border-top: 1px solid #ccc; border-bottom: 1px solid #ccc; } }
 </style>
 </head>
 <body>
@@ -56,6 +58,7 @@
     </table>
     <div id="empty" hidden>No stations to show.</div>
   </div>
+  <div id="divider" role="separator" aria-orientation="vertical" tabindex="0" title="Drag to give the table or the map more room; arrow keys too; double-click for the default"></div>
   <div id="map"></div>
 </div>
 <div id="legend"><span class="chip late">late</span>at least half its timed messages arrive over an hour late
@@ -183,6 +186,37 @@ function select(ident, pan) {
   return s;
 }
 
+// ---- the divider between the table and the map: dragged, or moved with the arrow keys; kept for next time ----
+const SPLIT_KEY = 'stationsSplit', SPLIT_MIN = 15, SPLIT_MAX = 85, SPLIT_DEFAULT = 45;
+const stacked = () => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia('(max-width: 900px)').matches;   // table above the map
+let split = null, dragging = false;   // the table's share of the width (height, stacked), in percent; null is the default
+function applySplit() {
+  const sp = $('#split'), t = split == null ? '' : `${split}% 8px minmax(0, 1fr)`;
+  if (stacked()) { sp.style.gridTemplateRows = t; sp.style.gridTemplateColumns = ''; } else { sp.style.gridTemplateColumns = t; sp.style.gridTemplateRows = ''; }
+  const d = $('#divider');
+  d.setAttribute('aria-orientation', stacked() ? 'horizontal' : 'vertical'); d.setAttribute('aria-valuenow', String(Math.round(split ?? SPLIT_DEFAULT)));
+  if (map && map.invalidateSize) map.invalidateSize();   // the map was resized under Leaflet
+}
+function setSplit(pct, keep) {
+  split = pct == null ? null : Math.min(SPLIT_MAX, Math.max(SPLIT_MIN, pct));
+  applySplit();
+  if (keep) try { split == null ? localStorage.removeItem(SPLIT_KEY) : localStorage.setItem(SPLIT_KEY, String(split)); } catch (e) { /* kept for this visit only */ }
+}
+function dragTo(e) {
+  const r = $('#split').getBoundingClientRect();
+  setSplit(stacked() ? (e.clientY - r.top) / r.height * 100 : (e.clientX - r.left) / r.width * 100, false);
+}
+$('#divider').onpointerdown = e => { dragging = true; $('#divider').className = 'drag'; if ($('#divider').setPointerCapture) $('#divider').setPointerCapture(e.pointerId); e.preventDefault(); };
+$('#divider').onpointermove = e => { if (dragging) dragTo(e); };
+$('#divider').onpointerup = () => { if (!dragging) return; dragging = false; $('#divider').className = ''; setSplit(split, true); };
+$('#divider').ondblclick = () => setSplit(null, true);
+$('#divider').onkeydown = e => {
+  const back = e.key === 'ArrowLeft' || e.key === 'ArrowUp', fwd = e.key === 'ArrowRight' || e.key === 'ArrowDown';
+  if (back || fwd) { setSplit((split ?? SPLIT_DEFAULT) + (fwd ? 3 : -3), true); e.preventDefault(); } else if (e.key === 'Home') { setSplit(null, true); e.preventDefault(); }
+};
+try { const v = parseFloat(localStorage.getItem(SPLIT_KEY)); if (v >= SPLIT_MIN && v <= SPLIT_MAX) split = v; } catch (e) { /* the default */ }
+if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('resize', applySplit);   // crossing the width where the two stack
+
 function render(fit) {
   const list = shown();
   drawHeads(); drawRows(list); drawMap(list, fit);
@@ -221,6 +255,7 @@ $('#refresh').onclick = async () => {
 };
 
 initMap();
+applySplit();
 load(true);
 </script>
 </body>

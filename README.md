@@ -474,7 +474,7 @@ reports, REP081, operations events, ACMF and the like): how many there are, what
 them, the median delay, the 90th percentile, and the shortest delay of any. A station whose shortest delay is hours long never
 delivers promptly. The verdict is **late** for half or more late, **sometimes** for some, **prompt** for none, and **?** for fewer
 than five timed messages (CPDLC, AFN logons and ATIS requests carry no time, so a station that only delivers those cannot be
-judged). Click a heading to sort; the filters take the link, the verdict, a name, and "on the map only".
+judged). Click a heading to sort; the filters take the link, the verdict, a name, and "on the map only". The divider between the table and the map can be dragged (or moved with the arrow keys) to give either more room, and is remembered; a double-click puts it back. On a narrow window the map goes under the table and the divider moves up and down.
 
 Positions and details (country, decoder, whether airframes.io has flagged the station) come from airframes.io's list of stations,
 one request of some eight thousand stations and a few megabytes. It is fetched by the **Fetch positions** button, and not more than
