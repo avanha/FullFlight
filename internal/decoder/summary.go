@@ -102,6 +102,21 @@ func adscPosition(tree map[string]any) (*Pos, []Waypoint) {
 	return pos, route
 }
 
+// cpdlcFirstLabel returns the label of the first message element of a CPDLC message: the one in the
+// message itself, ahead of the further elements a message may carry in a list after it.
+func cpdlcFirstLabel(tree map[string]any) (string, bool) {
+	arinc, _ := tree["arinc622"].(map[string]any)
+	cpdlc, _ := arinc["cpdlc"].(map[string]any)
+	for _, dir := range []string{"atc_uplink_msg", "atc_downlink_msg"} {
+		msg, _ := cpdlc[dir].(map[string]any)
+		el, _ := msg[dir+"_element_id"].(map[string]any)
+		if l, ok := el["choice_label"].(string); ok {
+			return l, true
+		}
+	}
+	return findString(tree, "choice_label") // some other shape: at least the same answer every time
+}
+
 // signedDegrees reads libacars' {"deg":19,"min":10.3,"dir":"north"} form.
 func signedDegrees(m map[string]any, neg string) (float64, bool) {
 	deg, min := num(m, "deg"), num(m, "min")
@@ -215,7 +230,7 @@ func summarize(r Result) string {
 		if fix, ok := r.Fields["fix"].(string); ok {
 			return "CPDLC position report at " + fix + fixNames(r.Fixes)
 		}
-		if l, ok := findString(r.Tree, "choice_label"); ok {
+		if l, ok := cpdlcFirstLabel(r.Tree); ok {
 			return "CPDLC " + map[Direction]string{Uplink: "uplink", Downlink: "downlink"}[r.Dir] + ": " + l
 		}
 		return "CPDLC message"

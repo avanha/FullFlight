@@ -175,6 +175,33 @@ func TestCPDLCWilco(t *testing.T) {
 	}
 }
 
+// A CPDLC message with more than one element is summarised by its first element, every time. (The summary used to
+// take whichever label a walk over a Go map reached first, so it changed from one decode to the next.)
+func TestCPDLCSummaryUsesFirstElement(t *testing.T) {
+	m := Message{Label: "AA", Dir: Uplink, Text: "/USADCXA.AT1.B-221WA61B539D654E7C38330A7210A15B27"}
+	for i := 0; i < 200; i++ {
+		r, err := Decode(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 && !strings.Contains(r.Text, "END SERVICE") {
+			t.Fatalf("this message should carry a second element: %s", r.Text) // otherwise the test proves nothing
+		}
+		if want := "CPDLC uplink: CONTACT [icaounitname] [frequency]"; r.Summary != want {
+			t.Fatalf("decode %d: summary %q, want %q", i, r.Summary, want)
+		}
+	}
+}
+
+func TestFindStringIsRepeatable(t *testing.T) {
+	tree := map[string]any{"a": map[string]any{"x": "from a"}, "b": map[string]any{"x": "from b"}, "c": []any{map[string]any{"x": "from c"}}}
+	for i := 0; i < 100; i++ {
+		if s, _ := findString(tree, "x"); s != "from a" {
+			t.Fatalf("got %q", s)
+		}
+	}
+}
+
 // Fixture 7, substituted by real samples: the original (a backfilled Oct 27 message) was not retrievable.
 func TestMIAM(t *testing.T) {
 	_, r := load(t, "rep081_handoff")

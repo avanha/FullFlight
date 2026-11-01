@@ -2,6 +2,7 @@ package decoder
 
 import (
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -335,8 +336,15 @@ func findString(v any, key string) (string, bool) {
 		if s, ok := t[key].(string); ok {
 			return s, true
 		}
-		for _, c := range t {
-			if s, ok := findString(c, key); ok {
+		// Visit the keys in order: map order is random, and a key that occurs more than once would
+		// otherwise give a different answer from one decode to the next.
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if s, ok := findString(t[k], key); ok {
 				return s, true
 			}
 		}
