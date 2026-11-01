@@ -277,6 +277,20 @@ func summarize(r Result) string {
 		if r.Fields["afn"] == "contact_advisory" {
 			parts = []string{fmt.Sprintf("AFN contact advisory: log on to %v", r.Fields["contact_station"])}
 		}
+		if r.Fields["afn"] == "acknowledgement" {
+			s := "AFN logon acknowledged"
+			if f, ok := r.Fields["facility"].(string); ok {
+				s += " by " + f
+			}
+			if apps, _ := r.Fields["apps"].([]AFNApp); len(apps) > 0 {
+				var names []string
+				for _, a := range apps {
+					names = append(names, a.Label())
+				}
+				s += ": " + strings.Join(names, ", ")
+			}
+			parts = []string{s}
+		}
 		if r.Identity.Callsign != "" {
 			parts = append(parts, r.Identity.Callsign)
 		}

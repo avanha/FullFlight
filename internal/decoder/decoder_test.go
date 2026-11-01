@@ -241,6 +241,22 @@ func TestAFN(t *testing.T) {
 	}
 }
 
+// The reply to a logon: FAK names the facility, FAR each application with its version and ground address.
+func TestAFNAcknowledgement(t *testing.T) {
+	r, err := Decode(Message{Label: "A0", Text: "/FUKJJYA.AFN/FMHACA025,.C-FNOH,C023C8,013352/FAK0,RJJJ/FARADS,0/FARATC,0,FUKJJYA9971"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apps, _ := r.Fields["apps"].([]AFNApp)
+	if r.Kind != KindAFN || r.Fields["afn"] != "acknowledgement" || r.Fields["facility"] != "RJJJ" || len(apps) != 2 ||
+		apps[1] != (AFNApp{Name: "ATC", Version: "0", Address: "FUKJJYA9971"}) || r.Fields["unparsed_segments"] != nil {
+		t.Errorf("fields = %v", r.Fields)
+	}
+	if got, want := r.Summary, "AFN logon acknowledged by RJJJ: ADS-C, CPDLC, ACA025"; got != want {
+		t.Errorf("summary = %q, want %q", got, want)
+	}
+}
+
 // Fixture 9.
 func TestMedia(t *testing.T) {
 	_, r := load(t, "media_established")

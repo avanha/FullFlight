@@ -26,9 +26,29 @@ var linkNames = map[byte]string{
 	'C': "cellular", '2': "VDL2", 'I': "Iridium",
 }
 
+// AFNApp is one application a ground station announced in an AFN logon response.
+type AFNApp struct {
+	Name    string `json:"name"` // ADS or ATC, as sent
+	Version string `json:"version,omitempty"`
+	Address string `json:"address,omitempty"` // the ground end of the link, when given
+}
+
+// Label is the application's usual name: ATC is CPDLC.
+func (a AFNApp) Label() string {
+	switch a.Name {
+	case "ADS":
+		return "ADS-C"
+	case "ATC":
+		return "CPDLC"
+	}
+	return a.Name
+}
+
 // parseAFN handles the AFN segments we have seen: FMH (flight/tail/time) and
-// FCA (contact advisory naming the next ground station). libacars does not
-// decode AFN here.
+// FCA (contact advisory naming the next ground station), FAK (the logon
+// acknowledgement, with the facility it answers for) and FAR (the applications
+// the ground station will use, each with a version and sometimes an address).
+// libacars does not decode AFN here.
 func parseAFN(body string, r *Result) {
 	m := afnRe.FindStringSubmatch(body)
 	if m == nil {
@@ -50,6 +70,23 @@ func parseAFN(body string, r *Result) {
 		case strings.HasPrefix(seg, "FCA") && len(seg) >= 10:
 			r.Fields["afn"] = "contact_advisory"
 			r.Fields["contact_station"] = seg[3:10]
+		case strings.HasPrefix(seg, "FAK"):
+			f := strings.Split(seg[3:], ",")
+			r.Fields["afn"] = "acknowledgement"
+			if len(f) > 1 && f[1] != "" {
+				r.Fields["facility"] = f[1]
+			}
+		case strings.HasPrefix(seg, "FAR") && len(seg) > 3:
+			f := strings.Split(seg[3:], ",")
+			a := AFNApp{Name: f[0]}
+			if len(f) > 1 {
+				a.Version = f[1]
+			}
+			if len(f) > 2 {
+				a.Address = f[2]
+			}
+			apps, _ := r.Fields["apps"].([]AFNApp)
+			r.Fields["apps"] = append(apps, a)
 		case seg != "":
 			other = append(other, seg)
 		}
