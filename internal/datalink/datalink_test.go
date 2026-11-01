@@ -988,3 +988,32 @@ func TestRouteFromTopOfDescent(t *testing.T) {
 		t.Errorf("route = %+v %v", r, ok)
 	}
 }
+
+func TestSentLate(t *testing.T) {
+	arr := func(day, h, m int) time.Time {
+		return time.Date(2026, 11, 1, h, m, 0, 0, time.UTC).AddDate(0, 0, day-1)
+	}
+	for _, c := range []struct {
+		name    string
+		arrived time.Time
+		sent    string
+		flag    bool
+	}{
+		{"on time", arr(1, 1, 11), "010111", false},
+		{"a few minutes behind", arr(1, 1, 15), "010111", false},
+		{"across midnight", time.Date(2026, 11, 1, 0, 1, 0, 0, time.UTC), "312358", false},
+		{"across a month end", time.Date(2026, 12, 1, 0, 2, 0, 0, time.UTC), "302359", false},
+		{"a day late", time.Date(2026, 12, 1, 0, 2, 0, 0, time.UTC), "292359", true},
+		{"three days late", arr(1, 2, 57), "280937", true},
+		{"hours late", arr(1, 6, 0), "010111", true},
+		{"nonsense", arr(1, 1, 11), "019999", false},
+	} {
+		note, flag := sentLate(c.arrived, c.sent)
+		if flag != c.flag {
+			t.Errorf("%s: flag %v, want %v (%s)", c.name, flag, c.flag, note)
+		}
+		if flag && !strings.Contains(note, "not applied") {
+			t.Errorf("%s: note %q", c.name, note)
+		}
+	}
+}

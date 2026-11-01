@@ -402,3 +402,61 @@ func TestManualRoute(t *testing.T) {
 		t.Errorf("after clearing: %+v", s)
 	}
 }
+
+// ground is an ADS-B position on the ground at t.
+func (r *rig) ground(t time.Time) {
+	r.st.AddPosition(store.Position{Hex: hex, T: t, Lat: 61.17, Lon: -150.0, OnGround: true, Callsign: "UPS65", Source: "x"})
+}
+
+// An aircraft that lands, sits for hours, and flies on under the same flight number has flown two flights.
+func TestStopoverSplitsAFlight(t *testing.T) {
+	r := newRig(t)
+	// leg 1: airborne 02:00 to 05:00, with messages; then it lands and sits on the ground until 08:00, chatting
+	spread(at(0, 2, 0), 3*time.Hour, 20*time.Minute, func(x time.Time) { r.said(x, "UP65"); r.adsb(x, "UPS65") })
+	r.route(at(0, 4, 0), "VHHH", "PANC")
+	spread(at(0, 5, 0), 3*time.Hour, 30*time.Minute, func(x time.Time) { r.ground(x); r.said(x.Add(time.Minute), "UP65") })
+	// leg 2: airborne again from 08:10 to 12:00; its route is reported once it is under way
+	spread(at(0, 8, 10), 4*time.Hour, 20*time.Minute, func(x time.Time) { r.said(x, "UP65"); r.adsb(x, "UPS65") })
+	r.route(at(0, 9, 0), "PANC", "KSDF")
+	segs := r.segments()
+	if len(segs) != 2 {
+		t.Fatalf("want two legs, got %s", names(segs))
+	}
+	a, b := segs[0], segs[1]
+	if a.Flight != "5X65" || b.Flight != "5X65" || a.ID == b.ID {
+		t.Errorf("both legs keep the number but have their own ids: %s, %s", a.ID, b.ID)
+	}
+	if a.From != "VHHH" || a.To != "PANC" || b.From != "PANC" || b.To != "KSDF" {
+		t.Errorf("each leg has its own route: %s->%s, %s->%s", a.From, a.To, b.From, b.To)
+	}
+	// the stop runs from the landing at 05:00 to the next airborne position at 08:10; the cut is half way, 06:35, and the
+	// arrival's chatter before it belongs to the first leg
+	if a.End.After(at(0, 6, 35)) || !a.End.After(at(0, 6, 0)) || !b.Start.After(at(0, 6, 35)) || b.Start.After(at(0, 7, 35)) {
+		t.Errorf("legs meet around the middle of the stop: first ends %s, second starts %s", a.End.Format("15:04"), b.Start.Format("15:04"))
+	}
+	if a.Latest || !b.Latest {
+		t.Errorf("only the second is the latest: %v %v", a.Latest, b.Latest)
+	}
+	if a.Positions == 0 || b.Positions == 0 {
+		t.Errorf("positions: %d, %d", a.Positions, b.Positions)
+	}
+}
+
+// A short stop, or one ADS-B did not see both ends of, leaves one flight; so does a stop with no flight number around it.
+func TestShortStopDoesNotSplit(t *testing.T) {
+	r := newRig(t)
+	spread(at(0, 2, 0), 2*time.Hour, 20*time.Minute, func(x time.Time) { r.said(x, "UP65"); r.adsb(x, "UPS65") })
+	spread(at(0, 4, 0), 30*time.Minute, 10*time.Minute, func(x time.Time) { r.ground(x); r.said(x, "UP65") }) // a 30 minute stop
+	spread(at(0, 4, 40), 2*time.Hour, 20*time.Minute, func(x time.Time) { r.said(x, "UP65"); r.adsb(x, "UPS65") })
+	if segs := r.segments(); len(segs) != 1 {
+		t.Errorf("a short stop is not a new flight: %s", names(segs))
+	}
+
+	// landed, and the aircraft was not heard in the air again within the window: no second leg to cut
+	r2 := newRig(t)
+	spread(at(0, 2, 0), 2*time.Hour, 20*time.Minute, func(x time.Time) { r2.said(x, "UP65"); r2.adsb(x, "UPS65") })
+	spread(at(0, 4, 0), 3*time.Hour, 30*time.Minute, func(x time.Time) { r2.ground(x); r2.said(x, "UP65") })
+	if segs := r2.segments(); len(segs) != 1 {
+		t.Errorf("a stop with no departure yet is one flight: %s", names(segs))
+	}
+}

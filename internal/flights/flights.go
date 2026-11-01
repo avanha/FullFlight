@@ -44,6 +44,9 @@ const (
 	// An unnumbered piece right next to a numbered flight that has no route to compare is that
 	// flight's missing start or end, if it is within AdoptWithin.
 	AdoptWithin = 2 * time.Hour
+	// A stop on the ground at least this long, seen by ADS-B, ends a flight even if the next one has the same number:
+	// the aircraft flew one leg, stopped, and flew the next (UPS65 from Hong Kong to Anchorage, then on to Louisville).
+	StopoverMin = 45 * time.Minute
 	// A departure up to DepartureSlack before a flight's first sighting is that flight's: the aircraft may be
 	// first heard some time after it left.
 	DepartureSlack = 2 * time.Hour
@@ -65,6 +68,8 @@ type Segment struct {
 	DepartedHow string    `json:"departed_how,omitempty"` // "takeoff", "adsb", "pushback" or "taxi": see store.Departure
 	Identified  bool      `json:"identified"`             // false: a flight whose number we never saw
 	Latest      bool      `json:"latest"`                 // the most recent flight
+
+	stopAfter bool // the aircraft stopped on the ground after this flight, and the next piece is another leg: never joined
 }
 
 type ident struct {
@@ -252,6 +257,13 @@ func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 	}
 	sort.Slice(segs, func(i, j int) bool { return segs[i].Start.Before(segs[j].Start) })
 
+	// 5b. a long stop on the ground in the middle of a flight makes it two
+	stops, err := st.GroundStops(hexAddr, since, until)
+	if err != nil {
+		return nil, err
+	}
+	segs = splitAtStopovers(segs, stops, ev, posTimes)
+
 	// 6. the route the aircraft reported; pieces of one flight that share it are joined
 	routes, err := st.RouteReports(hexAddr, since.Add(-RouteSlack), until.Add(RouteSlack))
 	if err != nil {
@@ -297,6 +309,60 @@ func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 		segs[n-1].Latest = true
 	}
 	return segs, nil
+}
+
+// splitAtStopovers cuts a flight in two where ADS-B saw the aircraft sit on the ground for StopoverMin or more, between
+// its landing and its next departure. The cut is the middle of the stop: what was sighted before it ends the first
+// leg and what was sighted after it starts the second, so the paperwork for the next leg (its clearance, its schedule)
+// belongs to that leg and the arrival's chatter to the one before.
+func splitAtStopovers(segs []Segment, stops []store.GroundStop, ev []store.Evidence, posTimes []time.Time) []Segment {
+	for _, stop := range stops {
+		if stop.Depart.Sub(stop.Land) < StopoverMin {
+			continue
+		}
+		for i, sg := range segs {
+			if stop.Land.Before(sg.Start) || stop.Depart.After(sg.End) {
+				continue
+			}
+			cut := stop.Land.Add(stop.Depart.Sub(stop.Land) / 2)
+			var lastBefore, firstAfter time.Time
+			consider := func(t time.Time) {
+				if t.Before(sg.Start) || t.After(sg.End) {
+					return
+				}
+				if !t.After(cut) && t.After(lastBefore) {
+					lastBefore = t
+				}
+				if t.After(cut) && (firstAfter.IsZero() || t.Before(firstAfter)) {
+					firstAfter = t
+				}
+			}
+			for _, e := range ev {
+				consider(e.T)
+			}
+			for _, t := range posTimes {
+				consider(t)
+			}
+			if lastBefore.IsZero() || firstAfter.IsZero() {
+				break
+			}
+			count := func(from, to time.Time) (n int) {
+				for _, t := range posTimes {
+					if !t.Before(from) && !t.After(to) {
+						n++
+					}
+				}
+				return
+			}
+			a, b := sg, sg
+			a.End, a.stopAfter = lastBefore, true
+			b.Start = firstAfter
+			a.Positions, b.Positions = count(a.Start, a.End), count(b.Start, b.End)
+			segs = append(segs[:i], append([]Segment{a, b}, segs[i+1:]...)...)
+			break
+		}
+	}
+	return segs
 }
 
 // applyManualRoute fills in the origin and destination of sg that the messages left empty, from the hand-entered
@@ -376,6 +442,9 @@ func segID(s Segment) string {
 
 // joinable reports whether b, the next flight after a, is really the same flight as a.
 func joinable(a, b Segment) bool {
+	if a.stopAfter {
+		return false // the aircraft stopped between them: two legs
+	}
 	if a.Identified && b.Identified && !sameFlightNumber(a, b) {
 		return false // two different numbered flights are never one
 	}
@@ -409,6 +478,7 @@ func join(a, b Segment) Segment {
 	out.Start = minTime(a.Start, b.Start)
 	out.End = maxTime(a.End, b.End)
 	out.Positions = a.Positions + b.Positions
+	out.stopAfter = b.stopAfter
 	return out
 }
 

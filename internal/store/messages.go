@@ -531,6 +531,42 @@ func (s *Store) PositionTimes(hexAddr string, since, until time.Time) ([]time.Ti
 	return out, rows.Err()
 }
 
+// GroundStop is a time an aircraft sat on the ground between two flights, as ADS-B showed it: from its first
+// position reported on the ground after being airborne to its next position in the air.
+type GroundStop struct{ Land, Depart time.Time }
+
+// GroundStops returns the stops an aircraft made in [since, until] that ADS-B saw both ends of, oldest first.
+// A stop whose landing was before since, or that has not ended yet, is not included.
+func (s *Store) GroundStops(hexAddr string, since, until time.Time) ([]GroundStop, error) {
+	rows, err := s.db.Query(`SELECT ts, on_ground FROM position WHERE hex=? AND ts BETWEEN ? AND ? ORDER BY ts`, hexAddr, ts(since), ts(until))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GroundStop
+	var land time.Time
+	airborne := false // seen in the air since the window began
+	for rows.Next() {
+		var t int64
+		var g bool
+		if err := rows.Scan(&t, &g); err != nil {
+			return nil, err
+		}
+		at := time.Unix(t, 0).UTC()
+		switch {
+		case g && land.IsZero() && airborne:
+			land = at
+		case !g:
+			if !land.IsZero() {
+				out = append(out, GroundStop{land, at})
+				land = time.Time{}
+			}
+			airborne = true
+		}
+	}
+	return out, rows.Err()
+}
+
 // routeReportsSQL selects (t, origin, dest, source) from the kinds of message that say where a flight is going: a
 // REP081 report, another A350 report (or its XML maintenance report, or a takeoff report) that names the route, a 787 ACMF report, an airline (label 83) position report and a filed flight plan (arguments:
 // hex, from, to).

@@ -99,6 +99,9 @@ func decodeInto(st *store.Store, m *store.Message, dir decoder.Direction) {
 				m.Suspect = checkPosition(st, m.Hex, m.ID, res.Pos.Lat, res.Pos.Lon, t)
 			}
 		}
+		if n, ok := res.Fields["departure"].(decoder.UPSNotice); ok && n.Sent != "" {
+			m.TimeNote, m.TimeFlag = sentLate(m.T, n.Sent)
+		}
 		if res.Wx != nil {
 			m.WxDir, m.WxKt, m.WxTemp = res.Wx.WindDirDeg, res.Wx.WindKt, res.Wx.TempC
 		}
@@ -111,6 +114,32 @@ func decodeInto(st *store.Store, m *store.Message, dir decoder.Direction) {
 		}
 	}
 	m.Mismatch = mismatch(st, m.Hex, *m)
+}
+
+// sentLate checks the time a UPS departure report says it was sent (ddhhmm UTC, with no month) against when it
+// arrived. One that arrives long after it was sent describes an earlier flight, not the one under way, so it is flagged
+// and its route is not used for the flight it arrived in.
+func sentLate(arrived time.Time, ddhhmm string) (note string, flag bool) {
+	if len(ddhhmm) != 6 {
+		return "", false
+	}
+	n := func(i int) int { v, _ := strconv.Atoi(ddhhmm[i : i+2]); return v }
+	day, hour, min := n(0), n(2), n(4)
+	arrived = arrived.UTC()
+	var own time.Time
+	for _, off := range []int{-1, 0, 1} { // the nearest month that has that day
+		t := time.Date(arrived.Year(), arrived.Month()+time.Month(off), day, hour, min, 0, 0, time.UTC)
+		if t.Day() != day || hour > 23 || min > 59 {
+			continue
+		}
+		if own.IsZero() || t.Sub(arrived).Abs() < own.Sub(arrived).Abs() {
+			own = t
+		}
+	}
+	if own.IsZero() || arrived.Sub(own).Abs() <= TimeTolerance {
+		return "", false
+	}
+	return fmt.Sprintf("the report is stamped %s but arrived %s: it describes another flight, so its route is not applied", own.Format("2006-01-02 15:04Z"), arrived.Format("2006-01-02 15:04Z")), true
 }
 
 // TimeTolerance is how far a message's own time may differ from its arrival

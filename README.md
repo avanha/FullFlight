@@ -226,6 +226,12 @@ block (or the whole message in one that airframes.io joined).
 Some Delta aircraft send a departure report as they start to taxi (label 4M, or inside a MIAM message): flight number,
 origin and destination, and the times of the pushback and the taxi (out event, brake release, movement, engine run, doors
 closed). It reads `Departure report flight 87 KLAX→VHHH: out 06:44:43Z, taxi 06:53:01Z` and counts as a route report.
+UPS aircraft send three short messages around a departure that name the route in IATA codes (stored as ICAO): label 3J,
+a few minutes after takeoff (`010111 31ANC SDF`: sent day-hour-minute UTC, the day of the flight, origin, destination);
+label 3N, the pre-departure clearance (`PDC UP0065/31 ANC-SDF`, with the filed route and the proposed departure time);
+and label 41, the schedule (`0065 /1031/ANC /SDF /0109/0549/...`: number, date, route, planned departure and arrival).
+Each counts as a route report. A 3J delivered long after the time it was sent (stale messages turn up days late)
+describes an earlier flight, so it is marked unverified and left out.
 The newest one is shown on the watch (`VHHH → YSSY (REP081 12m ago)`) and in the plane's
 hover, for tail and hex watches as well as flights. REP081 goes out about every 20
 minutes in flight, so a report older than 90 minutes is shown greyed with "may be out
@@ -315,14 +321,19 @@ real purge. Decoded detail can be rebuilt with `-redecode`.
 An aircraft's history is divided into the flights it flew (`GET /api/flights/{hex}`), so a plane with
 a week of data does not show as a tangle. A flight is a run of sightings of one flight number
 (callsigns on ADS-B and flight numbers in message prefixes, in either form, `CPA113` = `CX113`),
-split wherever the number is not seen for six hours, so the same number on two days is two flights.
+split wherever the number is not seen for six hours, so the same number on two days is two flights. A long stop in
+the middle of one is also a split: where ADS-B saw the aircraft land, sit on the ground for 45 minutes or more, and
+take off again, the flight is two, each with its own route and departure, even though the number is the same
+(UPS65 Hong Kong to Anchorage, then on to Louisville). The cut is half way through the stop, so the arrival's
+chatter stays with the first leg and the clearance for the next goes with the second. A stop ADS-B did not see both
+ends of is not split.
 Stray one-off numbers are folded away. Positions attach to the flight they fall in or within an hour
 of. Positions that name no flight but cluster are shown as an *unidentified* flight rather than lost,
 and pieces of one flight that report the same REP081 route are joined (a flight whose number was only
 logged for its last hours is still one flight).
 
 A flight's **route** is the origin and destination the aircraft reported most often during it (REP081 and the other
-A350 reports, ACMF and airline position reports, `*POS` at the top of descent, Delta's departure report, a filed
+A350 reports, ACMF and airline position reports, `*POS` at the top of descent, Delta's departure report and UPS's three route messages, a filed
 plan), and **when it left** is the best evidence there is: a takeoff report's takeoff time, else ADS-B seeing it leave
 the ground, else a gate time from a departure report. Both are worked out afresh each time, so a flight that has
 only its number at first gains its route and departure time as the reports come in. The flag at the start of a flight

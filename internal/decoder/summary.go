@@ -297,6 +297,9 @@ func summarize(r Result) string {
 		if d, ok := r.Fields["departure"].(DepartureReport); ok {
 			return d.summary()
 		}
+		if n, ok := r.Fields["departure"].(UPSNotice); ok {
+			return n.summary()
+		}
 		return undecodedSummary(r)
 	case KindPOS:
 		return posRptSummary(r)

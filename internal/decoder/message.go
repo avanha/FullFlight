@@ -176,6 +176,9 @@ func Decode(m Message) (Result, error) {
 	if r, ok := decodePlan(m); ok {
 		return r, nil
 	}
+	if r, ok := decodeUPS(m); ok {
+		return r, nil
+	}
 	prefix, body := SplitPrefix(m.Text)
 	if strings.HasPrefix(m.Text, "POSA1") || strings.HasPrefix(m.Text, "SB0122BA_") {
 		prefix, body = "", m.Text // the latitude digits after POSA1N look like a message number
