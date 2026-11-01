@@ -96,6 +96,8 @@
   .callout.box { background: #fff; color: #111; border: 1px solid #888; border-radius: 4px; padding: 3px 6px; font: 12px system-ui, sans-serif; width: max-content; max-width: 260px; white-space: normal; overflow-wrap: break-word; }
   .callout.atis { border-color: #7c3aed; }
   .partchip { font-size: 10px; color: #555; background: #eceff3; border-radius: 8px; padding: 0 5px; margin-left: 4px; white-space: nowrap; }
+  .msg.elsewhere { opacity: .55; }
+  .elsechip { margin-left: 6px; font-size: 11px; color: #92400e; background: #fef3c7; border-radius: 3px; padding: 0 4px; cursor: help; white-space: nowrap; }
   .atis-dot-wrap { background: none; border: none; }
   .atis-dot { width: 6px; height: 6px; margin: 4px; transform: rotate(45deg); background: #7c3aed; cursor: pointer; }   /* the 14 px box around it is what is clicked */
   .fflag.latest { background: #c00; }
@@ -1549,7 +1551,7 @@ const atisNames = m => m.airports.map(a => a.iata ? `${a.code} / ${a.iata}` : a.
 
 function drawAtisMarks(pts, msgs) {
   for (const m of msgs) {
-    if (!(m.airports && m.airports.length) || m.suspect) continue;
+    if (!(m.airports && m.airports.length) || m.suspect || m.elsewhere) continue;   // (one tagged with another flight is not at this point of this track)
     const spot = atisSpot(m, pts, msgs);
     if (!spot) continue;
     const el = document.createElement('div');
@@ -1691,7 +1693,7 @@ async function showTrack(w, focus) {
     const mine = flightSegs.indexOf(chosen);
     const inFlight = ms => segOf(ms) === mine;
     pts = pts.filter(p => inFlight(Date.parse(p.t)));
-    msgs = msgs.filter(m => inFlight(Date.parse(reportTime(m))));
+    msgs = msgs.filter(m => !m.elsewhere && inFlight(Date.parse(reportTime(m))));   // (not one airframes.io tagged with another flight)
   }
   const current = !chosen || chosen.latest;   // the plane and the projection only make sense for the flight in progress
   if (focus || lonRef === null) { const f0 = latestFix(pts, msgs); lonRef = f0 ? f0.lon : (lonRef ?? 0); }
@@ -1901,7 +1903,7 @@ function renderMessages(msgs) {
   });
   box.replaceChildren(...(hidden ? [toggle] : []), ...withHeaders(sorted.map(m => {
     const d = document.createElement('div');
-    d.className = 'msg' + (m.lat != null ? ' hasloc' : '');
+    d.className = 'msg' + (m.lat != null ? ' hasloc' : '') + (m.elsewhere ? ' elsewhere' : '');
     const t = document.createElement('time');
     const rt = reportTime(m);
     t.textContent = new Date(rt).toISOString().slice(5, 19).replace('T', ' ') + 'Z';
@@ -1916,6 +1918,13 @@ function renderMessages(msgs) {
     k.className = 'kind';
     k.textContent = m.kind.replace('_', ' ');
     d.append(t, k, document.createTextNode(m.summary + routeNames(m)));
+    if (m.elsewhere) {
+      const c = document.createElement('span');
+      c.className = 'elsechip';
+      c.textContent = `\u2192 ${m.elsewhere.flight}`;
+      c.title = `airframes.io tagged this message with ${m.elsewhere.flight}, an earlier flight of this aircraft, so it probably belongs there: delivered late by a ground station, or sent before the flight number was changed`;
+      d.append(c);
+    }
     if (m.parts && m.parts.length) {
       const c = document.createElement('span');
       c.className = 'partchip';

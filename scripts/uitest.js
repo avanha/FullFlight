@@ -1308,6 +1308,15 @@ highlightGroup = null;
         t.chooseFlight('ZG22@2'); await settle();
         shown = vm.runInContext('lastTrack.pts', ctx).map(p => p.lon);
         assert.deepStrictEqual(shown, [140.4, 141.0, 142.0], 'the second flight: its own, from its first point');
+        // and a message airframes.io tagged with the flight before is not listed with this one
+        const mm = (id, ms, extra = {}) => ({id, t: iso(ms), kind: 'datis_request', summary: 'D-ATIS arrival request for EDDM', raw: 'r', label: 'B9', rx_count: 1, ...extra});
+        const savedMsgs = msgs.splice(0, msgs.length, mm(811, T0 + 600e3), mm(812, T0 + 700e3, {elsewhere: {flight: 'CX0301', id: 'ZG1@1'}}));
+        try {
+          t.chooseFlight('ZG22@2'); await settle();
+          assert.deepStrictEqual(vm.runInContext('lastMsgs', ctx).map(m => m.id), [811], 'the one tagged with another flight is left out of this one');
+          t.chooseFlight('all'); await settle();
+          assert.deepStrictEqual(vm.runInContext('lastMsgs', ctx).map(m => m.id).sort(), [811, 812], 'but is in the all-flights list, marked');
+        } finally { msgs.splice(0, msgs.length, ...savedMsgs); }
       });
     } finally { pts.splice(0, pts.length, ...saved); }
   }
@@ -1318,6 +1327,24 @@ highlightGroup = null;
     assert.strictEqual(rt({t: '2026-10-29T02:19:20Z'}), '2026-10-29T02:19:20Z', 'an ordinary message counts from its arrival');
     assert.strictEqual(rt({t: '2026-10-29T02:19:20Z', at: '2026-10-27T05:00:00Z'}), '2026-10-27T05:00:00Z', 'one delivered late, from when it was sent');
     assert.strictEqual(rt({t: '2026-10-29T02:19:20Z', at: '2026-10-27T05:00:00Z', lat: 1, lon: 2, pos_t: '2026-10-27T05:01:00Z'}), '2026-10-27T05:01:00Z', 'a position is placed by its own time');
+  }
+
+  // ===== 8r11. a message airframes.io tagged with another flight is shown as that flight's ==========================
+  {
+    const late = {id: 901, t: '2026-10-30T15:05:00Z', kind: 'datis_request', summary: 'D-ATIS arrival request for EDDM', raw: 'r', label: 'B9', rx_count: 1,
+      airports: [{icao: 'EDDM', type: 'arrival'}], elsewhere: {flight: 'CX0301', id: 'CX301@1'}};
+    const own = {...late, id: 902, elsewhere: undefined};
+    const before = vm.runInContext('lastMsgs', ctx);
+    t.renderMessages([late, own]);
+    const row = t.rows.get(901), plain = t.rows.get(902);
+    assert.ok(/\belsewhere\b/.test(row.className) && !/\belsewhere\b/.test(plain.className), 'the row is dimmed: ' + row.className);
+    const chip = row.children.find(c => c.className === 'elsechip');
+    assert.ok(chip && chip.textContent === '\u2192 CX0301' && /earlier flight of this aircraft/.test(chip.title), 'and says which flight it belongs to');
+    assert.ok(!plain.children.some(c => c.className === 'elsechip'), 'a message that is where it belongs says nothing');
+    // it is not drawn on this track as a D-ATIS point, and a chosen flight does not list it
+    const marks = vm.runInContext(`(() => { atisGroup.clearLayers(); drawAtisMarks([{t: '2026-10-30T15:00:00Z', lat: 10, lon: 20}, {t: '2026-10-30T15:10:00Z', lat: 10, lon: 21}], ${JSON.stringify([late])}); return atisGroup.getLayers ? atisGroup.getLayers().length : atisGroup.items.length; })()`, ctx);
+    assert.strictEqual(marks, 0, 'no diamond for a message that belongs to another flight');
+    t.renderMessages(before);
   }
 
   // ===== 8s. how what was typed is read ===========================================================

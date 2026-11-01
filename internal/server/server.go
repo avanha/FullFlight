@@ -719,36 +719,42 @@ func (s *Server) deleteNote(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type elsewhereJSON struct {
+	Flight string `json:"flight"` // as the message was tagged, e.g. CX0301
+	ID     string `json:"id"`     // that flight's segment
+}
+
 type messageJSON struct {
-	ID             int64         `json:"id"`
-	T              time.Time     `json:"t"`
-	Label          string        `json:"label"`
-	Kind           string        `json:"kind"`
-	Direction      string        `json:"dir,omitempty"`
-	Summary        string        `json:"summary"`
-	Undecoded      bool          `json:"undecoded,omitempty"` // we have no decoder for it (vendor data, MIAM fragments)
-	Detail         string        `json:"detail,omitempty"`
-	Raw            string        `json:"raw"`
-	Tail           string        `json:"tail,omitempty"`
-	Flight         string        `json:"flight,omitempty"`
-	Callsign       string        `json:"callsign,omitempty"`
-	Station        string        `json:"station,omitempty"`
-	RxCount        int           `json:"rx_count"`
-	Lat            *float64      `json:"lat,omitempty"`
-	Lon            *float64      `json:"lon,omitempty"`
-	AltFt          *float64      `json:"alt_ft,omitempty"`
-	PosT           *time.Time    `json:"pos_t,omitempty"`
-	At             *time.Time    `json:"at,omitempty"` // when it counts for its flight, if not when it arrived: the aircraft's own time on a message delivered late
-	Suspect        string        `json:"suspect,omitempty"`
-	TimeNote       string        `json:"time_note,omitempty"`
-	TimeUnverified bool          `json:"time_unverified,omitempty"`
-	Mismatch       string        `json:"mismatch,omitempty"`
-	AFTail         string        `json:"af_tail,omitempty"`
-	AFFlight       string        `json:"af_flight,omitempty"`
-	Route          []routeWpJSON `json:"route,omitempty"`
-	Airports       []atisAirport `json:"airports,omitempty"` // the airports a D-ATIS request or reply is for
-	PartOf         int64         `json:"part_of,omitempty"`  // this is part of (or a shorter copy of) that longer message
-	Parts          []partJSON    `json:"parts,omitempty"`    // the parts and shorter copies of this message that arrived as rows of their own
+	ID             int64          `json:"id"`
+	T              time.Time      `json:"t"`
+	Label          string         `json:"label"`
+	Kind           string         `json:"kind"`
+	Direction      string         `json:"dir,omitempty"`
+	Summary        string         `json:"summary"`
+	Undecoded      bool           `json:"undecoded,omitempty"` // we have no decoder for it (vendor data, MIAM fragments)
+	Detail         string         `json:"detail,omitempty"`
+	Raw            string         `json:"raw"`
+	Tail           string         `json:"tail,omitempty"`
+	Flight         string         `json:"flight,omitempty"`
+	Callsign       string         `json:"callsign,omitempty"`
+	Station        string         `json:"station,omitempty"`
+	RxCount        int            `json:"rx_count"`
+	Lat            *float64       `json:"lat,omitempty"`
+	Lon            *float64       `json:"lon,omitempty"`
+	AltFt          *float64       `json:"alt_ft,omitempty"`
+	PosT           *time.Time     `json:"pos_t,omitempty"`
+	Elsewhere      *elsewhereJSON `json:"elsewhere,omitempty"` // airframes.io tagged it with another flight of this aircraft, which we have: it probably belongs there
+	At             *time.Time     `json:"at,omitempty"`        // when it counts for its flight, if not when it arrived: the aircraft's own time on a message delivered late
+	Suspect        string         `json:"suspect,omitempty"`
+	TimeNote       string         `json:"time_note,omitempty"`
+	TimeUnverified bool           `json:"time_unverified,omitempty"`
+	Mismatch       string         `json:"mismatch,omitempty"`
+	AFTail         string         `json:"af_tail,omitempty"`
+	AFFlight       string         `json:"af_flight,omitempty"`
+	Route          []routeWpJSON  `json:"route,omitempty"`
+	Airports       []atisAirport  `json:"airports,omitempty"` // the airports a D-ATIS request or reply is for
+	PartOf         int64          `json:"part_of,omitempty"`  // this is part of (or a shorter copy of) that longer message
+	Parts          []partJSON     `json:"parts,omitempty"`    // the parts and shorter copies of this message that arrived as rows of their own
 
 	Wx        *wxJSON        `json:"wx,omitempty"`
 	GS        *float64       `json:"gs,omitempty"`  // knots, as the report gave it
@@ -832,6 +838,7 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	}
 	res := &waypoints.Resolver{Store: s.Store, Nav: s.Nav}
 	out := make([]messageJSON, 0, len(ms))
+	var segs []flights.Segment // worked out when a message needs them
 	partOf, parts := foldParts(ms)
 	byID := make(map[int64]store.Message, len(ms))
 	for _, m := range ms {
@@ -845,6 +852,25 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 		if !m.At.IsZero() && !m.At.Equal(m.T) {
 			at := m.At
 			j.At = &at
+		}
+		// A message with no flight of its own that airframes.io tagged with another flight number, and no time of its own to put it
+		// there: if that flight is one we have and the message falls outside it, it belongs to that flight (it was delivered late).
+		// Only for VHF, where volunteers' ground stations are known to upload late; a satellite station stamps a message as it arrives,
+		// so there a different tag is the aircraft's own flight number lagging, or the next flight's data, and the time is right.
+		if m.Flight == "" && m.AFFlight != "" && (m.PosT == nil || m.Lat == nil) && (m.SourceType == "vdl" || m.SourceType == "acars") {
+			if segs == nil {
+				segs, _ = flights.Segments(s.Store, hex, since, until)
+				if segs == nil {
+					segs = []flights.Segment{}
+				}
+			}
+			at := m.T
+			if !m.At.IsZero() {
+				at = m.At
+			}
+			if o, ok := flights.Elsewhere(segs, at, m.AFFlight); ok {
+				j.Elsewhere = &elsewhereJSON{Flight: m.AFFlight, ID: o.ID}
+			}
 		}
 		j.Route = s.routeWaypoints(m.Route)
 		j.Airports = atisAirportsOf(m)

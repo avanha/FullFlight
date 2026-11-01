@@ -790,3 +790,53 @@ func applyJoins(segs []Segment, joins []time.Time) []Segment {
 	}
 	return segs
 }
+
+// SameFlight reports whether two flight numbers or callsigns name one flight (CX833, CX0833 and CPA833).
+func SameFlight(a, b string) bool {
+	x, ok1 := parse(a)
+	y, ok2 := parse(b)
+	return ok1 && ok2 && same(x, y)
+}
+
+// Elsewhere finds the flight a message belongs to when it is tagged with a flight number (by airframes.io, from the message's own
+// header) that is not the flight of ours that holds its time: the earlier flight of that number, if we have it. A message with
+// nothing to say for itself but its arrival time (an ATIS request, a CPDLC exchange) lands in whichever flight was in progress when
+// it arrived; one delivered late by a ground station, or sent before the flight number was changed after landing, lands in the wrong
+// one. t is when the message counts, tagged the flight number it carries. The flight must have ended more than HoldTolerance
+// before t, so a message at the very end of its own flight is not moved.
+func Elsewhere(segs []Segment, t time.Time, tagged string) (Segment, bool) {
+	holder := -1
+	var best time.Duration
+	for i, s := range segs {
+		d := time.Duration(0)
+		if t.Before(s.Start) {
+			d = s.Start.Sub(t)
+		} else if t.After(s.End) {
+			d = t.Sub(s.End)
+		}
+		if d <= HoldTolerance && (holder < 0 || d < best) {
+			holder, best = i, d
+		}
+	}
+	if holder < 0 || !segs[holder].Identified || SameFlight(tagged, segs[holder].Flight) {
+		return Segment{}, false
+	}
+	for _, s := range segs {
+		if SameFlight(tagged, s.Flight) && s.Start.After(t) && s.Start.Sub(t) <= UpcomingWithin {
+			return Segment{}, false // the same number flies again soon: this may be about the flight to come
+		}
+	}
+	for i := len(segs) - 1; i >= 0; i-- {
+		if i != holder && SameFlight(tagged, segs[i].Flight) && segs[i].End.Add(HoldTolerance).Before(t) {
+			return segs[i], true
+		}
+	}
+	return Segment{}, false
+}
+
+// UpcomingWithin is how soon a flight of the same number must follow for a message tagged with it to be taken as possibly about that
+// one (an airline sends the next flight's data while the aircraft is on its way in), and so left alone.
+const UpcomingWithin = 36 * time.Hour
+
+// HoldTolerance is how far outside a flight's span a time is still taken to be in it (the page uses the same twenty minutes).
+const HoldTolerance = 20 * time.Minute

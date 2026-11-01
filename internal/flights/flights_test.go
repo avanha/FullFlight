@@ -731,3 +731,39 @@ func TestLateReportsKeepToTheFlightTheyHappenedIn(t *testing.T) {
 		t.Errorf("a late report with no flight of ours where it happened: %+v", segs)
 	}
 }
+
+func TestElsewhere(t *testing.T) {
+	cx301 := Segment{ID: "CX301@1", Flight: "CX301", Identified: true, Start: at(0, 4, 0), End: at(0, 12, 0)}
+	cx833 := Segment{ID: "CX833@2", Flight: "CX833", Identified: true, Start: at(0, 20, 0), End: at(1, 6, 0)}
+	unknown := Segment{ID: "?@3", Start: at(2, 0, 0), End: at(2, 3, 0)}
+	next301 := Segment{ID: "CX301@4", Flight: "CX301", Identified: true, Start: at(1, 20, 0), End: at(2, 4, 0)}
+	segs := []Segment{cx301, cx833, unknown}
+	for _, c := range []struct {
+		name   string
+		when   time.Time
+		tagged string
+		want   string // the flight it belongs to, or "" for where it is
+	}{
+		{"CX301's ATIS request arrived in the middle of CX833", at(1, 2, 19), "CX0301", "CX301@1"},
+		{"the same, in the callsign form", at(1, 2, 19), "CPA301", "CX301@1"},
+		{"CX833's own", at(1, 2, 19), "CX0833", ""},
+		{"at the very end of CX301, still its own", at(0, 12, 10), "CX0301", ""},
+		{"at the start of CX833, tagged with the flight before", at(0, 20, 10), "CX0301", "CX301@1"},
+		{"between flights, in none", at(0, 15, 0), "CX0301", ""},
+		{"tagged with a flight we have no record of", at(1, 2, 19), "CX0852", ""},
+		{"in a flight whose number we never knew", at(2, 1, 0), "CX0301", ""},
+		{"nonsense tag", at(1, 2, 19), "??", ""},
+	} {
+		o, ok := Elsewhere(segs, c.when, c.tagged)
+		if got := map[bool]string{true: o.ID, false: ""}[ok]; got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
+	}
+	// the same number flies again the next evening: a message tagged with it may be about that flight, so it stays where it is
+	if o, ok := Elsewhere(append([]Segment{cx301, cx833}, next301), at(1, 2, 19), "CX0301"); ok {
+		t.Errorf("tagged with a number that flies again within a day and a half: moved to %s", o.ID)
+	}
+	if o, ok := Elsewhere(append([]Segment{cx301, cx833}, Segment{ID: "CX301@5", Flight: "CX301", Identified: true, Start: at(4, 20, 0), End: at(5, 4, 0)}), at(1, 2, 19), "CX0301"); !ok || o.ID != "CX301@1" {
+		t.Errorf("a flight of that number four days on does not hold it back: %v %v", o.ID, ok)
+	}
+}

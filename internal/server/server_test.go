@@ -1585,3 +1585,40 @@ func TestLateMessagesCarryWhenTheyCount(t *testing.T) {
 		t.Errorf("%s", body)
 	}
 }
+
+// Messages with nothing to place them but their arrival time, which airframes.io tagged with an earlier flight of the aircraft,
+// are marked as belonging there: B-LRD's D-ATIS requests for Munich, delivered by a Slovak ground station during its flight to Hong Kong.
+func TestMessagesTaggedWithAnotherFlightAreMarked(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	day := func(d, h, m int) time.Time { return time.Date(2026, 10, 27+d, h, m, 0, 0, time.UTC) }
+	for i, x := 0, day(0, 4, 0); !x.After(day(0, 12, 0)); i, x = i+1, x.Add(10*time.Minute) {
+		st.AddPosition(store.Position{Hex: "780AA4", T: x, Lat: 30 + float64(i)/100, Lon: 60, Callsign: "CPA301", Source: "x"})
+	}
+	for i, x := 0, day(0, 20, 0); !x.After(day(1, 6, 0)); i, x = i+1, x.Add(10*time.Minute) {
+		st.AddPosition(store.Position{Hex: "780AA4", T: x, Lat: 40 + float64(i)/100, Lon: -150, Callsign: "CPA833", Source: "x"})
+	}
+	st.AddMessage(store.Message{ID: 1, Hex: "780AA4", T: day(1, 2, 19), Label: "B9", Text: "a", Kind: "datis_request", AFFlight: "CX0301", SourceType: "vdl"})
+	st.AddMessage(store.Message{ID: 2, Hex: "780AA4", T: day(1, 3, 23), Label: "B9", Text: "b", Kind: "datis_request", AFFlight: "CX0833", SourceType: "vdl"})
+	st.AddMessage(store.Message{ID: 3, Hex: "780AA4", T: day(1, 3, 30), Label: "B9", Text: "c", Kind: "datis_request", SourceType: "vdl"})
+	// the same tag over a satellite link, which stamps a message as it arrives: left alone
+	st.AddMessage(store.Message{ID: 4, Hex: "780AA4", T: day(1, 3, 40), Label: "B9", Text: "d", Kind: "datis_request", AFFlight: "CX0301", SourceType: "aero-acars"})
+	now := day(2, 0, 0)
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+
+	_, body := do(t, "GET", ts.URL+"/api/messages/780AA4?hours=24&until=2026-10-28T06:00:00Z", "")
+	var ms []struct {
+		ID        int64
+		Elsewhere *struct{ Flight, ID string }
+	}
+	if json.Unmarshal([]byte(body), &ms) != nil || len(ms) != 4 {
+		t.Fatalf("%s", body)
+	}
+	if e := ms[0].Elsewhere; e == nil || e.Flight != "CX0301" || !strings.HasPrefix(e.ID, "CX301@") {
+		t.Errorf("tagged with the flight before: %s", body)
+	}
+	if ms[1].Elsewhere != nil || ms[2].Elsewhere != nil || ms[3].Elsewhere != nil {
+		t.Errorf("its own flight's, one with no tag, and one over a satellite link stay where they are: %s", body)
+	}
+}

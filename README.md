@@ -428,6 +428,17 @@ differs from its arrival. A flight's messages delivered days late are then the f
 own in the middle of the next one. A message with no time of its own (ATIS requests, CPDLC, AFN logons and the like) can only
 count from its arrival.
 
+**Messages tagged with another flight.** A message with no time of its own (an ATIS request, a CPDLC exchange) lands in whatever
+flight was in progress when it arrived. Over VHF that is often wrong: volunteers' ground stations sometimes upload hours or days
+late (B-LRD's D-ATIS requests for Munich and Vienna, from its flight there, showed up during its flight to Hong Kong, delivered
+by a Slovak station about 44 hours late). airframes.io tags each message with the flight number from its header. When that tag
+names another flight of the aircraft that we have, which ended before this message arrived, `/api/messages` says `elsewhere`
+(the flight tagged, and its segment); the page greys the message, shows `→ CX0301` on it, and leaves it out of the chosen
+flight's list and its ATIS markers. It is only done for VHF messages: a satellite station stamps a message as it arrives, so
+there a different tag is the aircraft's own flight number lagging, or the next flight's data, and the time is right. A tag that
+names a flight due again within a day and a half is left alone, as that may be the flight to come. The message stays in the
+all-flights list; its true time is not known.
+
 **A stale callsign at power-up.** An aircraft that has sat for hours sends its last callsign again when it wakes, and changes it
 to the next flight's a couple of seconds later (ZIPAIR's TZP1, then TZP22). Those first sightings, after an hour's silence
 and under the old number, are the next flight's when it carries on under the new one at least five times in the next ten
