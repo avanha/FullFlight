@@ -1288,6 +1288,28 @@ highlightGroup = null;
     assert.strictEqual(line({status: 'waiting'}), null, 'and says nothing when there is nothing to say');
   }
 
+  // ===== 8r9. a flight shows its own points, not the start of the one that follows ============================
+  {
+    const T0 = Date.now() - 6 * 3600e3, iso = ms => new Date(ms).toISOString();
+    // ZG1 lands; hours later the next flight, ZG22, takes off. A stale callsign once stretched ZG1 to the take-off, so the
+    // twenty minutes' tolerance after its end reached 20 minutes into ZG22's climb.
+    const A = seg('ZG1@1', 'ZG1', iso(T0 - 3 * 3600e3), iso(T0), {from: 'PHNL', to: 'RJAA'});
+    const B = seg('ZG22@2', 'ZG22', iso(T0 + 3000), iso(T0 + 3600e3), {from: 'RJAA', to: 'CYVR', latest: true});
+    const pt = (ms, lon) => ({t: iso(ms), lat: 35, lon, alt_ft: 30000, gs: 450, track: 90, vrate: 0, callsign: 'TZP1', source: 'adsb.lol'});
+    const mine = [pt(T0 - 600e3, 140.0), pt(T0 - 60e3, 140.2)], next = [pt(T0 + 5000, 140.4), pt(T0 + 300e3, 141.0), pt(T0 + 900e3, 142.0)];
+    const saved = pts.splice(0, pts.length, ...mine, ...next);
+    try {
+      await withFlights([A, B], async () => {
+        t.chooseFlight('ZG1@1'); await settle();
+        let shown = vm.runInContext('lastTrack.pts', ctx).map(p => p.lon);
+        assert.deepStrictEqual(shown, [140.0, 140.2], 'the first flight: only its own points, though the next flight began within the tolerance after its end');
+        t.chooseFlight('ZG22@2'); await settle();
+        shown = vm.runInContext('lastTrack.pts', ctx).map(p => p.lon);
+        assert.deepStrictEqual(shown, [140.4, 141.0, 142.0], 'the second flight: its own, from its first point');
+      });
+    } finally { pts.splice(0, pts.length, ...saved); }
+  }
+
   // ===== 8s. how what was typed is read ===========================================================
   const submit = async (input, reply) => {
     postReply = reply;

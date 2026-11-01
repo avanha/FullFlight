@@ -411,6 +411,13 @@ the next flight's data) can name the next flight while the aircraft is still fly
 aircraft itself named another flight within two hours before it and again within two hours after; it counts as before at either end
 of a flight (the flight just finished, the one about to start).
 
+**A stale callsign at power-up.** An aircraft that has sat for hours sends its last callsign again when it wakes, and changes it
+to the next flight's a couple of seconds later (ZIPAIR's TZP1, then TZP22). Those first sightings, after an hour's silence
+and under the old number, are the next flight's when it carries on under the new one at least five times in the next ten
+minutes; they are not a late end to the last flight, which would otherwise be stretched over the whole time on the ground and
+into the next climb. A chosen flight on the page shows only the points nearest to it, so a point inside the tolerance after
+its end that is also inside the next flight's span goes to the next flight.
+
 The page loads the last four days (96 hours) of track, messages and plans with the flight list. The selector also lists
 the flights of the last 30 days: those older than four days are in it as well, and choosing one fetches just that flight
 (its own hours, from half a day before its start to a few hours after its end, with up to 1000 messages), so a flight from

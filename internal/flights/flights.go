@@ -66,6 +66,12 @@ const (
 	// ...and it must match the speed the aircraft was measured flying just before the silence or just after it, to within this.
 	BridgeSpeedTolerance = 0.3
 	manualJoinSlack      = 90 * time.Second // the start a join was made at, give or take
+	// An aircraft that has sat for StaleGap sends its last callsign again when it powers up, then changes it to the next
+	// flight's within StaleWithin. Those first sightings, under the old number, are the next flight's and not a late end to
+	// the last one, when that next flight is then heard from at least StaleFollowers times in the following ten minutes.
+	StaleGap       = time.Hour
+	StaleWithin    = 2 * time.Minute
+	StaleFollowers = 5
 )
 
 type Segment struct {
@@ -188,6 +194,7 @@ func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 		return nil, err
 	}
 	ev = setAsideWeak(ev)
+	ev = setAsideStale(ev)
 
 	// 1. runs of one flight number
 	var runs []*run
@@ -526,6 +533,62 @@ func maxTime(a, b time.Time) time.Time {
 		return a
 	}
 	return b
+}
+
+// setAsideStale drops the first sightings of an aircraft that has come back to life after a long silence under the number it
+// last flew, when within StaleWithin it changes to another and carries on under that. The positions it sent in those seconds
+// belong to the new flight, which the nearest-run rule gives them to; left in, they would stretch the old flight over the whole
+// time on the ground and into the next flight's climb.
+func setAsideStale(ev []store.Evidence) []store.Evidence {
+	var drop map[int]bool
+	for i := 1; i < len(ev); i++ {
+		if ev[i].T.Sub(ev[i-1].T) <= StaleGap {
+			continue
+		}
+		old, ok := parse(ev[i].ID)
+		if prev, pok := parse(ev[i-1].ID); !ok || !pok || !same(old, prev) {
+			continue
+		}
+		k := i
+		for k < len(ev) && ev[k].T.Sub(ev[i].T) <= StaleWithin {
+			if id, ok := parse(ev[k].ID); !ok || !same(old, id) {
+				break
+			}
+			k++
+		}
+		if k >= len(ev) || ev[k].T.Sub(ev[k-1].T) > StaleWithin {
+			continue
+		}
+		next, ok := parse(ev[k].ID)
+		if !ok || same(old, next) {
+			continue
+		}
+		followers := 0
+		for j := k; j < len(ev) && ev[j].T.Sub(ev[k].T) <= 10*time.Minute; j++ {
+			if id, ok := parse(ev[j].ID); ok && same(next, id) {
+				followers++
+			}
+		}
+		if followers < StaleFollowers {
+			continue
+		}
+		if drop == nil {
+			drop = map[int]bool{}
+		}
+		for j := i; j < k; j++ {
+			drop[j] = true
+		}
+	}
+	if drop == nil {
+		return ev
+	}
+	out := make([]store.Evidence, 0, len(ev))
+	for i, e := range ev {
+		if !drop[i] {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // setAsideWeak drops the weak sightings that are inside another flight: the aircraft itself named a different flight within

@@ -663,3 +663,30 @@ func TestWeakSightingsAtTheEndsOfAFlightAreKept(t *testing.T) {
 		t.Errorf("QF1 starts with its data after QF64 lands: %s %+v", names(segs), segs)
 	}
 }
+
+// An aircraft that has sat for hours sends its last callsign again when it powers up, and changes it a couple of seconds
+// later (ZIPAIR's TZP1, then TZP22). That first sighting is not a late end to the flight before: it would stretch it over the
+// whole time on the ground and into the next flight's climb.
+func TestAStaleCallsignAtPowerUpIsTheNextFlights(t *testing.T) {
+	r := newRig(t)
+	// ZG1 arrives at 03:25, and is quiet
+	spread(at(0, 2, 40), 45*time.Minute, time.Minute, func(x time.Time) { r.adsb(x, "TZP1") })
+	// at 07:24:01 the first position still says TZP1; two seconds later TZP22, and it flies
+	r.adsb(at(0, 7, 24).Add(time.Second), "TZP1")
+	spread(at(0, 7, 24).Add(3*time.Second), 20*time.Minute, 10*time.Second, func(x time.Time) { r.adsb(x, "TZP22") })
+	segs := r.segments()
+	if names(segs) != "ZG1|ZG22|" && names(segs) != "TZP1|TZP22|" {
+		t.Fatalf("%s", names(segs))
+	}
+	if !segs[0].End.Before(at(0, 3, 30)) || segs[1].Start.After(at(0, 7, 25)) || segs[1].Start.Before(at(0, 7, 23)) {
+		t.Errorf("the old flight ends when it landed and the new one starts when it left: %+v %+v", segs[0], segs[1])
+	}
+
+	// the same callsign again after a long silence, with nothing following under another number, stays as it was
+	r2 := newRig(t)
+	spread(at(0, 2, 40), 45*time.Minute, time.Minute, func(x time.Time) { r2.adsb(x, "TZP1") })
+	r2.adsb(at(0, 7, 24), "TZP1")
+	if segs := r2.segments(); len(segs) != 1 || !segs[0].End.Equal(at(0, 7, 24)) {
+		t.Errorf("a lone sighting after a silence is the flight's: %+v", segs)
+	}
+}

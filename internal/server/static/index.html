@@ -1688,7 +1688,9 @@ async function showTrack(w, focus) {
   // One flight chosen: only its points and messages are shown.
   const chosen = chosenFlight();
   if (chosen) {
-    const inFlight = ms => ms >= chosen.startMs - FLIGHT_TOL && ms <= chosen.endMs + FLIGHT_TOL;
+    // (a time just past the end of this flight that is also inside the next one's span belongs to the next: segOf takes the nearest)
+    const mine = flightSegs.indexOf(chosen);
+    const inFlight = ms => segOf(ms) === mine;
     pts = pts.filter(p => inFlight(Date.parse(p.t)));
     msgs = msgs.filter(m => inFlight(Date.parse(reportTime(m))));
   }
