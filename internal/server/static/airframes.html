@@ -103,7 +103,7 @@ function flightCell(a) {
   const how = {takeoff: 'took off', adsb: 'took off', pushback: 'left the gate', taxi: 'began to taxi'}[f.departed_how];
   td.append(el('small', '', f.departed ? `${how || 'departed'} ${fmt(f.departed)}` : `last heard ${ago(f.end)}`));
   td.title = [f.callsign && `Callsign ${f.callsign}`, [f.from_name, f.to_name].filter(Boolean).join(' \u2192 '),
-    (f.from_manual || f.to_manual) && '* entered by hand', `Flight from ${fmt(f.start)} to ${fmt(f.end)}`].filter(Boolean).join('\n');
+    (f.from_manual || f.to_manual) && '* manually entered', `Flight from ${fmt(f.start)} to ${fmt(f.end)}`].filter(Boolean).join('\n');
   return td;
 }
 
