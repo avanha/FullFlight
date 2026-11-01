@@ -7,7 +7,7 @@ const src = html.match(/<script>\n(const map[\s\S]*?)<\/script>/)[1];
 // Two elements with one id make $('#id') find the first, and whatever draws into the second draws into the wrong place
 // (a route-suggestion list once took over the airport list this way). Every page must have each id once, and every
 // list="..." must name an id that exists.
-for (const page of ['index.html', 'airframes.html']) {
+for (const page of ['index.html', 'airframes.html', 'backfill.html']) {
   const text = fs.readFileSync(require('path').join(__dirname, '../internal/server/static', page), 'utf8');
   const ids = [...text.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
   const dup = ids.filter((id, i) => ids.indexOf(id) !== i);
@@ -82,14 +82,8 @@ const msgs = [
 let postReply = null, lastPostBody = null;
 let putReply = {status: 200, body: {}}, lastPut = null;   // PUT /api/flights/{hex}/route
 const fetchLog = [];
-const bf = {log: [], status: {enabled: true, cache_dir: '/cache', cache_bytes: 3.3e9, cache_limit_bytes: 100 * 2 ** 30, status: {running: false, days_done: 0, days_total: 0, bytes_done: 0, bytes_total: 0, positions_added: 0}},
-  plan: {days: [{day: '2026-10-31', aircraft: 1, cached: true, bytes: 0}, {day: '2026-10-30', aircraft: 1, cached: false, bytes: 3.5e9}], aircraft: 1, download_bytes: 3.5e9, cache_bytes: 3.3e9, cache_limit_bytes: 100 * 2 ** 30}};
 global.fetch = async (url, opts) => {
   fetchLog.push(url);
-  if (url.startsWith('/api/backfill')) {
-    bf.log.push([(opts && opts.method) || 'GET', url, opts && opts.body]);
-    return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(url.includes('/plan') ? bf.plan : bf.status)) };
-  }
   if (opts && opts.method === 'PUT') { lastPut = {url, body: JSON.parse(opts.body)}; return { status: putReply.status, ok: putReply.status < 400, json: async () => putReply.body }; }
   if (opts && opts.method === 'POST') { lastPostBody = JSON.parse(opts.body); return { status: postReply.status, ok: postReply.status < 400, json: async () => postReply.body }; }
   const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : url.startsWith('/api/flights') ? flightData.filter(sg => !/hours=96\b/.test(url) || Date.parse(sg.end) >= Date.now() - 96 * 3600e3) : url.startsWith('/api/plan') ? planData : url.startsWith('/api/airports') ? airportData : null;
@@ -1259,69 +1253,19 @@ highlightGroup = null;
     vm.runInContext('olderAt = 0; olderSegs = []; olderFor = null; olderPending = null;', ctx);   // the month's list, kept for ten minutes, is not for later sections
   }
 
-  // ===== 8r7. the menu, and backfilling an aircraft's earlier track =======================================
+  // ===== 8r7. the menu, which leads to the backfill screen ================================================
   {
-    for (const id of ['#menu', '#bfpanel', '#bfoff']) document.querySelector(id).hidden = true;   // as the page's HTML has them
-    const sel = document.querySelector('#bfscope');
+    document.querySelector('#menu').hidden = true;   // as the page's HTML has it
     assert.strictEqual(byId['#menu'].hidden, true, 'the menu starts closed');
     byId['#menubtn'].onclick(); assert.strictEqual(byId['#menu'].hidden, false, 'the hamburger opens it');
+    assert.strictEqual(byId['#menu-backfill'].href, '/backfill.html?hex=780AB8', 'the backfill screen opens on the selected aircraft');
     byId['#menubtn'].onclick(); assert.strictEqual(byId['#menu'].hidden, true, 'and closes it');
+    const prevSelected = vm.runInContext('selected', ctx);
+    vm.runInContext('selected = null', ctx);
     byId['#menubtn'].onclick();
-    bf.log.length = 0;
-    await byId['#menu-backfill'].onclick(); await settle();
-    assert.strictEqual(byId['#menu'].hidden, true, 'choosing an item closes the menu');
-    assert.strictEqual(byId['#bfpanel'].hidden, false, 'and opens the backfill panel');
-    assert.strictEqual(byId['#bfoff'].hidden, true); assert.strictEqual(byId['#bfbody'].hidden, false);
-    assert.deepStrictEqual(sel.children.map(o => [o.value, o.textContent]), [['780AB8', 'B-LRM (selected)'], ['', 'All tracked aircraft']], 'the selected aircraft first');
-    assert.strictEqual(sel.value, '780AB8');
-    assert.ok(bf.log.some(([m, u]) => m === 'GET' && u === '/api/backfill/plan?hex=780AB8'), JSON.stringify(bf.log));
-    const plan = byId['#bfplan'].textContent;
-    assert.match(plan, /2 days to read for 1 aircraft: 1 already in the cache, 1 to download \(about 3\.5 GB\)/, plan);
-    assert.match(plan, /Cache 3\.3 GB of 107\.4 GB/, plan);
-    assert.match(byId['#bfdays'].textContent, /2026-10-31 {2}1 aircraft {2}cached\n2026-10-30 {2}1 aircraft {2}download/);
-    assert.strictEqual(byId['#bfstart'].disabled, false);
-
-    // all aircraft instead
-    bf.log.length = 0; sel.value = ''; await byId['#bfscope'].onchange(); await settle();
-    assert.ok(bf.log.some(([m, u]) => u === '/api/backfill/plan?hex='), 'the plan for everything');
-
-    // start: the request names the aircraft; the panel shows progress, and Stop
-    sel.value = '780AB8'; bf.log.length = 0;
-    bf.status.status = {running: true, phase: 'downloading', day: '2026-10-30', days_done: 1, days_total: 2, bytes_done: 1.75e9, bytes_total: 3.5e9, positions_added: 40, lines: ['downloading 2026-10-30 (3.3 GiB)']};
-    await byId['#bfstart'].onclick(); await settle();
-    const post = bf.log.find(([m]) => m === 'POST');
-    assert.deepStrictEqual(post && JSON.parse(post[2]), {hex: '780AB8'});
-    assert.strictEqual(byId['#bfstart'].hidden, true); assert.strictEqual(byId['#bfstop'].hidden, false); assert.strictEqual(sel.disabled, true);
-    assert.strictEqual(byId['#bfbar'].hidden, false); assert.strictEqual(byId['#bfbar'].value, 1.75e9); assert.strictEqual(byId['#bfbar'].max, 3.5e9);
-    assert.match(byId['#bfstatus'].textContent, /downloading 2026-10-30 \u00b7 day 2 of 2 \u00b7 1\.8 GB of 3\.5 GB \u00b7 40 positions added so far/, byId['#bfstatus'].textContent);
-    assert.match(byId['#bflines'].textContent, /downloading 2026-10-30/);
-    assert.ok(calls.timers.length, 'it looks again in a couple of seconds');
-
-    // it finishes: the page takes the new positions in
-    bf.status.status = {running: false, days_done: 2, days_total: 2, bytes_done: 0, bytes_total: 0, positions_added: 812, finished: new Date().toISOString(), lines: []};
-    fetchLog.length = 0;
-    await calls.timers.pop()(); await settle();
-    assert.strictEqual(byId['#bfstart'].hidden, false); assert.strictEqual(byId['#bfbar'].hidden, true);
-    assert.match(byId['#bfstatus'].textContent, /Last run .*: 812 positions added over 2 of 2 days/, byId['#bfstatus'].textContent);
-    assert.ok(fetchLog.some(u => u.startsWith('/api/flights/780AB8')), 'the flights are fetched again, for the new positions');
-
-    // a run that stopped on an error says why, and Stop asks the server
-    bf.status.status = {running: true, phase: 'downloading', day: '2026-10-30', days_done: 0, days_total: 1, bytes_done: 1, bytes_total: 2, positions_added: 0};
-    await byId['#bfstart'].onclick(); await settle(); bf.log.length = 0;
-    await byId['#bfstop'].onclick(); await settle();
-    assert.ok(bf.log.some(([m]) => m === 'DELETE'));
-    bf.status.status = {running: false, days_done: 0, days_total: 1, positions_added: 0, error: '2026-10-30 has not been published by adsb.lol', finished: new Date().toISOString()};
-    await byId['#bfstop'].onclick(); await settle();
-    assert.match(byId['#bferr'].textContent, /has not been published/);
-
-    // closing the panel stops the looking
-    byId['#bfclose'].onclick(); assert.strictEqual(byId['#bfpanel'].hidden, true);
-
-    // backfill off in the config: the panel says how to turn it on
-    bf.status = {enabled: false, cache_bytes: 0, cache_limit_bytes: 0, status: {running: false}};
-    await byId['#menu-backfill'].onclick(); await settle();
-    assert.strictEqual(byId['#bfoff'].hidden, false); assert.strictEqual(byId['#bfbody'].hidden, true);
-    byId['#bfclose'].onclick();
+    assert.strictEqual(byId['#menu-backfill'].href, '/backfill.html', 'with nothing selected it opens on all aircraft');
+    byId['#menubtn'].onclick();
+    vm.runInContext(`selected = ${prevSelected}`, ctx);
   }
 
   // ===== 8r8. the ADS-B line on a card, and a paused flight-number lookup =====================================

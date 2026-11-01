@@ -19,16 +19,16 @@ the user-facing reference and must be kept in step with the code.
   `internal/regs/` works out a hex from a US, Canadian or Australian registration and back (the countries whose addresses follow a rule).
 - `internal/store/` is SQLite (tables `watch`, `position`, `message`, `fix`, `airframe`, ...), `internal/server/` the HTTP API,
   `internal/server/static/index.html` the whole map page (HTML, CSS and script in one file).
-- `scripts/uitest.js` and `scripts/uitest-notes.js` drive the page script against a fake DOM and a recording fake Leaflet.
+- `scripts/uitest.js` (the map page), `scripts/uitest-notes.js` (notes and airframes) and `scripts/uitest-backfill.js` drive the page scripts against a fake DOM and, for the map, a recording fake Leaflet.
 - `testdata/` real sample messages and API responses. `docs/` is the GitHub Pages home page plus API notes.
 
 ## Build and test
 
     go vet ./... && go test ./...
-    node scripts/uitest.js && node scripts/uitest-notes.js   # needs node; not part of go test
+    node scripts/uitest.js && node scripts/uitest-notes.js && node scripts/uitest-backfill.js   # needs node; not part of go test
 
-Only Go is needed (no C compiler or libraries; `CGO_ENABLED=0` builds). Run the Go tests after any change, and the two node scripts
-after any change to `index.html` or its helpers. If node is not installed, say so rather than claiming the page is tested; a
+Only Go is needed (no C compiler or libraries; `CGO_ENABLED=0` builds). Run the Go tests after any change, and the node scripts
+after any change to the pages or their helpers. If node is not installed, say so rather than claiming the page is tested; a
 syntax check with another engine is not a test. Add or update a test with each behaviour change, using the existing style
 (`internal/flights/flights_test.go` has small rigs; `scripts/uitest.js` has numbered sections).
 

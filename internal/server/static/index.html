@@ -76,17 +76,8 @@
   #menubtn { float: right; border: 1px solid transparent; background: none; font-size: 18px; line-height: 1; padding: 2px 6px; cursor: pointer; color: #1d3557; border-radius: 3px; }
   #menubtn:hover, #menubtn.on { background: #f1f4f9; border-color: #ccd; }
   #menu { position: absolute; right: 12px; top: 40px; z-index: 1200; background: #fff; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,.2); min-width: 180px; }
-  #menu button { display: block; width: 100%; text-align: left; border: none; background: none; padding: 8px 12px; font: inherit; cursor: pointer; }
-  #menu button:hover { background: #eef4ff; }
-  #bfpanel { position: absolute; left: 8px; right: 8px; top: 44px; z-index: 1100; background: #fff; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 10px rgba(0,0,0,.25); padding: 8px 10px 10px; max-height: calc(100vh - 60px); overflow: auto; }
-  #bfpanel h4 { margin: 0 0 6px; display: flex; justify-content: space-between; align-items: center; }
-  #bfpanel h4 button { border: none; background: none; font-size: 16px; cursor: pointer; }
-  #bfpanel .hint { margin: 4px 0; }
-  #bfdays { font-size: 12px; color: #444; margin: 4px 0; max-height: 7em; overflow: auto; }
-  #bfbar { width: 100%; }
-  #bflines { font: 11px/1.35 ui-monospace, monospace; color: #444; white-space: pre-wrap; max-height: 9em; overflow: auto; margin: 4px 0 0; }
-  #bferr { color: #b00; }
-  #bferr:empty { display: none; }
+  #menu a { display: block; padding: 8px 12px; color: #222; text-decoration: none; }
+  #menu a:hover { background: #eef4ff; }
   .navlink { font-size: 12px; font-weight: normal; margin-left: 8px; color: #1d4ed8; text-decoration: none; }
   .notebtn { float: right; border: none; background: none; cursor: pointer; font-size: 12px; padding: 0 4px; }
   .notebtn.empty { opacity: .35; }
@@ -159,22 +150,7 @@
 <aside style="position:relative">
   <h3 style="margin-top:0">FullFlight <a href="/airframes.html" class="navlink" title="Every aircraft we know of, with your notes">Airframes</a>
     <button id="menubtn" type="button" title="Menu" aria-label="Menu" aria-haspopup="true">&#9776;</button></h3>
-  <div id="menu" hidden><button type="button" id="menu-backfill" title="Fill in an aircraft's track from before we followed it, from adsb.lol's daily archives">Backfill history&hellip;</button></div>
-  <div id="bfpanel" hidden>
-    <h4>Backfill history <button type="button" id="bfclose" title="Close" aria-label="Close">&times;</button></h4>
-    <p class="hint" id="bfoff" hidden>Backfill is off. Set <code>backfill.enabled</code> and <code>backfill.cache_dir</code> in config.yaml, then restart.</p>
-    <div id="bfbody">
-      <p class="hint">Reads adsb.lol's daily archive for the days we hold data for, and adds the positions we missed before an aircraft was followed. Each day is 3&ndash;4&nbsp;GB to download once, then kept in the cache.</p>
-      <p class="hint"><label>Aircraft <select id="bfscope"></select></label></p>
-      <div id="bfplan" class="hint"></div>
-      <div id="bfdays"></div>
-      <p class="hint"><button type="button" id="bfstart">Start</button> <button type="button" id="bfstop" hidden>Stop</button></p>
-      <progress id="bfbar" max="1" value="0" hidden></progress>
-      <div id="bfstatus" class="hint"></div>
-      <div id="bferr"></div>
-      <pre id="bflines"></pre>
-    </div>
-  </div>
+  <div id="menu" hidden><a id="menu-backfill" href="/backfill.html" title="Fill in an aircraft's track from before we followed it, from adsb.lol's daily archives">Backfill history&hellip;</a></div>
   <div id="tabs"><button id="tabwatch" class="on">Watches</button><button id="tabfixes" title="Search the waypoints we know">Fixes</button><button id="tabairports" title="Search airports">Airports</button></div>
   <div id="tab-watch">
   <section class="acc open" id="acc-targets">
@@ -2277,80 +2253,17 @@ $('#fixq').onkeydown = e => {   // Enter goes to the first match
 $('#fixsort').onchange = renderFixes;
 $('#fixall').onchange = drawAllFixes;
 
-// ---- the menu, and backfilling an aircraft's earlier track from adsb.lol's archive ----
-const GB = n => `${(n / 1e9).toFixed(1)} GB`;
-let bfTimer = null, bfWasRunning = false;
-function toggleMenu(on) { $('#menu').hidden = !(on ?? $('#menu').hidden); $('#menubtn').className = $('#menu').hidden ? '' : 'on'; }
+// ---- the menu: one place to put the screens that are not the map ----
+function toggleMenu(on) {
+  const open = on ?? $('#menu').hidden;
+  $('#menu').hidden = !open; $('#menubtn').className = open ? 'on' : '';
+  if (open) {   // the backfill screen opens on the selected aircraft
+    const w = watches.find(x => x.id === selected && x.hex);
+    $('#menu-backfill').href = '/backfill.html' + (w ? `?hex=${w.hex}` : '');
+  }
+}
 $('#menubtn').onclick = e => { toggleMenu(); if (e && e.stopPropagation) e.stopPropagation(); };
 if (document.addEventListener) document.addEventListener('click', e => { if ($('#menu').hidden || (e.target && e.target.id === 'menubtn')) return; toggleMenu(false); });
-$('#menu-backfill').onclick = () => { toggleMenu(false); openBackfill(); };
-$('#bfclose').onclick = () => { $('#bfpanel').hidden = true; clearTimeout(bfTimer); bfTimer = null; };
-
-// "this aircraft" is offered when a watch with an aircraft is selected; the scope chosen stays while the panel is open
-function fillScope() {
-  const sel = $('#bfscope'), w = watches.find(x => x.id === selected && x.hex);
-  const keep = sel.value;
-  const opts = [];
-  if (w) opts.push({v: w.hex, t: `${w.tail || w.hex} (selected)`});
-  opts.push({v: '', t: 'All tracked aircraft'});
-  sel.replaceChildren(...opts.map(o => { const el = document.createElement('option'); el.value = o.v; el.textContent = o.t; return el; }));
-  sel.value = opts.some(o => o.v === keep) && keep !== undefined && keep !== '' ? keep : opts[0].v;
-}
-async function openBackfill() {
-  $('#bfpanel').hidden = false; $('#bferr').textContent = '';
-  fillScope();
-  await bfRefresh(true);
-}
-async function bfRefresh(withPlan) {
-  let st;
-  try { st = await api('/api/backfill'); } catch (e) { $('#bferr').textContent = e.message; return; }
-  $('#bfoff').hidden = st.enabled; $('#bfbody').hidden = !st.enabled;
-  if (!st.enabled) return;
-  const run = st.status, running = run.running;
-  $('#bfstart').hidden = running; $('#bfstop').hidden = !running; $('#bfscope').disabled = running;
-  const bar = $('#bfbar');
-  bar.hidden = !running || !run.bytes_total;
-  bar.max = run.bytes_total || 1; bar.value = run.bytes_done || 0;
-  $('#bfstatus').textContent = running
-    ? `${run.phase || 'working'} ${run.day || ''} · day ${Math.min(run.days_done + 1, run.days_total)} of ${run.days_total}` +
-      (run.bytes_total ? ` · ${GB(run.bytes_done)} of ${GB(run.bytes_total)}` : '') + ` · ${run.positions_added} positions added so far`
-    : run.finished ? `Last run ${ago(run.finished)}: ${run.positions_added} positions added over ${run.days_done} of ${run.days_total} days.` : '';
-  $('#bferr').textContent = !running && run.error ? run.error : '';
-  $('#bflines').textContent = (run.lines || []).join('\n');
-  if (!running && bfWasRunning && run.positions_added > 0) {   // the new positions change the flights and tracks
-    olderAt = 0;
-    const w = watches.find(x => x.id === selected);
-    if (w) showTrack(w, false).catch(() => {});
-  }
-  bfWasRunning = running;
-  if (withPlan || !running) await bfPlan(st);
-  clearTimeout(bfTimer); bfTimer = null;
-  if (running && !$('#bfpanel').hidden) bfTimer = setTimeout(() => bfRefresh(false), 2000);
-}
-async function bfPlan(st) {
-  let p;
-  try { p = await api(`/api/backfill/plan?hex=${encodeURIComponent($('#bfscope').value)}`); } catch (e) { $('#bferr').textContent = e.message; return; }
-  const cached = p.days.filter(d => d.cached).length;
-  $('#bfplan').textContent = p.days.length
-    ? `${p.days.length} day${p.days.length === 1 ? '' : 's'} to read for ${p.aircraft} aircraft: ${cached} already in the cache, ${p.days.length - cached} to download (about ${GB(p.download_bytes)}). ` +
-      `Cache ${GB(p.cache_bytes)} of ${GB(p.cache_limit_bytes)}.` +
-      (p.evict && p.evict.length ? ` To make room it would delete the oldest cached ${p.evict.length === 1 ? 'day' : 'days'}: ${p.evict.join(', ')}.` : '') +
-      (p.too_big ? ' That does not fit in the cache limit.' : '')
-    : 'Nothing to do: every day we hold data for has been searched, or is not published yet (a day appears about 03:30Z the next day).';
-  $('#bfdays').textContent = p.days.map(d => `${d.day}  ${d.aircraft} aircraft  ${d.cached ? 'cached' : 'download'}`).join('\n');
-  $('#bfstart').disabled = !p.days.length || !!p.too_big;
-}
-$('#bfscope').onchange = () => bfPlan();
-$('#bfstart').onclick = async () => {
-  $('#bferr').textContent = '';
-  try { await api('/api/backfill', {method: 'POST', body: JSON.stringify({hex: $('#bfscope').value})}); } catch (e) { $('#bferr').textContent = e.message; return; }
-  await bfRefresh(false);
-};
-$('#bfstop').onclick = async () => {
-  try { await api('/api/backfill', {method: 'DELETE'}); } catch (e) { $('#bferr').textContent = e.message; }
-  await bfRefresh(false);
-};
-
 
 function tick() { $('#clock').textContent = new Date().toISOString().slice(0, 19).replace('T', ' ') + 'Z'; showRadarBadge(); showSatBadge(); }
 tick();

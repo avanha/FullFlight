@@ -1492,6 +1492,28 @@ func TestBackfillEndpoints(t *testing.T) {
 	if json.Unmarshal([]byte(body), &plan) != nil || plan.Aircraft != 1 || len(plan.Days) != 2 || plan.Days[0].Day != "2026-10-31" {
 		t.Errorf("plan: %s", body)
 	}
+	_, body = do(t, "GET", on.URL+"/api/backfill/plan?days=2026-10-30", "")
+	var sel struct {
+		Days []struct {
+			Day      string
+			Selected bool
+		}
+		Download int64 `json:"download_bytes"`
+	}
+	if json.Unmarshal([]byte(body), &sel) != nil || len(sel.Days) != 2 || sel.Download != history.EstDayBytes {
+		t.Errorf("a selection: %s", body)
+	}
+	for _, d := range sel.Days {
+		if d.Selected != (d.Day == "2026-10-30") {
+			t.Errorf("selected: %s", body)
+		}
+	}
+	if code, body := do(t, "GET", on.URL+"/api/backfill/plan?days=1999-01-01", ""); code != 400 || !strings.Contains(body, "1999-01-01") {
+		t.Errorf("a day that cannot be read: %d %s", code, body)
+	}
+	if code, body := do(t, "POST", on.URL+"/api/backfill", `{"days":[]}`); code != 400 || !strings.Contains(body, "no days chosen") {
+		t.Errorf("no days chosen: %d %s", code, body)
+	}
 	if _, body = do(t, "GET", on.URL+"/api/backfill/plan?hex=ABCDEF", ""); !strings.Contains(body, `"days":[]`) {
 		t.Errorf("an aircraft with no data plans no days: %s", body)
 	}

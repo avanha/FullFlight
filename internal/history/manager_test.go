@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -99,7 +100,7 @@ func TestDownloadAndImportADay(t *testing.T) {
 	st.AddPosition(store.Position{Hex: "7C4926", T: time.Date(2026, 10, 31, 22, 0, 0, 0, time.UTC), Lat: 1, Lon: 1, Source: "adsb.lol"})
 	m := &Manager{Store: st, Cache: cache, Fetch: f, Log: f.Log, Now: func() time.Time { return time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC) }}
 
-	p, err := m.Plan("")
+	p, err := m.Plan("", nil)
 	if err != nil || len(p.Days) != 2 || p.Days[0].Day != "2026-10-31" || p.Days[0].Cached || p.Aircraft != 1 || p.Download != 2*EstDayBytes {
 		t.Fatalf("%+v %v", p, err)
 	}
@@ -109,10 +110,10 @@ func TestDownloadAndImportADay(t *testing.T) {
 			t.Errorf("planned an unpublished day %s", d.Day)
 		}
 	}
-	if err := m.Start(""); err != nil {
+	if err := m.Start("", nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Start(""); !errors.Is(err, ErrBusy) && m.Status().Running {
+	if err := m.Start("", nil); !errors.Is(err, ErrBusy) && m.Status().Running {
 		t.Errorf("a second backfill while one runs: %v", err)
 	}
 	m.Wait()
@@ -135,7 +136,7 @@ func TestDownloadAndImportADay(t *testing.T) {
 		}
 	}
 	// nothing left to do now
-	if err := m.Start(""); err == nil || !strings.Contains(err.Error(), "nothing to do") {
+	if err := m.Start("", nil); err == nil || !strings.Contains(err.Error(), "nothing to do") {
 		t.Errorf("%v", err)
 	}
 }
@@ -252,5 +253,51 @@ func TestTheCacheKeepsToItsLimit(t *testing.T) {
 	}
 	if freed, err := cache.Remove("2026-10-01"); err != nil || freed != 1000 {
 		t.Errorf("%d %v", freed, err)
+	}
+}
+
+func TestOnlyTheDaysChosenAreRead(t *testing.T) {
+	hub := newHub(t, "2026-10-30", "2026-10-31")
+	f, _ := newFetcher(hub)
+	cache := Cache{Dir: t.TempDir()}
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	st.AddPosition(store.Position{Hex: "7C4926", T: time.Date(2026, 10, 31, 22, 0, 0, 0, time.UTC), Lat: 1, Lon: 1, Source: "adsb.lol"})
+	m := &Manager{Store: st, Cache: cache, Fetch: f, Log: f.Log, MaxBytes: 100 << 30, Now: func() time.Time { return time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC) }}
+
+	// the plan lists every day, and counts only the ones chosen
+	p, err := m.Plan("", []string{"2026-10-30"})
+	if err != nil || len(p.Days) != 2 || p.Download != EstDayBytes {
+		t.Fatalf("%+v %v", p, err)
+	}
+	for _, d := range p.Days {
+		if d.Selected != (d.Day == "2026-10-30") {
+			t.Errorf("%+v", d)
+		}
+	}
+	if p, _ = m.Plan("", []string{}); p.Download != 0 || p.Aircraft != 0 || len(p.Days) != 2 {
+		t.Errorf("choosing nothing: %+v", p)
+	}
+	if _, err := m.Plan("", []string{"2026-10-30", "2020-01-01"}); err == nil || !strings.Contains(err.Error(), "2020-01-01") {
+		t.Errorf("a day that cannot be read: %v", err)
+	}
+	if err := m.Start("", []string{}); err == nil || !strings.Contains(err.Error(), "no days chosen") {
+		t.Errorf("%v", err)
+	}
+
+	if err := m.Start("", []string{"2026-10-30"}); err != nil {
+		t.Fatal(err)
+	}
+	m.Wait()
+	s := m.Status()
+	if s.Error != "" || s.DaysTotal != 1 || !reflect.DeepEqual(s.Read, []string{"2026-10-30"}) || len(s.ReadAdded) != 1 || s.ReadAdded[0] != 4 {
+		t.Fatalf("%+v", s)
+	}
+	if _, err := cache.Parts("2026-10-31"); err == nil {
+		t.Error("a day that was not chosen was downloaded")
+	}
+	// the other day is still to do
+	if p, _ = m.Plan("", nil); len(p.Days) != 1 || p.Days[0].Day != "2026-10-31" {
+		t.Errorf("%+v", p.Days)
 	}
 }

@@ -58,13 +58,14 @@ type PlanDay struct {
 	Day      string `json:"day"`
 	Aircraft int    `json:"aircraft"` // how many aircraft would be looked for
 	Cached   bool   `json:"cached"`
-	Bytes    int64  `json:"bytes"` // to download: 0 when cached
+	Bytes    int64  `json:"bytes"`    // to download: 0 when cached
+	Selected bool   `json:"selected"` // among the days this plan is for; the totals count only these
 }
 
 // Plan is what a backfill would do.
 type Plan struct {
-	Days       []PlanDay `json:"days"`
-	Aircraft   int       `json:"aircraft"`
+	Days       []PlanDay `json:"days"`     // every day that could be read
+	Aircraft   int       `json:"aircraft"` // below: for the selected days
 	Download   int64     `json:"download_bytes"`
 	CacheBytes int64     `json:"cache_bytes"`
 	CacheLimit int64     `json:"cache_limit_bytes"`
@@ -77,8 +78,9 @@ type Plan struct {
 // Plan works out which days would be read, for hexAddr alone or for every aircraft we hold anything for. For each aircraft,
 // those are the days it has positions or messages on and the day either side (a flight crosses midnight, and the point is the
 // time before we had positions), which are already published and not yet searched. Cached days come first, then the others
-// newest first.
-func (m *Manager) Plan(hexAddr string) (Plan, error) {
+// newest first. With only given, just those days are selected (and the totals are for them); none given selects them all.
+// A day named in only that could not be read is an error.
+func (m *Manager) Plan(hexAddr string, only []string) (Plan, error) {
 	hexAddr = strings.ToUpper(hexAddr)
 	by, err := m.Store.HexDays(hexAddr)
 	if err != nil {
@@ -105,6 +107,10 @@ func (m *Manager) Plan(hexAddr string) (Plan, error) {
 		}
 	}
 	p := Plan{CacheLimit: m.MaxBytes, hexes: map[string][]string{}}
+	chosen := map[string]bool{}
+	for _, d := range only {
+		chosen[d] = true
+	}
 	seen := map[string]bool{}
 	for day, hs := range want {
 		done, err := m.Store.BackfillScanned(day)
@@ -121,18 +127,29 @@ func (m *Manager) Plan(hexAddr string) (Plan, error) {
 			continue
 		}
 		sort.Strings(todo)
-		pd := PlanDay{Day: day, Aircraft: len(todo)}
-		if _, err := m.Cache.Parts(day); err == nil {
-			pd.Cached = true
-		} else {
+		pd := PlanDay{Day: day, Aircraft: len(todo), Selected: only == nil || chosen[day]}
+		if _, err := m.Cache.Parts(day); err != nil {
 			pd.Bytes = EstDayBytes
-			p.Download += pd.Bytes
+		} else {
+			pd.Cached = true
 		}
 		p.Days = append(p.Days, pd)
-		p.hexes[day] = todo
-		for _, h := range todo {
-			seen[h] = true
+		if pd.Selected {
+			p.hexes[day] = todo
+			p.Download += pd.Bytes
+			for _, h := range todo {
+				seen[h] = true
+			}
 		}
+		delete(chosen, day)
+	}
+	if len(chosen) > 0 {
+		var bad []string
+		for d := range chosen {
+			bad = append(bad, d)
+		}
+		sort.Strings(bad)
+		return Plan{}, fmt.Errorf("nothing to read on %s: searched already, not published yet, or no data for these aircraft", strings.Join(bad, ", "))
 	}
 	p.Aircraft = len(seen)
 	sort.Slice(p.Days, func(i, j int) bool {
@@ -182,6 +199,8 @@ type Status struct {
 	BytesDone int64     `json:"bytes_done"`
 	BytesAll  int64     `json:"bytes_total"`
 	Added     int       `json:"positions_added"`
+	Read      []string  `json:"days_read,omitempty"` // the days read so far, with how many positions each gave
+	ReadAdded []int     `json:"days_read_added,omitempty"`
 	Error     string    `json:"error,omitempty"`
 	Finished  time.Time `json:"finished,omitzero"`
 	Lines     []string  `json:"lines,omitempty"` // what has happened, newest last
@@ -193,27 +212,40 @@ func (m *Manager) Status() Status {
 	defer m.mu.Unlock()
 	s := m.st
 	s.Lines = append([]string(nil), s.Lines...)
+	s.Read = append([]string(nil), s.Read...)
+	s.ReadAdded = append([]int(nil), s.ReadAdded...)
 	return s
 }
 
 // ErrBusy says a backfill is already running.
 var ErrBusy = errors.New("a backfill is already running")
 
-// Start begins a backfill in the background for hexAddr alone, or all aircraft if it is empty.
-func (m *Manager) Start(hexAddr string) error {
+// Start begins a backfill in the background for hexAddr alone, or all aircraft if it is empty, over only the given days (all the
+// days there are to read, if none are given).
+func (m *Manager) Start(hexAddr string, only []string) error {
 	m.mu.Lock()
 	if m.st.Running {
 		m.mu.Unlock()
 		return ErrBusy
 	}
 	m.mu.Unlock()
-	p, err := m.Plan(hexAddr)
+	p, err := m.Plan(hexAddr, only)
 	if err != nil {
 		return err
 	}
-	if len(p.Days) == 0 {
+	var days []PlanDay
+	for _, d := range p.Days {
+		if d.Selected {
+			days = append(days, d)
+		}
+	}
+	if len(days) == 0 {
+		if len(p.Days) > 0 {
+			return errors.New("no days chosen")
+		}
 		return errors.New("nothing to do: every day with data for these aircraft has been searched, or is not published yet")
 	}
+	p.Days = days
 	ctx, cancel := context.WithCancel(context.Background())
 	m.mu.Lock()
 	if m.st.Running {
@@ -298,7 +330,10 @@ func (m *Manager) run(ctx context.Context, p Plan) error {
 		}
 		delete(pending, d.Day)
 		added += res.Total()
-		m.set(func(s *Status) { s.Added = added })
+		m.set(func(s *Status) {
+			s.Added = added
+			s.Read, s.ReadAdded = append(s.Read, d.Day), append(s.ReadAdded, res.Total())
+		})
 		m.note("%s: %d positions added for %d of %d aircraft (%d trace files in the archive, read in %s)",
 			d.Day, res.Total(), len(res.Positions), res.Searched, res.Traces, res.Elapsed.Round(time.Second))
 		if res.Searched > 0 && res.Found == 0 {

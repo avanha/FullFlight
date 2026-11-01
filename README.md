@@ -430,11 +430,14 @@ tracking data as an archive (<https://github.com/adsblol/globe_history_2026>, on
       cache_dir: /Volumes/External/FullFlightCache   # must exist; holds adsblol/v2026.10.31-planes-readsb-prod-0.tar.aa ...
       cache_max_gib: 100                             # the oldest days are deleted to stay within this
 
-Nothing is downloaded or read unless `enabled` is on and you start it. Then the hamburger menu at the top right of the left
-panel has **Backfill history...**. It lists the days that would be read, how many are already in the cache and how many
-would be downloaded (a day is 3 to 4 GB, in two or three tar parts), and what would be deleted from the cache to make room.
-Choose the selected aircraft or all tracked aircraft, and press Start. Stop ends it after the file in hand; a half-finished
-download is kept and resumed next time.
+Nothing is downloaded or read unless `enabled` is on and you start it. The hamburger menu at the top right of the left
+panel has **Backfill history...**, which opens its own screen (`/backfill.html`; opened from the map with an aircraft
+selected, it starts on that aircraft). The screen lists every day that could be read, with how many aircraft it is for,
+whether it is already in the cache or would be downloaded (a day is 3 to 4 GB, in two or three tar parts), and its size.
+Tick the days to read (all, none, or only the cached ones are one click each); under the list it says what the chosen
+days come to: the download, the cache's room, and which old days would be deleted to make room. Press Start. Each row
+shows its progress and, once read, how many positions it gave. Stop ends the run after the file in hand; a half-finished
+download is kept and resumed next time. The aircraft can be the one selected or all tracked aircraft.
 
 Which days: for each aircraft, those it has positions or messages on and the day either side, that are already published and
 not yet searched for that aircraft. Each day is downloaded once into the cache (parts are written as `name.part` and renamed

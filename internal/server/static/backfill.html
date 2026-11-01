@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backfill history</title>
+<style>
+  body { margin: 0; font: 14px system-ui, sans-serif; color: #222; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid #ccc; background: #f4f6fa; }
+  header h2 { margin: 0; font-size: 18px; }
+  header a { color: #1d4ed8; text-decoration: none; }
+  #cache { color: #555; margin-left: auto; }
+  main { padding: 8px 16px 32px; max-width: 980px; }
+  .lead { color: #444; max-width: 70ch; }
+  #off { background: #fff7e6; border: 1px solid #f0c36d; padding: 10px 12px; border-radius: 4px; }
+  .tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 12px 0 4px; }
+  .tools button { font: inherit; font-size: 12px; padding: 2px 10px; cursor: pointer; }
+  table { border-collapse: collapse; width: 100%; }
+  th { text-align: left; font-size: 12px; color: #555; padding: 6px 8px; border-bottom: 2px solid #ccc; white-space: nowrap; }
+  td { padding: 6px 8px; border-bottom: 1px solid #eee; }
+  td.day { font-family: ui-monospace, monospace; }
+  td.num { text-align: right; }
+  tr.off td { color: #999; }
+  tr.busy td { background: #fffbe6; }
+  tr.done td { background: #f0faf0; }
+  #empty { color: #777; padding: 16px 8px; }
+  #summary { margin: 10px 0; }
+  #summary.bad { color: #b45309; }
+  .actions { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+  .actions button { font: inherit; padding: 4px 16px; cursor: pointer; }
+  progress { width: 100%; height: 14px; }
+  #status { color: #444; margin: 4px 0; }
+  #err { color: #b00; margin: 4px 0; }
+  #err:empty { display: none; }
+  #lines { font: 12px/1.4 ui-monospace, monospace; color: #444; white-space: pre-wrap; background: #f7f7f9; border: 1px solid #e3e3e8; border-radius: 4px; padding: 8px 10px; max-height: 18em; overflow: auto; margin: 8px 0 0; }
+  #lines:empty { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">&larr; Map</a>
+  <h2>Backfill history</h2>
+  <label>Aircraft <select id="scope"></select></label>
+  <span id="cache"></span>
+</header>
+<main>
+  <p class="lead">Fills in an aircraft's track from before we followed it, from adsb.lol's daily archives. Choose the days to read:
+    each one that isn't in the cache is downloaded once (3&ndash;4&nbsp;GB) and kept there, and the days are then read once for every aircraft that needs them.</p>
+  <div id="off" hidden>Backfill is off. Set <code>backfill.enabled</code> and <code>backfill.cache_dir</code> in config.yaml, then restart.</div>
+  <div id="body">
+    <div class="tools">
+      <button type="button" id="selall">All</button>
+      <button type="button" id="selnone">None</button>
+      <button type="button" id="selcached" title="Only the days already in the cache: nothing to download">Cached only</button>
+    </div>
+    <table>
+      <thead><tr><th><input type="checkbox" id="tickall" title="Select or clear all"></th><th>Day (UTC)</th><th>Aircraft</th><th>Archive</th><th class="num">Download</th><th>Result</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div id="empty" hidden>Nothing to do: every day we hold data for has been searched, or is not published yet (a day appears about 03:30Z the next day).</div>
+    <div id="summary"></div>
+    <div class="actions"><button type="button" id="start">Start</button><button type="button" id="stop" hidden>Stop</button></div>
+    <progress id="bar" max="1" value="0" hidden></progress>
+    <div id="status"></div>
+    <div id="err"></div>
+    <pre id="lines"></pre>
+  </div>
+</main>
+<script>
+// ---- the backfill page: choose days, start, watch it run ----
+const $ = s => document.querySelector(s);
+const GB = n => `${(n / 1e9).toFixed(1)} GB`;
+const hexParam = new URLSearchParams(typeof location === 'undefined' ? '' : location.search).get('hex') || '';
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function ago(t) {
+  const s = Math.max(0, Math.round((Date.now() - Date.parse(t)) / 1000));
+  return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : s < 129600 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`;
+}
+
+let days = [];                 // every day the plan lists
+let picked = new Set();        // the days ticked
+let running = false, timer = null, wasRunning = false;
+
+const scopeHex = () => $('#scope').value;
+const chosen = () => days.filter(d => picked.has(d.day)).map(d => d.day);
+
+async function fillScope() {
+  let ws = [];
+  try { ws = await api('/api/watches'); } catch (e) { /* the list is a convenience */ }
+  const seen = new Set(), opts = [];
+  for (const w of ws) if (w.hex && !seen.has(w.hex)) { seen.add(w.hex); opts.push({v: w.hex, t: `${w.tail || w.ident} (${w.hex})`}); }
+  if (hexParam && !seen.has(hexParam)) opts.unshift({v: hexParam, t: hexParam});
+  opts.sort((a, b) => (a.v === hexParam ? -1 : b.v === hexParam ? 1 : 0));
+  opts.push({v: '', t: 'All tracked aircraft'});
+  $('#scope').replaceChildren(...opts.map(o => { const el = document.createElement('option'); el.value = o.v; el.textContent = o.t; return el; }));
+  $('#scope').value = hexParam && opts.some(o => o.v === hexParam) ? hexParam : '';
+}
+
+async function loadAll(resetPicks) {
+  let st;
+  try { st = await api('/api/backfill'); } catch (e) { $('#err').textContent = e.message; return; }
+  $('#off').hidden = st.enabled; $('#body').hidden = !st.enabled;
+  if (!st.enabled) return;
+  $('#cache').textContent = `Cache ${st.cache_dir}: ${GB(st.cache_bytes)} of ${GB(st.cache_limit_bytes)}`;
+  showStatus(st.status);
+  wasRunning = st.status.running;   // a run already going when the page opened still reloads the plan when it ends
+  if (!days.length || resetPicks || !running) await loadPlan(resetPicks);
+  schedule(st.status.running);
+}
+
+// the days there are; every one starts ticked
+async function loadPlan(reset) {
+  let p;
+  try { p = await api(`/api/backfill/plan?hex=${encodeURIComponent(scopeHex())}`); } catch (e) { $('#err').textContent = e.message; return; }
+  const before = picked;
+  days = p.days;
+  picked = new Set(days.filter(d => reset || !before.size || before.has(d.day)).map(d => d.day));
+  await totals();
+}
+// what the ticked days come to: the server counts the download and what the cache would have to give up
+async function totals() {
+  let p;
+  try { p = await api(`/api/backfill/plan?hex=${encodeURIComponent(scopeHex())}&days=${chosen().join(',')}`); } catch (e) { $('#err').textContent = e.message; return; }
+  renderRows(null);
+  $('#empty').hidden = days.length > 0;
+  const n = chosen().length, s = $('#summary');
+  s.className = p.too_big ? 'bad' : '';
+  s.textContent = n
+    ? `${n} day${n === 1 ? '' : 's'} chosen, for ${p.aircraft} aircraft: ${GB(p.download_bytes)} to download. Cache ${GB(p.cache_bytes)} of ${GB(p.cache_limit_bytes)}.` +
+      (p.evict && p.evict.length ? ` To make room it would delete the oldest cached ${p.evict.length === 1 ? 'day' : 'days'}: ${p.evict.join(', ')}.` : '') +
+      (p.too_big ? ' That does not fit in the cache limit.' : '')
+    : days.length ? 'No days chosen.' : '';
+  $('#start').disabled = running || !n || !!p.too_big;
+}
+
+function renderRows(st) {
+  const read = Object.fromEntries(((st && st.days_read) || []).map((d, i) => [d, st.days_read_added[i]]));
+  $('#rows').replaceChildren(...days.map(d => {
+    const tr = document.createElement('tr');
+    const cell = (cls, text) => { const td = document.createElement('td'); td.className = cls; td.textContent = text; tr.append(td); return td; };
+    const box = document.createElement('input'); box.type = 'checkbox'; box.checked = picked.has(d.day); box.disabled = running;
+    box.onchange = () => { box.checked ? picked.add(d.day) : picked.delete(d.day); totals(); };
+    const first = document.createElement('td'); first.append(box); tr.append(first);
+    cell('day', d.day); cell('num', String(d.aircraft));
+    cell('', d.cached ? 'in the cache' : 'to download');
+    cell('num', d.cached ? '—' : `≈${GB(d.bytes)}`);
+    let result = '', cls = picked.has(d.day) ? '' : 'off';
+    if (d.day in read) { result = `${read[d.day]} positions added`; cls = 'done'; }
+    else if (st && st.running && st.day === d.day) {
+      cls = 'busy';
+      result = st.phase === 'downloading' && st.bytes_total ? `downloading ${Math.round(100 * st.bytes_done / st.bytes_total)}%` : (st.phase || 'working');
+    }
+    cell('', result);
+    tr.className = cls;
+    return tr;
+  }));
+  $('#tickall').checked = days.length > 0 && chosen().length === days.length;
+}
+
+function showStatus(st) {
+  running = st.running;
+  $('#start').hidden = running; $('#stop').hidden = !running; $('#scope').disabled = running;
+  const bar = $('#bar');
+  bar.hidden = !running || !st.bytes_total; bar.max = st.bytes_total || 1; bar.value = st.bytes_done || 0;
+  $('#status').textContent = running
+    ? `${st.phase || 'working'} ${st.day || ''} · day ${Math.min(st.days_done + 1, st.days_total)} of ${st.days_total}` +
+      (st.bytes_total ? ` · ${GB(st.bytes_done)} of ${GB(st.bytes_total)}` : '') + ` · ${st.positions_added} positions added so far`
+    : st.finished ? `Last run ${ago(st.finished)}: ${st.positions_added} positions added over ${st.days_done} of ${st.days_total} days.` : '';
+  $('#err').textContent = !running && st.error ? st.error : '';
+  $('#lines').textContent = (st.lines || []).join('\n');
+  renderRows(st);
+}
+
+function schedule(on) {
+  clearTimeout(timer); timer = null;
+  if (on) timer = setTimeout(poll, 2000);
+}
+async function poll() {
+  let st;
+  try { st = (await api('/api/backfill')).status; } catch (e) { $('#err').textContent = e.message; schedule(true); return; }
+  showStatus(st);
+  if (!st.running && wasRunning) { wasRunning = false; await loadPlan(false); return; }   // what was read is no longer to do
+  schedule(st.running);
+}
+
+$('#scope').onchange = () => loadPlan(true);
+$('#selall').onclick = () => { picked = new Set(days.map(d => d.day)); totals(); };
+$('#selnone').onclick = () => { picked = new Set(); totals(); };
+$('#selcached').onclick = () => { picked = new Set(days.filter(d => d.cached).map(d => d.day)); totals(); };
+$('#tickall').onchange = () => ($('#tickall').checked ? $('#selall') : $('#selnone')).onclick();
+$('#start').onclick = async () => {
+  $('#err').textContent = '';
+  try { await api('/api/backfill', {method: 'POST', body: JSON.stringify({hex: scopeHex(), days: chosen()})}); } catch (e) { $('#err').textContent = e.message; return; }
+  wasRunning = true;
+  const st = (await api('/api/backfill')).status;
+  showStatus(st); schedule(st.running);
+};
+$('#stop').onclick = async () => {
+  try { await api('/api/backfill', {method: 'DELETE'}); } catch (e) { $('#err').textContent = e.message; }
+  schedule(true);
+};
+
+fillScope().then(() => loadAll(true));
+</script>
+</body>
+</html>

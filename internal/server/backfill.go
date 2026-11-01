@@ -35,9 +35,13 @@ func (s *Server) backfillPlan(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusConflict, "backfill is off: set backfill.enabled and backfill.cache_dir in the config")
 		return
 	}
-	p, err := s.Backfill.Plan(strings.TrimSpace(r.URL.Query().Get("hex")))
+	var only []string // days=2026-10-31,2026-10-30 selects those; absent selects all
+	if v, ok := r.URL.Query()["days"]; ok {
+		only = splitDays(v[0])
+	}
+	p, err := s.Backfill.Plan(strings.TrimSpace(r.URL.Query().Get("hex")), only)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, err.Error())
+		fail(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if p.Days == nil {
@@ -46,14 +50,27 @@ func (s *Server) backfillPlan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p)
 }
 
-// backfillStart begins a backfill for one aircraft ({"hex": "7C4926"}) or, with no hex, every aircraft.
+// splitDays reads a list of days; an empty one is an empty (not absent) selection.
+func splitDays(v string) []string {
+	out := []string{}
+	for _, d := range strings.Split(v, ",") {
+		if d = strings.TrimSpace(d); d != "" {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// backfillStart begins a backfill for one aircraft ({"hex": "7C4926"}) or, with no hex, every aircraft; "days" lists the days
+// to read (the days from the plan), and leaving it out means all of them.
 func (s *Server) backfillStart(w http.ResponseWriter, r *http.Request) {
 	if s.Backfill == nil {
 		fail(w, http.StatusConflict, "backfill is off: set backfill.enabled and backfill.cache_dir in the config")
 		return
 	}
 	var in struct {
-		Hex string `json:"hex"`
+		Hex  string   `json:"hex"`
+		Days []string `json:"days"`
 	}
 	if r.ContentLength != 0 {
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
@@ -65,7 +82,7 @@ func (s *Server) backfillStart(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusBadRequest, "hex must be six hex digits")
 		return
 	}
-	switch err := s.Backfill.Start(strings.TrimSpace(in.Hex)); {
+	switch err := s.Backfill.Start(strings.TrimSpace(in.Hex), in.Days); {
 	case errors.Is(err, history.ErrBusy):
 		fail(w, http.StatusConflict, err.Error())
 	case err != nil:
