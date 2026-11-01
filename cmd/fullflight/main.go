@@ -182,7 +182,7 @@ func main() {
 	fetcher := &datalink.Fetcher{Store: st, Source: afClient, Search: afClient, Log: log}
 	go fetcher.Run(ctx)
 
-	api := &server.Server{Store: st, Nav: nav, Username: cfg.Auth.Username, Password: cfg.Auth.Password}
+	api := &server.Server{Store: st, Nav: nav, Username: cfg.Auth.Username, Password: cfg.Auth.Password, StationList: afClient}
 	if cfg.Backfill.Enabled {
 		if fi, err := os.Stat(cfg.Backfill.CacheDir); err != nil || !fi.IsDir() {
 			log.Warn("backfill cache directory is not there; backfill will fail until it is", "dir", cfg.Backfill.CacheDir, "err", err)

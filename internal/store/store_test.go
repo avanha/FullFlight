@@ -1202,3 +1202,64 @@ func TestOpsDaysAndDatedReportsCountFromTheirOwnTime(t *testing.T) {
 		}
 	}
 }
+
+func TestStationStatsAndLateness(t *testing.T) {
+	s := open(t)
+	sent := time.Date(2026, 10, 27, 5, 0, 0, 0, time.UTC)
+	id := int64(0)
+	add := func(station, srcType, hex string, rx time.Time, kind, decoded string, posT *time.Time) {
+		id++
+		s.AddMessage(Message{ID: id, Hex: hex, T: rx, Label: "H1", Text: fmt.Sprint("t", id), Kind: kind, Decoded: decoded, Station: station, SourceType: srcType, PosT: posT})
+	}
+	a350 := func(at time.Time) string {
+		return `{"fields":{"a350":{"Time":"` + at.Format("2006-01-02T15:04:05Z") + `","Origin":"VHHH","Dest":"EDDM"}}}`
+	}
+	// a prompt station: ten A350 reports a few seconds after they were made
+	for i := 0; i < 10; i++ {
+		at := sent.Add(time.Duration(i) * time.Minute)
+		add("PROMPT-1", "vdl", "780AA4", at.Add(5*time.Second), "miam", a350(at), nil)
+	}
+	// a station that is never prompt: every message 10 to 28 hours late, and one with a clock a little behind the aircraft's
+	for i := 0; i < 10; i++ {
+		at := sent.Add(time.Duration(i) * time.Minute)
+		add("LATE-1", "vdl", "780AA4", at.Add(time.Duration(10+2*i)*time.Hour), "miam", a350(at), nil)
+	}
+	add("LATE-1", "vdl", "780AB8", sent.Add(-time.Minute), "miam", a350(sent), nil) // stamped before the time inside it: counts as no lag
+	// a station with nothing that carries the aircraft's time
+	add("QUIET-1", "aero-acars", "780AA4", sent, "datis_request", "", nil)
+	add("QUIET-1", "aero-acars", "780AB8", sent.Add(time.Minute), "cpdlc", "", nil)
+	s.SaveStations([]StationInfo{{Ident: "LATE-1", Lat: f64(48.1), Lon: f64(17.1), Fuzzed: true, CountryCode: "SK", SourceType: "vdl", Application: "dumpvdl2",
+		Flagged: true, FlaggedReason: "Rate anomaly detected", MessagesCount: 235660243, NearestAirport: "LZIB", LastReportAt: sent}}, sent.Add(time.Hour))
+
+	sts, err := s.Stations()
+	if err != nil || len(sts) != 3 {
+		t.Fatalf("%+v %v", sts, err)
+	}
+	by := map[string]StationStats{}
+	for _, st := range sts {
+		by[st.Ident] = st
+	}
+	p := by["PROMPT-1"]
+	if p.Messages != 10 || p.Aircraft != 1 || p.Lateness.Timed != 10 || p.Lateness.Late != 0 || p.Lateness.Shortest != 5*time.Second || p.Lateness.Median != 5*time.Second || p.Info != nil {
+		t.Errorf("prompt: %+v", p)
+	}
+	l := by["LATE-1"]
+	if l.Messages != 11 || l.Aircraft != 2 || l.Lateness.Timed != 11 || l.Lateness.Late != 10 || l.Lateness.Shortest != 0 || l.Lateness.P90 != 26*time.Hour || l.Transports["vdl"] != 11 {
+		t.Errorf("late: %+v", l)
+	}
+	if l.Info == nil || !l.Info.Flagged || l.Info.FlaggedReason != "Rate anomaly detected" || *l.Info.Lat != 48.1 || !l.Info.Fuzzed || l.Info.MessagesCount != 235660243 || !l.Info.LastReportAt.Equal(sent) {
+		t.Errorf("late info: %+v", l.Info)
+	}
+	q := by["QUIET-1"]
+	if q.Messages != 2 || q.Lateness.Timed != 0 || q.Transports["aero-acars"] != 2 {
+		t.Errorf("quiet: %+v", q)
+	}
+	if got := s.StationsFetched(); !got.Equal(sent.Add(time.Hour)) {
+		t.Errorf("fetched %v", got)
+	}
+	if sts[0].Ident != "LATE-1" {
+		t.Errorf("busiest first: %s", sts[0].Ident)
+	}
+}
+
+func f64(v float64) *float64 { return &v }

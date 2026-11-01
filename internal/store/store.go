@@ -203,6 +203,24 @@ var migrations = []string{
 		until  INTEGER NOT NULL,
 		reason TEXT NOT NULL
 	 );`,
+	// The receiving stations airframes.io lists, as of the last time its list was fetched.
+	`CREATE TABLE IF NOT EXISTS station (
+		ident           TEXT PRIMARY KEY,
+		lat             REAL,
+		lon             REAL,
+		fuzzed          INTEGER NOT NULL DEFAULT 0,
+		country_code    TEXT NOT NULL DEFAULT '',
+		country_name    TEXT NOT NULL DEFAULT '',
+		source_type     TEXT NOT NULL DEFAULT '',
+		application     TEXT NOT NULL DEFAULT '',
+		status          TEXT NOT NULL DEFAULT '',
+		flagged         INTEGER NOT NULL DEFAULT 0,
+		flagged_reason  TEXT NOT NULL DEFAULT '',
+		last_report_at  INTEGER NOT NULL DEFAULT 0,
+		messages_count  INTEGER NOT NULL DEFAULT 0,
+		nearest_airport TEXT NOT NULL DEFAULT '',
+		fetched_at      INTEGER NOT NULL
+	 );`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.

@@ -7,7 +7,7 @@ const src = html.match(/<script>\n(const map[\s\S]*?)<\/script>/)[1];
 // Two elements with one id make $('#id') find the first, and whatever draws into the second draws into the wrong place
 // (a route-suggestion list once took over the airport list this way). Every page must have each id once, and every
 // list="..." must name an id that exists.
-for (const page of ['index.html', 'airframes.html', 'backfill.html']) {
+for (const page of ['index.html', 'airframes.html', 'backfill.html', 'stations.html']) {
   const text = fs.readFileSync(require('path').join(__dirname, '../internal/server/static', page), 'utf8');
   const ids = [...text.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
   const dup = ids.filter((id, i) => ids.indexOf(id) !== i);
@@ -1259,6 +1259,7 @@ highlightGroup = null;
     assert.strictEqual(byId['#menu'].hidden, true, 'the menu starts closed');
     byId['#menubtn'].onclick(); assert.strictEqual(byId['#menu'].hidden, false, 'the hamburger opens it');
     assert.match(html, /<div id="menu"[^>]*><a id="menu-airframes" href="\/airframes\.html"/, 'Airframes is in the menu');
+    assert.match(html, /<a id="menu-stations" href="\/stations\.html"/, 'and so are the stations');
     assert.ok(!/class="navlink"/.test(html), 'and no longer beside the title');
     assert.strictEqual(byId['#menu-backfill'].href, '/backfill.html?hex=780AB8', 'the backfill screen opens on the selected aircraft');
     byId['#menubtn'].onclick(); assert.strictEqual(byId['#menu'].hidden, true, 'and closes it');

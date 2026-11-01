@@ -601,12 +601,16 @@ func (s *Store) GroundStops(hexAddr string, since, until time.Time) ([]GroundSto
 // time of the report kinds that carry a date (ACMF, AOC position, *POS, POSRPT), an operations event's day of the month and time
 // of day. One about a flight that has not left yet (Qantas sends the next flight's data while the aircraft is still on its way
 // in) counts from when that flight is due to leave. Any other counts from when it arrived.
-const atTime = `COALESCE(CASE WHEN json_valid(decoded) THEN CAST(strftime('%s', json_extract(decoded, '$.fields.ops.at')) AS INTEGER) END,
+const atTime = `COALESCE(` + eventAt + `,
+	MAX(ts, COALESCE(CASE WHEN json_valid(decoded) THEN CAST(strftime('%s', json_extract(decoded, '$.fields.ops.sched')) AS INTEGER) END, 0)))`
+
+// eventAt is the time the aircraft put in a message, where it gave a full date and time (or a day of the month and a time of
+// day), and NULL where it did not.
+const eventAt = `COALESCE(CASE WHEN json_valid(decoded) THEN CAST(strftime('%s', json_extract(decoded, '$.fields.ops.at')) AS INTEGER) END,
 	` + a350Event + `,
 	CASE WHEN kind = 'miam' AND json_valid(decoded) AND json_extract(decoded, '$.fields.rep081') IS NOT NULL THEN pos_ts END,
 	CASE WHEN kind IN ('acmf_report', 'aoc_position', 'pos_report', 'posrpt') THEN pos_ts END,
-	` + opsDayTime + `,
-	MAX(ts, COALESCE(CASE WHEN json_valid(decoded) THEN CAST(strftime('%s', json_extract(decoded, '$.fields.ops.sched')) AS INTEGER) END, 0)))`
+	` + opsDayTime + `)`
 
 // opsDayTime is the time of an operations event that gives a day of the month and a time of day ("27", "11:58Z"): that day of the
 // month in the month it arrived, or the month before if that would be after it arrived. Such events are often delivered late.

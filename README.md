@@ -461,6 +461,28 @@ shows its latest flight the same way. The month's list is asked for apart and ke
 `/api/track`, `/api/messages` and `/api/plan` take `until` (RFC 3339) beside `hours` for such a window; `/api/flights?hours=`
 goes back up to 30 days.
 
+## Stations
+
+Every message came to us through a receiving station: a volunteer's VHF or HF receiver, or one of airframes.io's satellite
+receivers. `/stations.html`, from the hamburger menu, lists the ones ours came through (about two hundred) with what they carry
+and how late it arrives, beside a map of where they are.
+
+For each station: its name, country and nearest airport, the link and decoder (VHF VDL2 by dumpvdl2, ACARS by acarsdec, Inmarsat
+by jaero, ...), how many of our messages came through it for how many aircraft, and when we last heard from it. Then its
+delivery, worked out from the messages that carry the aircraft's own time (the same ones that date a message as it was sent: A350
+reports, REP081, operations events, ACMF and the like): how many there are, what share arrived over an hour after the time inside
+them, the median delay, the 90th percentile, and the shortest delay of any. A station whose shortest delay is hours long never
+delivers promptly. The verdict is **late** for half or more late, **sometimes** for some, **prompt** for none, and **?** for fewer
+than five timed messages (CPDLC, AFN logons and ATIS requests carry no time, so a station that only delivers those cannot be
+judged). Click a heading to sort; the filters take the link, the verdict, a name, and "on the map only".
+
+Positions and details (country, decoder, whether airframes.io has flagged the station) come from airframes.io's list of stations,
+one request of some eight thousand stations and a few megabytes. It is fetched by the **Fetch positions** button, and not more than
+every six hours; only the stations we have messages from are kept. A station that asked airframes.io to blur its position is shown
+at the blurred position and marked approximate. Some stations have no position. airframes.io's "rate anomaly" flag is shown beside our
+own verdict: it is not a reliable guide to lateness (some flagged stations deliver promptly, and some late ones are not flagged),
+which is why the delivery is measured here. The page only reports; nothing in how messages are handled depends on it.
+
 ## Backfilling a track from adsb.lol's archive
 
 ADS-B polling only records what is in the air while an aircraft is being followed. adsb.lol also publishes every day's

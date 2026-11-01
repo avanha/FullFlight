@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/avanha/fullflight/internal/airframes"
 	"github.com/avanha/fullflight/internal/history"
 	"github.com/avanha/fullflight/internal/navdata"
 	"github.com/avanha/fullflight/internal/store"
@@ -1620,5 +1623,141 @@ func TestMessagesTaggedWithAnotherFlightAreMarked(t *testing.T) {
 	}
 	if ms[1].Elsewhere != nil || ms[2].Elsewhere != nil || ms[3].Elsewhere != nil {
 		t.Errorf("its own flight's, one with no tag, and one over a satellite link stay where they are: %s", body)
+	}
+}
+
+type fakeStationList struct {
+	list  []airframes.Station
+	err   error
+	calls int
+}
+
+func (f *fakeStationList) Stations(context.Context) ([]airframes.Station, error) {
+	f.calls++
+	return f.list, f.err
+}
+
+func TestStationsScreen(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 11, 1, 22, 0, 0, 0, time.UTC)
+	sent := now.Add(-48 * time.Hour)
+	a350 := func(at time.Time) string {
+		return `{"fields":{"a350":{"Time":"` + at.Format("2006-01-02T15:04:05Z") + `","Origin":"VHHH","Dest":"EDDM"}}}`
+	}
+	for i := 0; i < 8; i++ { // a station that is always a day late
+		at := sent.Add(time.Duration(i) * time.Minute)
+		st.AddMessage(store.Message{ID: int64(i + 1), Hex: "780AA4", T: at.Add(24 * time.Hour), Label: "H1", Text: fmt.Sprint("a", i), Kind: "miam", Decoded: a350(at), Station: "EB-LZIB", SourceType: "vdl"})
+	}
+	for i := 0; i < 6; i++ { // one that is prompt
+		at := sent.Add(time.Duration(i) * time.Minute)
+		st.AddMessage(store.Message{ID: int64(100 + i), Hex: "780AB8", T: at.Add(4 * time.Second), Label: "H1", Text: fmt.Sprint("b", i), Kind: "miam", Decoded: a350(at), Station: "KBFI-1", SourceType: "vdl"})
+	}
+	st.AddMessage(store.Message{ID: 200, Hex: "780AB8", T: sent, Label: "B9", Text: "c", Kind: "datis_request", Station: "NEW-1", SourceType: "acars"}) // nothing timed
+
+	lat, lon := 48.1486, 17.10775
+	src := &fakeStationList{list: []airframes.Station{
+		{Ident: "EB-LZIB", Latitude: &lat, Longitude: &lon, Fuzzed: true, CountryName: "Slovakia", CountryCode: "SK", SourceType: "vdl", Application: "dumpvdl2", Flagged: true,
+			FlaggedReason: "Rate anomaly detected", MessagesCount: 235660243, NearestAirport: "LZIB", LastReportAt: now},
+		{Ident: "KBFI-1", SourceType: "vdl", Application: "dumpvdl2"}, // no position
+		{Ident: "SOMEONE-ELSE", Latitude: &lat, Longitude: &lon},
+	}}
+	srv := &Server{Store: st, StationList: src, Now: func() time.Time { return now }}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	type stj struct {
+		Ident         string         `json:"ident"`
+		Verdict       string         `json:"verdict"`
+		Messages      int            `json:"messages"`
+		Timed         int            `json:"timed"`
+		Late          int            `json:"late"`
+		LateFrac      float64        `json:"late_frac"`
+		MedianS       int64          `json:"median_s"`
+		ShortestS     int64          `json:"shortest_s"`
+		Known         bool           `json:"known"`
+		Fuzzed        bool           `json:"fuzzed"`
+		Flagged       bool           `json:"flagged"`
+		Lat           *float64       `json:"lat"`
+		Country       string         `json:"country"`
+		Application   string         `json:"application"`
+		FlaggedReason string         `json:"flagged_reason"`
+		Transports    map[string]int `json:"transports"`
+	}
+	var body struct {
+		Fetched  *time.Time
+		CanFetch bool `json:"can_fetch"`
+		Stations []stj
+	}
+	get := func(method, path string) (int, string) {
+		code, b := do(t, method, ts.URL+path, "")
+		body.Fetched, body.Stations = nil, nil
+		json.Unmarshal([]byte(b), &body)
+		return code, b
+	}
+
+	// before the list has been fetched: ours only, ordered by how many messages, with the lateness we measured
+	if code, b := get("GET", "/api/stations"); code != 200 || len(body.Stations) != 3 || body.Fetched != nil || !body.CanFetch {
+		t.Fatalf("%d %s", code, b)
+	}
+	by := func() map[string]stj {
+		m := map[string]stj{}
+		for _, s := range body.Stations {
+			m[s.Ident] = s
+		}
+		return m
+	}
+	late := by()["EB-LZIB"]
+	if late.Verdict != "late" || late.Timed != 8 || late.Late != 8 || late.LateFrac != 1 || late.MedianS != 86400 || late.ShortestS != 86400 || late.Known || body.Stations[0].Ident != "EB-LZIB" {
+		t.Errorf("%+v", late)
+	}
+	if by()["KBFI-1"].Verdict != "prompt" || by()["NEW-1"].Verdict != "unknown" || by()["NEW-1"].Transports["acars"] != 1 {
+		t.Errorf("%+v %+v", by()["KBFI-1"], by()["NEW-1"])
+	}
+
+	// fetch the list: only the stations we have heard from are kept, with where they are
+	if code, b := get("POST", "/api/stations/refresh"); code != 200 || body.Fetched == nil || src.calls != 1 {
+		t.Fatalf("%d %s", code, b)
+	}
+	late = by()["EB-LZIB"]
+	if !late.Known || late.Lat == nil || *late.Lat != 48.1486 || !late.Fuzzed || !late.Flagged || late.FlaggedReason != "Rate anomaly detected" || late.Country != "Slovakia" || late.Application != "dumpvdl2" {
+		t.Errorf("%+v", late)
+	}
+	if by()["KBFI-1"].Lat != nil || !by()["KBFI-1"].Known || by()["NEW-1"].Known || len(body.Stations) != 3 {
+		t.Errorf("%+v", body.Stations)
+	}
+	// again at once: refused, and the source is not asked
+	if code, b := get("POST", "/api/stations/refresh"); code != 429 || !strings.Contains(b, "fetched") || src.calls != 1 {
+		t.Errorf("%d %s calls %d", code, b, src.calls)
+	}
+}
+
+func TestStationsRefreshProblems(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	st.AddMessage(store.Message{ID: 1, Hex: "780AA4", T: time.Now(), Label: "H1", Text: "a", Station: "EB-LZIB"})
+	now := time.Now()
+	for name, c := range map[string]struct {
+		src  StationSource
+		want int
+		text string
+	}{
+		"no source":     {nil, 409, "no source"},
+		"it fails":      {&fakeStationList{err: errors.New("airframes.io: stations: HTTP 503")}, 502, "503"},
+		"not our names": {&fakeStationList{list: []airframes.Station{{Ident: "OTHER"}}}, 502, "has its layout changed"},
+	} {
+		srv := &Server{Store: st, Now: func() time.Time { return now }}
+		if c.src != nil {
+			srv.StationList = c.src
+		}
+		ts := httptest.NewServer(srv.Handler())
+		code, b := do(t, "POST", ts.URL+"/api/stations/refresh", "")
+		ts.Close()
+		if code != c.want || !strings.Contains(b, c.text) {
+			t.Errorf("%s: %d %s", name, code, b)
+		}
+	}
+	if !st.StationsFetched().IsZero() {
+		t.Error("a failed fetch was noted as done")
 	}
 }

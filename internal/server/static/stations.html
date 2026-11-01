@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stations</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  body { margin: 0; font: 14px system-ui, sans-serif; color: #222; display: flex; flex-direction: column; height: 100vh; }
+  header { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid #ccc; background: #f4f6fa; }
+  header h2 { margin: 0; font-size: 18px; }
+  header a { color: #1d4ed8; text-decoration: none; }
+  header input[type=search] { padding: 5px 8px; min-width: 180px; }
+  #fetched { color: #555; font-size: 12px; }
+  #err { color: #b00; padding: 0 16px; font-size: 13px; }
+  #err:empty { display: none; }
+  #split { flex: 1; display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); min-height: 0; }
+  #tablewrap { overflow: auto; min-width: 0; }
+  #map { min-height: 300px; border-left: 1px solid #ccc; }
+  table { border-collapse: collapse; width: 100%; }
+  th { position: sticky; top: 0; background: #fff; text-align: left; font-size: 12px; color: #555; padding: 6px 8px; border-bottom: 2px solid #ccc; white-space: nowrap; cursor: pointer; user-select: none; }
+  th.num, td.num { text-align: right; }
+  th.on::after { content: " \25BE"; } th.on.up::after { content: " \25B4"; }
+  td { padding: 6px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
+  td small { display: block; color: #777; }
+  tr { cursor: pointer; }
+  tr:hover td { background: #f6f8fc; }
+  tr.sel td { background: #fffbe6; }
+  .chip { display: inline-block; padding: 0 7px; border-radius: 9px; font-size: 12px; color: #fff; white-space: nowrap; }
+  .chip.late { background: #c0392b; } .chip.sometimes { background: #d98a00; } .chip.prompt { background: #2b8a3e; } .chip.unknown { background: #8a8f98; }
+  .flag { color: #b45309; cursor: help; }
+  #empty { color: #777; padding: 20px 16px; }
+  #legend { font-size: 12px; color: #444; padding: 6px 16px; border-top: 1px solid #ddd; background: #fafbfc; }
+  #legend .chip { margin-right: 6px; }
+  @media (max-width: 900px) { #split { grid-template-columns: 1fr; grid-template-rows: 55% 45%; } #map { border-left: none; border-top: 1px solid #ccc; } }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">&larr; Map</a>
+  <h2>Stations</h2>
+  <input id="q" type="search" placeholder="Search name, country, airport, decoder" autocomplete="off">
+  <label>Link <select id="transport"><option value="">all</option></select></label>
+  <label>Delivery <select id="verdict"><option value="">all</option><option value="late">late</option><option value="sometimes">sometimes late</option><option value="prompt">prompt</option><option value="unknown">not enough timed messages</option></select></label>
+  <label><input id="withpos" type="checkbox"> on the map only</label>
+  <button type="button" id="refresh" title="Fetch airframes.io's list of stations for their positions and details. It is a few megabytes, so at most every six hours.">Fetch positions</button>
+  <span id="fetched"></span>
+  <span id="count" style="margin-left:auto;color:#555"></span>
+</header>
+<div id="err"></div>
+<div id="split">
+  <div id="tablewrap">
+    <table>
+      <thead><tr id="heads"></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div id="empty" hidden>No stations to show.</div>
+  </div>
+  <div id="map"></div>
+</div>
+<div id="legend"><span class="chip late">late</span>at least half its timed messages arrive over an hour late
+  <span class="chip sometimes" style="margin-left:12px">sometimes</span>some do
+  <span class="chip prompt" style="margin-left:12px">prompt</span>none do
+  <span class="chip unknown" style="margin-left:12px">?</span>fewer than 5 messages carry the aircraft's own time.
+  A position marked ~ is approximate (the station asked airframes.io to blur it).</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ---- the stations page: what we know of each receiving station, how late its messages are, and where it is ----
+const $ = s => document.querySelector(s);
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function ago(t) {
+  const s = Math.max(0, Math.round((Date.now() - Date.parse(t)) / 1000));
+  return s < 90 ? `${s}s ago` : s < 5400 ? `${Math.round(s / 60)}m ago` : s < 129600 ? `${Math.round(s / 3600)}h ago` : `${Math.round(s / 86400)}d ago`;
+}
+// a delay: 5s, 12m, 10.5h, 1.3d
+function lag(s) {
+  if (s == null) return '—';
+  return s < 90 ? `${s}s` : s < 5400 ? `${Math.round(s / 60)}m` : s < 172800 ? `${(s / 3600).toFixed(s < 36000 ? 1 : 0)}h` : `${(s / 86400).toFixed(1)}d`;
+}
+const TRANSPORT = {vdl: 'VHF (VDL2)', acars: 'VHF (ACARS)', 'acars-acarsdec': 'VHF (ACARS)', 'aero-acars': 'satellite (Inmarsat)', hfdl: 'HF', '': 'unknown'};
+const transportOf = s => (s.source_type && TRANSPORT[s.source_type] !== undefined ? s.source_type : Object.entries(s.transports || {}).sort((a, b) => b[1] - a[1])[0]?.[0]) || '';
+const transportName = s => TRANSPORT[transportOf(s)] ?? transportOf(s);
+const VERDICT = {late: 'late', sometimes: 'sometimes', prompt: 'prompt', unknown: '?'};
+const COLOR = {late: '#c0392b', sometimes: '#d98a00', prompt: '#2b8a3e', unknown: '#8a8f98'};
+const where = s => [s.country, s.nearest_airport && `near ${s.nearest_airport}`].filter(Boolean).join(' · ');
+
+let stations = [], sortKey = 'messages', sortDown = true, selected = null, fetchedAt = null, canFetch = false, nextAt = null;
+const COLUMNS = [
+  ['ident', 'Station', false, s => s.ident], ['where', 'Where', false, s => where(s) || '—'],
+  ['link', 'Link', false, s => transportName(s) + (s.application ? ` · ${s.application}` : '')],
+  ['messages', 'Heard', true, s => String(s.messages)], ['aircraft', 'Aircraft', true, s => String(s.aircraft)], ['last', 'Last heard', true, s => ago(s.last)],
+  ['timed', 'Timed', true, s => String(s.timed)], ['late_frac', 'Late', true, s => (s.timed ? `${Math.round(100 * s.late_frac)}%` : '—')],
+  ['median_s', 'Median lag', true, s => (s.timed ? lag(s.median_s) : '—')], ['shortest_s', 'Shortest lag', true, s => (s.timed ? lag(s.shortest_s) : '—')],
+  ['verdict', 'Delivery', false, null],
+];
+const sortValue = {ident: s => s.ident, where: s => where(s), link: s => transportName(s), last: s => Date.parse(s.last), verdict: s => ['late', 'sometimes', 'prompt', 'unknown'].indexOf(s.verdict),
+  late_frac: s => (s.timed ? s.late_frac : -1), median_s: s => (s.timed ? s.median_s : -1), shortest_s: s => (s.timed ? s.shortest_s : -1)};
+
+function shown() {
+  const q = $('#q').value.trim().toLowerCase(), tr = $('#transport').value, vd = $('#verdict').value, pos = $('#withpos').checked;
+  const list = stations.filter(s => (!tr || transportOf(s) === tr) && (!vd || s.verdict === vd) && (!pos || (s.lat != null && s.lon != null)) &&
+    (!q || [s.ident, s.country, s.nearest_airport, s.application].some(v => v && v.toLowerCase().includes(q))));
+  const get = sortValue[sortKey] || (s => s[sortKey]);
+  list.sort((a, b) => { const x = get(a), y = get(b); return (x < y ? -1 : x > y ? 1 : 0) * (sortDown ? -1 : 1) || a.ident.localeCompare(b.ident); });
+  return list;
+}
+
+function drawHeads() {
+  $('#heads').replaceChildren(...COLUMNS.map(([key, label, num]) => {
+    const th = document.createElement('th');
+    th.textContent = label; th.className = (num ? 'num ' : '') + (key === sortKey ? 'on' + (sortDown ? '' : ' up') : '');
+    th.onclick = () => { if (sortKey === key) sortDown = !sortDown; else { sortKey = key; sortDown = !['ident', 'where', 'link'].includes(key); } render(); };
+    return th;
+  }));
+}
+
+function verdictTip(s) {
+  if (s.verdict === 'unknown') return `${s.timed} of its ${s.messages} messages carry the aircraft's own time: too few to say how late it is`;
+  return `${s.late} of ${s.timed} messages with the aircraft's own time arrived over an hour late; median ${lag(s.median_s)}, 90% within ${lag(s.p90_s)}, shortest ${lag(s.shortest_s)}`;
+}
+
+function drawRows(list) {
+  $('#rows').replaceChildren(...list.map(s => {
+    const tr = document.createElement('tr');
+    tr.className = s.ident === selected ? 'sel' : '';
+    COLUMNS.forEach(([key, , num, text]) => {
+      const td = document.createElement('td');
+      td.className = num ? 'num' : '';
+      if (key === 'verdict') {
+        const chip = document.createElement('span');
+        chip.className = `chip ${s.verdict}`; chip.textContent = VERDICT[s.verdict]; chip.title = verdictTip(s);
+        td.append(chip);
+        if (s.flagged) { const f = document.createElement('span'); f.className = 'flag'; f.textContent = ' ⚑'; f.title = `airframes.io flags this station: ${s.flagged_reason || 'no reason given'}`; td.append(f); }
+      } else {
+        td.textContent = text(s);
+        if (key === 'ident' && s.lat == null) { const n = document.createElement('small'); n.textContent = s.known ? 'no position' : 'position not fetched'; td.append(n); }
+        if (key === 'where' && s.fuzzed) td.title = 'approximate: the station asked airframes.io to blur its position';
+      }
+      tr.append(td);
+    });
+    tr.onclick = () => select(s.ident, true);
+    return tr;
+  }));
+  $('#empty').hidden = list.length > 0;
+}
+
+// ---- the map ----
+let map = null, group = null, dots = new Map();
+function initMap() {
+  if (typeof L === 'undefined') return;
+  map = L.map('map', {worldCopyJump: true}).setView([30, 10], 2);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 12, attribution: '&copy; OpenStreetMap'}).addTo(map);
+  group = L.layerGroup().addTo(map);
+}
+const radiusOf = s => Math.min(14, 4 + Math.log10(Math.max(1, s.messages)) * 3);
+function drawMap(list, fit) {
+  if (!map) return;
+  group.clearLayers(); dots = new Map();
+  const pts = [];
+  for (const s of list) {
+    if (s.lat == null || s.lon == null) continue;
+    const m = L.circleMarker([s.lat, s.lon], {radius: radiusOf(s), color: s.ident === selected ? '#000' : '#fff', weight: s.ident === selected ? 3 : 1, fillColor: COLOR[s.verdict], fillOpacity: .85});
+    m.addTo(group).bindTooltip(`${s.ident}${s.fuzzed ? ' (position approximate)' : ''}\n${transportName(s)}\n${s.messages} messages heard\n${s.verdict === 'unknown' ? 'delivery: not enough timed messages' : `delivery: ${s.verdict}, median lag ${lag(s.median_s)}`}`).on('click', () => select(s.ident, false));
+    dots.set(s.ident, m);
+    pts.push([s.lat, s.lon]);
+  }
+  if (fit && pts.length) map.fitBounds(pts, {padding: [30, 30], maxZoom: 6});
+}
+
+function select(ident, pan) {
+  selected = ident;
+  const list = shown();
+  drawRows(list); drawMap(list, false);
+  const s = stations.find(x => x.ident === ident), m = dots.get(ident);
+  if (pan && map && m) { map.setView(m.getLatLng(), Math.max(map.getZoom ? map.getZoom() : 4, 5)); m.openTooltip(); }
+  const row = [...$('#rows').children].find(r => r.className === 'sel');
+  if (!pan && row && row.scrollIntoView) row.scrollIntoView({block: 'nearest'});
+  return s;
+}
+
+function render(fit) {
+  const list = shown();
+  drawHeads(); drawRows(list); drawMap(list, fit);
+  const onMap = list.filter(s => s.lat != null).length;
+  $('#count').textContent = `${list.length} of ${stations.length} stations${onMap < list.length ? ` · ${onMap} with a position` : ''}`;
+}
+
+function fillTransports() {
+  const sel = $('#transport'), have = [...new Set(stations.map(transportOf))].sort();
+  const keep = sel.value;
+  const opts = [['', 'all'], ...have.map(t => [t, TRANSPORT[t] ?? (t || 'unknown')])];
+  sel.replaceChildren(...opts.map(([v, t]) => { const o = document.createElement('option'); o.value = v; o.textContent = t; return o; }));
+  sel.value = have.includes(keep) ? keep : '';
+}
+
+function take(j) {
+  stations = j.stations; canFetch = j.can_fetch; fetchedAt = j.fetched || null; nextAt = j.next_at || null;
+  $('#refresh').hidden = !canFetch;
+  $('#fetched').textContent = fetchedAt ? `positions and details fetched ${ago(fetchedAt)}` : 'positions not fetched yet';
+  fillTransports();
+}
+
+async function load(fit) {
+  try { take(await api('/api/stations')); $('#err').textContent = ''; } catch (e) { $('#err').textContent = e.message; return; }
+  render(fit);
+}
+
+$('#q').oninput = () => render(true);
+$('#transport').onchange = () => render(true);
+$('#verdict').onchange = () => render(true);
+$('#withpos').onchange = () => render(true);
+$('#refresh').onclick = async () => {
+  $('#err').textContent = ''; $('#refresh').disabled = true;
+  try { take(await api('/api/stations/refresh', {method: 'POST'})); render(true); } catch (e) { $('#err').textContent = e.message; }
+  $('#refresh').disabled = false;
+};
+
+initMap();
+load(true);
+</script>
+</body>
+</html>

@@ -33,12 +33,13 @@ import (
 var static embed.FS
 
 type Server struct {
-	Store    *store.Store
-	Nav      *navdata.DB // optional waypoint database
-	Username string
-	Password string // empty disables auth (config only allows that on loopback)
-	Now      func() time.Time
-	Backfill *history.Manager // nil when backfill is off in the config
+	Store       *store.Store
+	Nav         *navdata.DB // optional waypoint database
+	Username    string
+	Password    string // empty disables auth (config only allows that on loopback)
+	Now         func() time.Time
+	Backfill    *history.Manager // nil when backfill is off in the config
+	StationList StationSource    // airframes.io's list of receiving stations; nil if there is none
 
 	flightMu    sync.Mutex
 	flightCache map[string]cachedFlight // hex -> the aircraft's last flight, for the airframes page
@@ -65,6 +66,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/plan/{hex}", s.plans)
 	mux.HandleFunc("GET /api/fixes", s.fixes)
 	mux.HandleFunc("GET /api/airports", s.airports)
+	mux.HandleFunc("GET /api/stations", s.listStations)
+	mux.HandleFunc("POST /api/stations/refresh", s.refreshStations)
 	mux.HandleFunc("GET /api/backfill", s.backfillStatus)
 	mux.HandleFunc("GET /api/backfill/plan", s.backfillPlan)
 	mux.HandleFunc("POST /api/backfill", s.backfillStart)
