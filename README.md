@@ -2,7 +2,8 @@
 
 Self-hosted tracker that follows specific aircraft by combining live ADS-B
 positions (adsb.lol, adsb.fi) with ACARS/ADS-C/CPDLC datalink messages
-(airframes.io), decoded with libacars. See `HANDOFF.md` for the design and
+(airframes.io), decoded with [golibacars](https://github.com/avanha/golibacars), a Go port of
+[libacars](https://github.com/szpajder/libacars). See `HANDOFF.md` for the design and
 `docs/airframes-api.md` for API findings.
 
 [![FullFlight tracking an A359 over the Andaman Sea](docs/screenshot.png)](https://avanha.github.io/FullFlight/)
@@ -11,41 +12,23 @@ positions (adsb.lol, adsb.fi) with ACARS/ADS-C/CPDLC datalink messages
 
 ## Build and run
 
-FullFlight is a Go program that calls [libacars](https://github.com/szpajder/libacars) (C, built with cmake) to decode
-datalink messages, so building needs Go, a C compiler and the libacars libraries.
+FullFlight is a pure Go program: the database is SQLite through `modernc.org/sqlite`, and datalink messages are
+decoded by [golibacars](https://github.com/avanha/golibacars), a Go port of [libacars](https://github.com/szpajder/libacars).
+Building needs only Go, with no C compiler, cmake or system libraries, and it cross-compiles
+(`GOOS=linux GOARCH=arm64 go build ./cmd/...`).
 
-**macOS**
-
-    brew install cmake pkgconf jansson   # libxml2/zlib come with the SDK
-
-**Debian, Ubuntu and other Debian-based Linux**
-
-    sudo apt install build-essential git cmake pkg-config libjansson-dev libxml2-dev zlib1g-dev
-
-- `build-essential` is the C compiler and `make` (Go needs the compiler for libacars, cgo); `git` is what
-  `make libacars` uses to fetch the libacars source; `pkg-config` is how Go finds the library afterwards.
-- **Install all three libraries** (`libjansson-dev`, `libxml2-dev`, `zlib1g-dev`). libacars builds without any of them
-  and quietly leaves the feature out: no zlib and compressed MIAM messages (the A350 reports) do not decode, no libxml2
-  and the XML ones do not, no jansson and its JSON ones do not. Nothing fails if one is missing, so check: after `make libacars`,
-  `grep WITH_ third_party/libacars/build/libacars/config.h` should print `#define WITH_ZLIB`, `WITH_LIBXML2` and
-  `WITH_JANSSON` (the `- zlib:`, `- libxml2:` and `- jansson:` lines of cmake's summary say the same, `enabled: TRUE`).
-  If one is missing, install its package and run `make libacars` again.
 - **Go** 1.27.3 or newer (see `go.mod`) from <https://go.dev/dl/>; the version in Debian's own `golang` package is
   usually older. Put it on your `PATH` and check with `go version`.
+- `make` and `git`, which the Makefile uses (`sudo apt install make git` on Debian and Ubuntu; macOS has them with
+  the Xcode command line tools).
 - Optional: `nodejs` for `make uitest`, and `sqlite3` to look inside the database.
 
-**Then, on either**
+Then:
 
-    make libacars                        # clones and builds libacars into third_party/
     make test
     make build                           # -> bin/fullflight
     cp config.example.yaml config.yaml   # edit; then:
     bin/fullflight -config config.yaml
-
-Use the `make` targets: they point Go at the libacars that `make libacars` installed under `third_party/install`.
-To run `go test` or `go build` yourself, first `export PKG_CONFIG_PATH=$PWD/third_party/install/lib/pkgconfig`; without it
-they stop with "Package libacars-2 was not found". The binary finds the library by itself (the path is built in), so it can
-be run from anywhere, but not if `third_party/` is moved or deleted.
 
 ## Watchlist
 
@@ -135,7 +118,7 @@ pairing to be known (it is kept in the `airframe` table); an unknown tail is its
 For every aircraft on an open watch (once its hex is known) the app pulls
 messages from airframes.io: 7 days of history on first sight, then every 3
 minutes with a 30 minute overlap to catch late uploads. Each is decoded by us
-from the raw text (libacars plus hand parsers), never from airframes.io's own
+from the raw text (golibacars plus hand parsers), never from airframes.io's own
 fields. Those are kept as `af_*` hints, and a disagreement (tail, flight number,
 or a tail that belongs to a different hex) shows as a warning badge. A message
 heard by several stations is stored once (`rx_count`). ADS-C, CPDLC, REP081 and FMS (`POS…`)

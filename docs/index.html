@@ -54,7 +54,7 @@
 
   <h2>What it does</h2>
   <div class="grid">
-    <div class="card"><h3>One track from every source</h3><p>ADS-B from adsb.lol and adsb.fi, plus position reports decoded from ADS-C, CPDLC, FMS, POS and other datalink messages (via airframes.io and libacars). Each source keeps its colour where the line changes hands, or switch to a line per source.</p></div>
+    <div class="card"><h3>One track from every source</h3><p>ADS-B from adsb.lol and adsb.fi, plus position reports decoded from ADS-C, CPDLC, FMS, POS and other datalink messages (via airframes.io, decoded with golibacars, a Go port of libacars). Each source keeps its colour where the line changes hands, or switch to a line per source.</p></div>
     <div class="card"><h3>Honest about gaps</h3><p>A long silence is bridged by a dotted estimate that follows the filed route, never by a solid line. Reports with impossible speeds or unverified times are flagged and left out of the line.</p></div>
     <div class="card"><h3>Where is it now?</h3><p>A projection dead-reckons the aircraft from its latest trustworthy fix and shows where it should be, and where its own report says it is heading, with the waypoints it names.</p></div>
     <div class="card"><h3>Weather</h3><p>RainViewer radar and NASA GIBS infrared satellite imagery over the map, and a wind barb on every report that gives wind direction and speed.</p></div>
@@ -64,9 +64,7 @@
 
   <h2>Run it yourself</h2>
   <p>FullFlight is a single Go program with a SQLite database and a web page. It runs on your own machine and watches the aircraft you ask it to.</p>
-<pre>brew install cmake pkgconf jansson   # macOS
-make libacars                        # builds libacars into third_party/
-make build                           # -> bin/fullflight
+<pre>make build                           # -> bin/fullflight
 cp config.example.yaml config.yaml   # edit; then:
 bin/fullflight -config config.yaml</pre>
   <p>Then type a registration, hex code, or flight number and date into the page. The <a href="https://github.com/avanha/FullFlight#readme">README</a> describes the watch list, the data sources and each map layer in detail.</p>

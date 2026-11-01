@@ -1,8 +1,4 @@
-export PKG_CONFIG_PATH := $(CURDIR)/third_party/install/lib/pkgconfig
-
-.PHONY: libacars test build
-libacars:
-	scripts/build-libacars.sh
+.PHONY: test build
 test:
 	go vet ./... && go test ./...
 build:

@@ -49,6 +49,10 @@ into a decoder and comparing against FlightAware. This app automates that.
 
 ### libacars integration
 
+> **Update:** the decoder now uses **golibacars** (https://github.com/avanha/golibacars), a pure-Go port of libacars
+> (CPDLC's ASN.1 PER included) that is checked against libacars byte for byte. Options 1 to 3 below, and the
+> statement that CPDLC is not worth porting, describe the original plan and no longer apply; there is no cgo.
+
 libacars (https://github.com/szpajder/libacars) is C. Options, in order of
 preference (pick after a quick spike):
 

@@ -9,7 +9,7 @@ the user-facing reference and must be kept in step with the code.
 ## Layout
 
 - `cmd/fullflight/` is the entry point (flags include `-config` and `-redecode`).
-- `internal/decoder/` turns raw message text into kinds, positions and times (cgo to libacars, plus hand parsers).
+- `internal/decoder/` turns raw message text into kinds, positions and times (libacars decoding through golibacars, plus hand parsers).
   `timeres.go` places partial timestamps (seconds past the hour, time of day) in real time.
 - `internal/datalink/` fetches and stores messages, `internal/airframes/` is the airframes.io client,
   `internal/adsb/` and `internal/poller/` are the ADS-B sources and polling, `internal/aerodatabox/` is the optional lookup.
@@ -23,16 +23,19 @@ the user-facing reference and must be kept in step with the code.
 
 ## Build and test
 
-    export PKG_CONFIG_PATH=$PWD/third_party/install/lib/pkgconfig   # libacars; built by `make libacars`
     go vet ./... && go test ./...      # = make test
     make uitest                        # needs node; not part of make test
 
-Without that `PKG_CONFIG_PATH`, `go vet` and `go test` fail on libacars. Run the Go tests after any change, and `make uitest`
+Only Go is needed (no C compiler or libraries; `CGO_ENABLED=0` builds). Run the Go tests after any change, and `make uitest`
 after any change to `index.html` or its helpers. If node is not installed, say so rather than claiming the page is tested; a
 syntax check with another engine is not a test. Add or update a test with each behaviour change, using the existing style
 (`internal/flights/flights_test.go` has small rigs; `scripts/uitest.js` has numbered sections).
 
 ## Rules that matter for this project
+
+- **libacars decoding lives in golibacars**, a separate module (<https://github.com/avanha/golibacars>), pinned in `go.mod`.
+  If libacars output is wrong or missing, fix it there (its `AGENTS.md` says how, and how to follow a new libacars release),
+  tag a release, and `go get` it here. Do not work around it in this repo unless the cause is in our own parsing.
 
 - **The live database is the user's.** `data/fullflight.db` and `config.yaml` are git-ignored and real. Never write to the
   database, run `-redecode`, or start the server against it unasked. To investigate, copy it
