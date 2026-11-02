@@ -7,8 +7,8 @@ from the feeds, and there is a lot of data in datalink messages! It makes me wis
 
 Thanks to thebaldgeek of TBG-LBAND-APAC and all you other feeders.
 
-Note: This app is 99% built with Claude (Opus 5.5 @ Medium). That includes this README file. It gets the point across, but it reads
-like it's AI slop.  My plan is to edit and rewrite it, to improve its readability, especially if this project gets any attention.
+Note: This app is 99% built with Claude (Sonnet 5.5 @ Medium), and that includes this README file. It gets the point across, but it reads
+like it's AI.  My plan is to edit and rewrite it, to improve its readability, especially if this project gets any attention.
 
 [![FullFlight tracking an A359 over the Andaman Sea](docs/screenshot.png)](https://avanha.github.io/FullFlight/)
 
