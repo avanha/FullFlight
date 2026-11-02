@@ -61,6 +61,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/airframes/{hex}/notes/{id}", s.deleteNote)
 	mux.HandleFunc("GET /api/messages/{hex}", s.messages)
 	mux.HandleFunc("GET /api/flights/{hex}", s.flights)
+	mux.HandleFunc("GET /api/flights/{hex}/explain", s.explainFlights)
 	mux.HandleFunc("PUT /api/flights/{hex}/route", s.setFlightRoute)
 	mux.HandleFunc("PUT /api/flights/{hex}/join", s.setFlightJoin)
 	mux.HandleFunc("GET /api/plan/{hex}", s.plans)
@@ -1005,6 +1006,24 @@ func (s *Server) flights(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toFlightJSON(sg))
 	}
 	writeJSON(w, 200, out)
+}
+
+// explainFlights is flights with the reasoning: each flight lists what the flight logic did to make it (sightings set aside, pieces
+// joined or kept apart, stops it was cut at, where its route and origin came from), and the notes that touch no flight come with
+// them. For finding out why a flight looks the way it does. Query: hours (default 96, max 720).
+func (s *Server) explainFlights(w http.ResponseWriter, r *http.Request) {
+	hex := strings.ToUpper(r.PathValue("hex"))
+	hours := 96
+	if h, err := strconv.Atoi(r.URL.Query().Get("hours")); err == nil && h > 0 && h <= 24*30 {
+		hours = h
+	}
+	now := s.now()
+	ex, err := flights.Explain(s.Store, hex, now.Add(-time.Duration(hours)*time.Hour), now.Add(time.Minute))
+	if err != nil {
+		fail(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, ex)
 }
 
 // routeAirport reads an airport typed for a flight's route: empty, or an IATA or ICAO code. A known airport is

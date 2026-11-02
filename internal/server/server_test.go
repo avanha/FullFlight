@@ -1004,6 +1004,39 @@ func TestAParkedAircraftTakesItsNextFlight(t *testing.T) {
 	}
 }
 
+// The explain endpoint gives the same flights as the flights endpoint, with the reasoning for each.
+func TestExplainFlights(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 6; i++ {
+		st.AddPosition(store.Position{Hex: "A2551D", T: now.Add(-3*time.Hour + time.Duration(i)*10*time.Minute), Lat: 40 + float64(i)/10, Lon: -100, Callsign: "UAL100", Source: "x"})
+	}
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	_, plain := do(t, "GET", ts.URL+"/api/flights/A2551D", "")
+	_, body := do(t, "GET", ts.URL+"/api/flights/A2551D/explain", "")
+	var flightsOnly []struct{ Id, Flight string }
+	var ex struct {
+		Flights []struct {
+			Id, Flight string
+			Why        []struct{ Stage, Rule, Detail string }
+		}
+	}
+	if err := json.Unmarshal([]byte(plain), &flightsOnly); err != nil || len(flightsOnly) != 1 {
+		t.Fatalf("%v: %s", err, plain)
+	}
+	if err := json.Unmarshal([]byte(body), &ex); err != nil || len(ex.Flights) != 1 || ex.Flights[0].Id != flightsOnly[0].Id {
+		t.Fatalf("%v: %s", err, body)
+	}
+	if w := ex.Flights[0].Why; len(w) == 0 || w[0].Rule != "run" || !strings.Contains(w[0].Detail, "6 position(s) attached") {
+		t.Errorf("why: %+v", w)
+	}
+	if strings.Contains(plain, `"why"`) {
+		t.Error("the usual list carries no reasoning")
+	}
+}
+
 func TestAirportsAPI(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()

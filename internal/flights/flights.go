@@ -105,6 +105,8 @@ type Segment struct {
 	Joined []int64 `json:"joined,omitempty"` // when the pieces joined to this flight by hand started (unix seconds)
 
 	stopAfter bool // the aircraft stopped on the ground after this flight, and the next piece is another leg: never joined
+
+	Why []Note `json:"why,omitempty"` // how it came about: only when asked for (Explain)
 }
 
 type ident struct {
@@ -202,7 +204,7 @@ const Lookback = 7 * 24 * time.Hour
 // Segments returns the aircraft's flights in [since, until], oldest first: those that end in the window or were still going
 // at its start.
 func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segment, error) {
-	segs, err := segments(st, hexAddr, since.Add(-Lookback), until)
+	segs, err := segments(st, hexAddr, since.Add(-Lookback), until, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +217,7 @@ func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 	return out, nil
 }
 
-func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segment, error) {
+func segments(st *store.Store, hexAddr string, since, until time.Time, tr *trace) ([]Segment, error) {
 	ev, err := st.FlightEvidence(hexAddr, since, until)
 	if err != nil {
 		return nil, err
@@ -224,8 +226,8 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 	if err != nil {
 		return nil, err
 	}
-	ev = setAsideWeak(ev)
-	ev = setAsideStale(ev)
+	ev = setAsideWeak(ev, tr)
+	ev = setAsideStale(ev, tr)
 
 	// 1. runs of one flight number
 	var runs []*run
@@ -252,6 +254,7 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 			if r.n <= StrayEvidence && r.last.Sub(r.first) <= StrayWithin && same(runs[i-1].id, runs[i+1].id) &&
 				runs[i+1].first.Sub(runs[i-1].last) <= MaxGap {
 				a, b := runs[i-1], runs[i+1]
+				tr.note("runs", "stray", r.first, r.last, "%d sighting(s) of %s between two runs of %s are a stray, not a flight", r.n, r.id.display, a.id.display)
 				a.last, a.n = b.last, a.n+b.n
 				for f, c := range b.forms {
 					a.forms[f] += c
@@ -268,7 +271,7 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 	if err != nil {
 		return nil, err
 	}
-	runs = bridgeSilences(runs, fixes)
+	runs = bridgeSilences(runs, fixes, tr)
 
 	// 3. positions go to the run they are in or nearest to (within AttachSlack)
 	var orphans []time.Time
@@ -297,8 +300,10 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 	var segs []Segment
 	for _, r := range runs {
 		if r.positions == 0 {
+			tr.note("runs", "dropped", r.first, r.last, "%d sighting(s) of %s and no position: ground chatter or a stray number, not a flight we can show", r.n, r.id.display)
 			continue
 		}
+		tr.note("runs", "run", r.first, r.last, "%d sighting(s) of %s (written %s) and %d position(s) attached", r.n, r.id.display, formsText(r.forms), r.positions)
 		s := Segment{Start: r.first, End: r.last, Positions: r.positions, Identified: true}
 		s.Flight = r.id.iata
 		s.Callsign = r.id.icao
@@ -315,6 +320,7 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 			j++
 		}
 		if j-i >= MinUnidentified {
+			tr.note("positions", "unidentified", orphans[i], orphans[j-1], "%d position(s) no run claims, within %v of one another: a flight whose number we never saw", j-i, ClusterGap)
 			segs = append(segs, Segment{Start: orphans[i], End: orphans[j-1], Positions: j - i})
 		}
 		i = j
@@ -329,8 +335,9 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 	unseen := unseenStops(fixes)
 	for _, u := range unseen {
 		stops = append(stops, u.GroundStop)
+		tr.note("stops", "unseen-stop", u.Land, u.Depart, "a stop at %s that no fix showed: the fix at %s is low, climbing and next to it, long after one far away", u.Airport, u.Depart.Format("15:04:05"))
 	}
-	segs = splitAtStopovers(segs, stops, ev, posTimes)
+	segs = splitAtStopovers(segs, stops, ev, posTimes, tr)
 
 	// 6. the route the aircraft reported; pieces of one flight that share it are joined
 	routes, err := st.RouteReports(hexAddr, since.Add(-RouteSlack), until.Add(RouteSlack))
@@ -357,6 +364,13 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 			}
 		}
 		s.From, s.To = modalRoute(mine, time.Time{}, time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC))
+		agree := 0
+		for _, r := range mine {
+			if tr != nil && r.From == s.From && r.To == s.To {
+				agree++
+			}
+		}
+		tr.note("route", "route", s.Start, s.End, "%d route report(s) belong to it; %s > %s is the most reported, by %d", len(mine), s.From, s.To, agree)
 	}
 	for i := range segs {
 		setRoute(&segs[i])
@@ -365,6 +379,7 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 		merged = false
 		for i := 0; i+1 < len(segs); i++ {
 			if a, b := segs[i], segs[i+1]; joinable(a, b) {
+				tr.note("route", "join", a.Start, b.End, "%s: two pieces joined, %s", firstNonEmpty(a.Flight, b.Flight, "unnumbered"), joinReason(a, b))
 				segs[i] = join(a, b)
 				setRoute(&segs[i])
 				segs = append(segs[:i+1], segs[i+2:]...)
@@ -373,11 +388,19 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 			}
 		}
 	}
+	if tr != nil {
+		for i := 0; i+1 < len(segs); i++ {
+			if a, b := segs[i], segs[i+1]; a.Identified && b.Identified && sameFlightNumber(a, b) {
+				tr.note("route", "not-joined", a.End, b.Start, "%s: two pieces of one number kept apart, %s", a.Flight, notJoinedReason(a, b))
+			}
+		}
+	}
 	// A flight that ADS-B saw climb out of an airport after a stop it never saw, and whose messages gave no origin, left from there.
 	for _, u := range unseen {
 		for i := range segs {
 			if sg := &segs[i]; sg.From == "" && sg.Start.After(u.Land) && !sg.Start.After(u.Depart) && !sg.End.Before(u.Depart) {
 				sg.From, sg.FromSeen = u.Airport, true
+				tr.note("route", "seen-origin", sg.Start, sg.End, "origin %s taken from the climb-out ADS-B saw after a stop it never saw", u.Airport)
 			}
 		}
 	}
@@ -386,6 +409,7 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 		if sg := &segs[i]; sg.From == "" {
 			if a, ok := leftFrom(fixes, sg.Start, sg.End); ok {
 				sg.From, sg.FromSeen = a, true
+				tr.note("route", "seen-origin", sg.Start, sg.End, "origin %s taken from ADS-B seeing it on the ground there and then in the air", a)
 			}
 		}
 	}
@@ -395,7 +419,11 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 		return nil, err
 	}
 	for i := range segs {
+		from, to := segs[i].From, segs[i].To
 		applyManualRoute(&segs[i], manual)
+		if segs[i].From != from || segs[i].To != to {
+			tr.note("manual", "manual-route", segs[i].Start, segs[i].End, "route entered by hand fills in %s > %s (messages gave %q > %q)", segs[i].From, segs[i].To, from, to)
+		}
 	}
 	// 8. when each flight left, from the best evidence there is
 	deps, err := st.Departures(hexAddr, since.Add(-DepartureSlack), until)
@@ -404,13 +432,16 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 	}
 	for i := range segs {
 		segs[i].Departed, segs[i].DepartedHow = departureOf(segs[i], deps)
+		if segs[i].DepartedHow != "" {
+			tr.note("departure", "departure", segs[i].Start, segs[i].End, "left at %s by %s, the best evidence in its span", segs[i].Departed.Format("15:04:05"), segs[i].DepartedHow)
+		}
 	}
 	// 9. flights joined by hand
 	joins, err := st.FlightJoins(hexAddr, since.Add(-MaxFlight), until)
 	if err != nil {
 		return nil, err
 	}
-	segs = applyJoins(segs, joins)
+	segs = applyJoins(segs, joins, tr)
 	for i := range segs {
 		segs[i].Messages = st.CountMessages(hexAddr, segs[i].Start, segs[i].End)
 		segs[i].ID = segID(segs[i])
@@ -425,7 +456,7 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 // its landing and its next departure. The cut is the middle of the stop: what was sighted before it ends the first
 // leg and what was sighted after it starts the second, so the paperwork for the next leg (its clearance, its schedule)
 // belongs to that leg and the arrival's chatter to the one before.
-func splitAtStopovers(segs []Segment, stops []store.GroundStop, ev []store.Evidence, posTimes []time.Time) []Segment {
+func splitAtStopovers(segs []Segment, stops []store.GroundStop, ev []store.Evidence, posTimes []time.Time, tr *trace) []Segment {
 	for _, stop := range stops {
 		if stop.Depart.Sub(stop.Land) < StopoverMin {
 			continue
@@ -464,6 +495,7 @@ func splitAtStopovers(segs []Segment, stops []store.GroundStop, ev []store.Evide
 				}
 				return
 			}
+			tr.note("stops", "split", stop.Land, stop.Depart, "%s cut in two at a stop of %v on the ground: the first leg ends at %s, the second starts at %s", sg.Flight, stop.Depart.Sub(stop.Land).Round(time.Minute), lastBefore.Format("15:04:05"), firstAfter.Format("15:04:05"))
 			a, b := sg, sg
 			a.End, a.stopAfter = lastBefore, true
 			b.Start = firstAfter
@@ -573,6 +605,57 @@ func joinable(a, b Segment) bool {
 	return false
 }
 
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// formsText lists the ways a flight number was written, most used first: "CX113 x120, CPA113 x30".
+func formsText(forms map[string]int) string {
+	names := make([]string, 0, len(forms))
+	for f := range forms {
+		names = append(names, f)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if forms[names[i]] != forms[names[j]] {
+			return forms[names[i]] > forms[names[j]]
+		}
+		return names[i] < names[j]
+	})
+	for i, f := range names {
+		names[i] = fmt.Sprintf("%s x%d", f, forms[f])
+	}
+	return strings.Join(names, ", ")
+}
+
+// joinReason says why joinable took b to be a piece of a.
+func joinReason(a, b Segment) string {
+	if a.From != "" && a.To != "" && a.From == b.From && a.To == b.To {
+		return fmt.Sprintf("both report %s > %s, %v apart", a.From, a.To, b.Start.Sub(a.End).Round(time.Minute))
+	}
+	return fmt.Sprintf("an unnumbered piece %v from a numbered flight with no route of its own", b.Start.Sub(a.End).Round(time.Minute))
+}
+
+// notJoinedReason says why joinable kept b apart from a, two pieces of one flight number.
+func notJoinedReason(a, b Segment) string {
+	switch {
+	case a.stopAfter:
+		return "the aircraft stopped on the ground between them: two legs"
+	case b.End.Sub(a.Start) > MaxFlight:
+		return fmt.Sprintf("together they would run %v, over %v", b.End.Sub(a.Start).Round(time.Minute), MaxFlight)
+	case a.From == "" || a.To == "" || b.From == "" || b.To == "":
+		return fmt.Sprintf("no route reported for both (%q > %q and %q > %q), %v apart", a.From, a.To, b.From, b.To, b.Start.Sub(a.End).Round(time.Minute))
+	case a.From != b.From || a.To != b.To:
+		return fmt.Sprintf("they report different routes (%s > %s and %s > %s)", a.From, a.To, b.From, b.To)
+	default:
+		return fmt.Sprintf("%v apart, over the %v allowed between pieces of one route", b.Start.Sub(a.End).Round(time.Minute), MaxRouteGap)
+	}
+}
+
 func sameFlightNumber(a, b Segment) bool {
 	x, ok1 := parse(a.Flight)
 	y, ok2 := parse(b.Flight)
@@ -610,7 +693,7 @@ func maxTime(a, b time.Time) time.Time {
 // last flew, when within StaleWithin it changes to another and carries on under that. The positions it sent in those seconds
 // belong to the new flight, which the nearest-run rule gives them to; left in, they would stretch the old flight over the whole
 // time on the ground and into the next flight's climb.
-func setAsideStale(ev []store.Evidence) []store.Evidence {
+func setAsideStale(ev []store.Evidence, tr *trace) []store.Evidence {
 	var drop map[int]bool
 	for i := 1; i < len(ev); i++ {
 		if ev[i].T.Sub(ev[i-1].T) <= StaleGap {
@@ -649,6 +732,8 @@ func setAsideStale(ev []store.Evidence) []store.Evidence {
 		for j := i; j < k; j++ {
 			drop[j] = true
 		}
+		tr.note("evidence", "stale", ev[i].T, ev[k-1].T, "%d sighting(s) of %s after %v of silence, then %s within %v and %d more of it: the old number sent again at power-up, not the end of the old flight",
+			k-i, ev[i].ID, ev[i].T.Sub(ev[i-1].T).Round(time.Minute), ev[k].ID, StaleWithin, followers)
 	}
 	if drop == nil {
 		return ev
@@ -667,7 +752,7 @@ func setAsideStale(ev []store.Evidence) []store.Evidence {
 // airline sending that flight's data, while the aircraft is still flying this one, does not start the next flight; it starts
 // when the aircraft itself says so. A weak sighting at either end of a flight, after the last thing the aircraft said or before
 // the first, is left: that is the flight just finished or the one about to start.
-func setAsideWeak(ev []store.Evidence) []store.Evidence {
+func setAsideWeak(ev []store.Evidence, tr *trace) []store.Evidence {
 	var strong []store.Evidence
 	for _, e := range ev {
 		if !e.Weak {
@@ -680,6 +765,7 @@ func setAsideWeak(ev []store.Evidence) []store.Evidence {
 	out := make([]store.Evidence, 0, len(ev))
 	for _, e := range ev {
 		if e.Weak && insideAnother(e, strong) {
+			tr.note("evidence", "weak", e.T, e.T, "airline message naming %s set aside: the aircraft itself named another flight within %v before and again after", e.ID, WeakWithin)
 			continue
 		}
 		out = append(out, e)
@@ -714,7 +800,7 @@ func insideAnother(w store.Evidence, strong []store.Evidence) bool {
 // side of the silence show the aircraft airborne and the speed it would have flown across it is the speed it was flying:
 // the average over the silence is within BridgeSpeedTolerance of the speed measured between the last fixes before it, or the
 // first after it. (A stop on the ground in the middle averages far slower than the aircraft flew.)
-func bridgeSilences(runs []*run, fixes []store.AirFix) []*run {
+func bridgeSilences(runs []*run, fixes []store.AirFix, tr *trace) []*run {
 	airborne := func(f store.AirFix) bool { return !f.OnGround && f.AltFt != nil && *f.AltFt >= BridgeMinAltFt }
 	// the speed between fix k and the nearest fix at least two minutes before it (delta -1) or after it (delta 1), if there
 	// is one within half an hour: the speed the aircraft was flying there
@@ -769,7 +855,8 @@ func bridgeSilences(runs []*run, fixes []store.AirFix) []*run {
 			}
 			kt := geo.DistNM(f1.Lat, f1.Lon, f2.Lat, f2.Lon) / f2.T.Sub(f1.T).Hours()
 			ok := false
-			for _, ref := range []float64{speedAt(p, -1), speedAt(p+1, 1)} {
+			refs := []float64{speedAt(p, -1), speedAt(p+1, 1)}
+			for _, ref := range refs {
 				if ref > 0 && kt >= ref*(1-BridgeSpeedTolerance) && kt <= ref*(1+BridgeSpeedTolerance) {
 					ok = true
 				}
@@ -777,6 +864,7 @@ func bridgeSilences(runs []*run, fixes []store.AirFix) []*run {
 			if !ok || kt < BridgeMinKt || kt > BridgeMaxKt {
 				continue
 			}
+			tr.note("runs", "bridge", a.last, b.first, "%s joined across %v of silence: airborne at both ends, %.0f kt between the fixes, against %.0f kt before and %.0f kt after", a.id.display, gap.Round(time.Minute), kt, refs[0], refs[1])
 			a.last, a.n = b.last, a.n+b.n
 			for f, c := range b.forms {
 				a.forms[f] += c
@@ -791,7 +879,7 @@ func bridgeSilences(runs []*run, fixes []store.AirFix) []*run {
 
 // applyJoins merges each flight that was joined by hand with the flight before it. A join is remembered by when the later
 // piece started; it applies to the flight that covers that moment.
-func applyJoins(segs []Segment, joins []time.Time) []Segment {
+func applyJoins(segs []Segment, joins []time.Time, tr *trace) []Segment {
 	for k := len(joins) - 1; k >= 0; k-- { // latest first, so earlier positions stay where they were
 		at := joins[k]
 		for i := 1; i < len(segs); i++ {
@@ -799,6 +887,7 @@ func applyJoins(segs []Segment, joins []time.Time) []Segment {
 				continue
 			}
 			a, b := segs[i-1], segs[i]
+			tr.note("manual", "manual-join", a.Start, b.End, "joined by hand: the piece starting %s is part of the flight before it", b.Start.Format("15:04:05"))
 			m := a
 			m.End = b.End
 			m.Positions += b.Positions

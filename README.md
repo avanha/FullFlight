@@ -425,6 +425,15 @@ the next flight's data) can name the next flight while the aircraft is still fly
 aircraft itself named another flight within two hours before it and again within two hours after; it counts as before at either end
 of a flight (the flight just finished, the one about to start).
 
+**Why a flight looks the way it does.** `GET /api/flights/{hex}/explain` (query `hours`, default 96) gives the same flights as
+`/api/flights/{hex}` with the reasoning for each, in a `why` list in the order the work was done: each run of flight-number
+sightings and how many positions it took, the sightings set aside (the old number sent again at power-up, an airline message about
+the next flight), strays folded in, pieces joined across a long silence and the speeds that justified it, the stops a flight was cut
+at (seen on ADS-B, or implied by a climb-out), the route reports it took and what most of them said, why two pieces of one number
+were or were not joined, where an origin that no message gave was taken from, hand-entered routes and joins, and the departure. A
+note that belongs to no flight (a number heard once with no position near it) is listed apart under `unplaced`. The usual list
+carries none of it and is not slowed by it.
+
 **The time a message counts as.** Every message has two times: when it arrived, and the time it counts as for the flight it
 belongs to. The second is the time the aircraft put in it where that is a full date and time (or a day of the month and a time of
 day, placed in the month it arrived or the one before), the position time of the report kinds that give the date, or, for a flight
