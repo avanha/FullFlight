@@ -334,30 +334,6 @@ func (s *Store) LastRouteAt(hexAddr string, at time.Time) (Route, bool) {
 	return r, true
 }
 
-// FlightID is a flight an aircraft's messages name, as we decoded it from the raw text.
-type FlightID struct {
-	Flight   string // IATA-style flight number from the message prefix, e.g. CX113
-	Callsign string // ICAO callsign from an AFN logon, e.g. CPA113
-	T        time.Time
-}
-
-// LastFlight returns the newest message that names the flight the aircraft is operating.
-// Messages whose text names a different aircraft than the one asked for are skipped:
-// their flight belongs to that other aircraft.
-func (s *Store) LastFlight(hexAddr string) (FlightID, bool) {
-	var f FlightID
-	var t int64
-	err := s.db.QueryRow(`SELECT ts, flight, callsign FROM message
-		WHERE hex=? AND (flight != '' OR callsign != '') AND mismatch NOT LIKE '%which is hex%' AND time_flag=0
-		  AND at_ts BETWEEN ts - 43200 AND ts + 60 -- not a flight that has yet to leave, nor one that left long ago
-		ORDER BY ts DESC, id DESC LIMIT 1`, hexAddr).Scan(&t, &f.Flight, &f.Callsign)
-	if err != nil {
-		return FlightID{}, false
-	}
-	f.T = time.Unix(t, 0).UTC()
-	return f, true
-}
-
 // LearnedFix is a waypoint position matched from the aircraft's own data, with how many messages
 // agreed on it.
 type LearnedFix struct {
@@ -502,6 +478,8 @@ type Evidence struct {
 	// (the weather the crew asks for the next flight, its flight data), so one can name the next flight while the
 	// aircraft is still flying this one. The aircraft's own messages and its ADS-B callsign are not weak.
 	Weak bool
+	// Src says what carried the sighting: "ADS-B" (a callsign on a position) or "messages".
+	Src string
 }
 
 // FlightEvidence returns every sighting of the flight identity in [since, until], oldest first.
@@ -509,12 +487,12 @@ type Evidence struct {
 func (s *Store) FlightEvidence(hexAddr string, since, until time.Time) ([]Evidence, error) {
 	// (a message about a flight that has not left yet counts from its scheduled departure: see EventTime)
 	rows, err := s.db.Query(`
-		SELECT t, id, weak FROM (
-			SELECT at_ts AS t, CASE WHEN flight != '' THEN flight ELSE callsign END AS id, kind = 'ops_report' AS weak FROM message
+		SELECT t, id, weak, src FROM (
+			SELECT at_ts AS t, CASE WHEN flight != '' THEN flight ELSE callsign END AS id, kind = 'ops_report' AS weak, 'messages' AS src FROM message
 			  WHERE hex=?1 AND `+opsWindow+` AND (flight != '' OR callsign != '') AND mismatch NOT LIKE '%which is hex%' AND time_flag=0)
 		  WHERE t BETWEEN ?2 AND ?3
 		UNION ALL
-		SELECT ts, callsign, 0 FROM position WHERE hex=?1 AND ts BETWEEN ?2 AND ?3 AND callsign != ''
+		SELECT ts, callsign, 0, 'ADS-B' FROM position WHERE hex=?1 AND ts BETWEEN ?2 AND ?3 AND callsign != ''
 		ORDER BY 1`, hexAddr, ts(since), ts(until))
 	if err != nil {
 		return nil, err
@@ -524,7 +502,7 @@ func (s *Store) FlightEvidence(hexAddr string, since, until time.Time) ([]Eviden
 	for rows.Next() {
 		var e Evidence
 		var t int64
-		if err := rows.Scan(&t, &e.ID, &e.Weak); err != nil {
+		if err := rows.Scan(&t, &e.ID, &e.Weak, &e.Src); err != nil {
 			return nil, err
 		}
 		e.T = time.Unix(t, 0).UTC()
@@ -632,11 +610,12 @@ var routeReportsSQL = `
 type RouteReport struct {
 	T, Rx    time.Time
 	From, To string
+	Src      string // what kind of report: REP081, A350 report, airline report, ACMF or flight plan
 }
 
 // RouteReports returns the REP081 and flight-plan origin/destination reports in [since, until], oldest first.
 func (s *Store) RouteReports(hexAddr string, since, until time.Time) ([]RouteReport, error) {
-	rows, err := s.db.Query(`SELECT t, origin, dest, rx FROM (`+routeReportsSQL+`) ORDER BY t`, hexAddr, ts(since), ts(until))
+	rows, err := s.db.Query(`SELECT t, origin, dest, rx, src FROM (`+routeReportsSQL+`) ORDER BY t`, hexAddr, ts(since), ts(until))
 	if err != nil {
 		return nil, err
 	}
@@ -645,13 +624,22 @@ func (s *Store) RouteReports(hexAddr string, since, until time.Time) ([]RouteRep
 	for rows.Next() {
 		var r RouteReport
 		var t, rx int64
-		if err := rows.Scan(&t, &r.From, &r.To, &rx); err != nil {
+		if err := rows.Scan(&t, &r.From, &r.To, &rx, &r.Src); err != nil {
 			return nil, err
 		}
 		r.T, r.Rx = time.Unix(t, 0).UTC(), time.Unix(rx, 0).UTC()
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// Stamp says in a few characters how much the store holds for an aircraft: it changes when positions or messages are added, so work
+// done from them can be kept until it does. (A message decoded again, or a flag changed, leaves it as it was.)
+func (s *Store) Stamp(hexAddr string) string {
+	var pn, pm, mn, mm int64
+	s.db.QueryRow(`SELECT COUNT(*), COALESCE(MAX(ts), 0) FROM position WHERE hex=?`, hexAddr).Scan(&pn, &pm)
+	s.db.QueryRow(`SELECT COUNT(*), COALESCE(MAX(id), 0) FROM message WHERE hex=?`, hexAddr).Scan(&mn, &mm)
+	return fmt.Sprintf("%d/%d/%d/%d", pn, pm, mn, mm)
 }
 
 // CountMessages counts an aircraft's stored messages received in [from, to].

@@ -634,7 +634,7 @@ async function refresh() {
       const r = document.createElement('small');
       r.className = 'route' + (w.route.stale ? ' stale' : '');
       const differs = w.dest && w.route.to && w.dest !== w.route.to ? ` — you set ${w.dest}` : '';
-      r.textContent = `${w.route.from ? w.route.from + ' → ' : '→ '}${w.route.to} (${w.route.source} ${ago(w.route.t)}${w.route.stale ? ', may be out of date' : ''}${differs})`;
+      r.textContent = `${w.route.from ? routeEnd(w.route.from, w.route.from_manual, w.route.from_seen) + ' → ' : '→ '}${routeEnd(w.route.to, w.route.to_manual)} (${w.route.source}${w.route.t ? ' ' + ago(w.route.t) : ''}${w.route.stale ? ', may be out of date' : ''}${differs})`;
       r.title = [w.route.from_name && `From ${w.route.from_name}`, w.route.to_name && `To ${w.route.to_name}`].filter(Boolean).join('\n');
       li.append(r);
     }
@@ -746,7 +746,7 @@ function trend(pts) {
 // else just the route it last reported.
 function flightLines(w) {
   const sg = flightSegs.length && flightSegs[flightSegs.length - 1].latest ? flightSegs[flightSegs.length - 1] : null;
-  const route = sg && (sg.from || sg.to) ? routeText(sg) : w.route && !w.route.stale ? `${w.route.from ? w.route.from + ' \u2192 ' : '\u2192 '}${w.route.to}` : '';
+  const route = sg && (sg.from || sg.to) ? routeText(sg) : w.route && !w.route.stale ? `${w.route.from ? routeEnd(w.route.from, w.route.from_manual, w.route.from_seen) + ' \u2192 ' : '\u2192 '}${routeEnd(w.route.to, w.route.to_manual)}` : '';
   return [[sg && sg.flight, route].filter(Boolean).join(' '), sg ? departLong(sg) : ''];
 }
 

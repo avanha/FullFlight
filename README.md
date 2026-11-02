@@ -253,8 +253,11 @@ label 3N, the pre-departure clearance (`PDC UP0065/31 ANC-SDF`, with the filed r
 and label 41, the schedule (`0065 /1031/ANC /SDF /0109/0549/...`: number, date, route, planned departure and arrival).
 Each counts as a route report. A 3J delivered long after the time it was sent (stale messages turn up days late)
 describes an earlier flight, so it is marked unverified and left out.
-The newest one is shown on the watch (`VHHH → YSSY (REP081 12m ago)`) and in the plane's
-hover, for tail and hex watches as well as flights. REP081 goes out about every 20
+The route of the aircraft's newest flight (the one the map's list ends with, see Flights below) is shown on the watch
+(`VHHH → YSSY (REP081 12m ago)`) and in the plane's hover, for tail and hex watches as well as flights: what that flight's reports
+said most often, with the kind and age of the newest. Where no report gave an origin, it is the one ADS-B saw it leave
+(`KLAX~`) or you entered by hand (`KLAX*`). The flight before's route is never carried over to the next: an aircraft parked
+under a new flight number shows that flight's route, or none. REP081 goes out about every 20
 minutes in flight, so a report older than 90 minutes is shown greyed with "may be out
 of date" (and left out of the hover), because the aircraft may have landed and moved on
 to another sector; after 24 hours it is not shown. If you gave a destination
@@ -264,10 +267,11 @@ aircraft send no such report, so this appears only where the data exists.
 ## Current flight
 
 A tail or hex watch follows an aircraft from flight to flight, so it shows the flight it is
-operating now (`flight CPA113 · CX113 (from messages 4m ago)`), from whichever is newer: the
-callsign on its latest ADS-B position, or the flight number in its latest message (the
+operating now (`flight CPA113 · CX113 (from messages 4m ago)`): the newest flight worked out for it (see Flights), named
+by whichever is newer, the callsign on its latest ADS-B position or the flight number in its latest message (the
 10-character prefix, or an AFN logon), with the other form worked out from the airline
-table. It goes grey after 90 minutes ("may be out of date") and disappears after 24 hours,
+table. A flight its messages have named that has no position yet (the next flight, announced while the aircraft is at the gate)
+counts too, and is what a landed aircraft is said to be waiting to fly (`CPA615 not departed`). It goes grey after 90 minutes ("may be out of date") and disappears after 24 hours,
 like the reported destination. A message whose text names a different aircraft is ignored.
 The destination is deliberately not guessed from D-ATIS requests: crews also request
 them for alternates and ETOPS enroute alternates (on Cathay flights with a known

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -288,36 +289,37 @@ func TestLastRoute(t *testing.T) {
 	}
 }
 
-func TestLastFlightAndCallsign(t *testing.T) {
+// What counts as a sighting of the flight an aircraft is operating: a flight number in a message, a callsign in an AFN logon or on an
+// ADS-B position; not a message that names none, one about another aircraft, or a position whose feed had no callsign.
+func TestFlightEvidenceSightings(t *testing.T) {
 	s := open(t)
 	add := func(id int64, hex string, ago time.Duration, flight, callsign, mismatch string) {
 		s.AddMessage(Message{ID: id, Hex: hex, T: now.Add(-ago), Label: "H1", Text: "t" + string(rune('a'+id)), Flight: flight, Callsign: callsign, Mismatch: mismatch})
 	}
-	if _, ok := s.LastFlight("780AB8"); ok {
-		t.Fatal("flight from nothing")
+	sightings := func() (out []string) {
+		ev, err := s.FlightEvidence("780AB8", now.Add(-24*time.Hour), now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range ev {
+			out = append(out, e.ID+"/"+e.Src)
+		}
+		return
+	}
+	if got := sightings(); len(got) != 0 {
+		t.Fatalf("sightings from nothing: %v", got)
 	}
 	add(1, "780AB8", 5*time.Hour, "CX833", "", "")
 	add(2, "780AB8", 2*time.Hour, "CX113", "", "")
 	add(3, "780AB8", time.Hour, "", "", "")                                                            // names no flight
 	add(4, "780AB8", 30*time.Minute, "CX999", "", "text names B-LRD, which is hex 780AA4, not 780AB8") // belongs to another aircraft
 	add(5, "780AA4", time.Minute, "CX555", "", "")                                                     // another aircraft
-	f, ok := s.LastFlight("780AB8")
-	if !ok || f.Flight != "CX113" || !f.T.Equal(now.Add(-2*time.Hour)) {
-		t.Errorf("flight = %+v %v", f, ok)
-	}
-	add(6, "780AB8", 10*time.Minute, "", "CPA113", "") // an AFN logon names only the callsign
-	if f, _ = s.LastFlight("780AB8"); f.Callsign != "CPA113" || f.Flight != "" {
-		t.Errorf("callsign-only message = %+v", f)
-	}
-
-	if _, _, ok := s.LastCallsign("780AB8"); ok {
-		t.Fatal("callsign from nothing")
-	}
+	add(6, "780AB8", 10*time.Minute, "", "CPA113", "")                                                 // an AFN logon names only the callsign
 	s.AddPosition(Position{Hex: "780AB8", T: now.Add(-3 * time.Hour), Lat: 1, Lon: 1, Callsign: "CPA843", Source: "adsb.lol"})
 	s.AddPosition(Position{Hex: "780AB8", T: now.Add(-time.Hour), Lat: 2, Lon: 2, Callsign: "", Source: "adsb.lol"}) // feed had no callsign
-	cs, at, ok := s.LastCallsign("780AB8")
-	if !ok || cs != "CPA843" || !at.Equal(now.Add(-3*time.Hour)) {
-		t.Errorf("callsign = %q %v %v", cs, at, ok)
+	want := []string{"CX833/messages", "CPA843/ADS-B", "CX113/messages", "CPA113/messages"}
+	if got := sightings(); !reflect.DeepEqual(got, want) {
+		t.Errorf("sightings = %v, want %v", got, want)
 	}
 }
 
@@ -924,9 +926,6 @@ func TestLateMessagesDoNotNameTheCurrentFlight(t *testing.T) {
 	t1, t2 := now.Add(-5*time.Hour), now.Add(-10*time.Minute)
 	s.AddMessage(Message{ID: 1, Hex: "A762CC", T: t1, Label: "H1", Text: "a", Kind: "afn", Flight: "UP58", Callsign: "UPS58"})
 	s.AddMessage(Message{ID: 2, Hex: "A762CC", T: t2, Label: "H1", Text: "b", Kind: "afn", Flight: "UP80", Callsign: "UPS80", TimeFlag: true, TimeNote: "in a late batch: x"})
-	if f, ok := s.LastFlight("A762CC"); !ok || f.Callsign != "UPS58" || !f.T.Equal(t1) {
-		t.Errorf("LastFlight = %+v %v", f, ok)
-	}
 	ev, _ := s.FlightEvidence("A762CC", now.Add(-24*time.Hour), now)
 	if len(ev) != 1 || ev[0].ID != "UP58" {
 		t.Errorf("evidence = %+v", ev)
@@ -1021,8 +1020,8 @@ func TestMessagesAboutAFlightNotYetDueAreHeldBack(t *testing.T) {
 	s.AddMessage(Message{ID: 3, Hex: "7C4926", T: at.Add(10 * time.Minute), Label: "81", Text: "c", Kind: "ops_report", Flight: "QF64",
 		Decoded: `{"fields":{"ops":{"event":"AA","dest":"YSSY","on":"0310"}}}`})
 
-	if f, ok := s.LastFlight("7C4926"); !ok || f.Flight != "QF64" {
-		t.Errorf("last flight = %+v %v, want the one in progress", f, ok)
+	if ev, _ := s.FlightEvidence("7C4926", at.Add(-time.Hour), at.Add(time.Hour)); len(ev) != 2 || ev[0].ID != "QF64" || ev[1].ID != "QF64" {
+		t.Errorf("sightings by 04:00 = %+v, want only the flight in progress", ev)
 	}
 	if r, ok := s.LastRouteAt("7C4926", at.Add(time.Hour)); !ok || r.To != "YSSY" {
 		t.Errorf("route at 04:00 = %+v %v", r, ok)

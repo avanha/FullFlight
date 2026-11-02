@@ -94,8 +94,12 @@ type Segment struct {
 	Positions   int       `json:"positions"`
 	From        string    `json:"from,omitempty"` // from REP081, where the aircraft sends one
 	To          string    `json:"to,omitempty"`
-	FromManual  bool      `json:"from_manual,omitempty"` // From was entered by hand, because no message gave one
-	FromSeen    bool      `json:"from_seen,omitempty"`   // From is where ADS-B saw the flight climb out, because no message gave one
+	RouteSource string    `json:"route_source,omitempty"` // what kind of report gave From and To (REP081, A350 report, airline report, ACMF, flight plan)
+	RouteAt     time.Time `json:"route_at,omitzero"`      // when the newest report that agrees with them was made
+	SeenBy      string    `json:"seen_by,omitempty"`      // what carried the last sighting of the flight's number: "ADS-B" or "messages"
+	SeenAt      time.Time `json:"seen_at,omitzero"`       // and when it was made
+	FromManual  bool      `json:"from_manual,omitempty"`  // From was entered by hand, because no message gave one
+	FromSeen    bool      `json:"from_seen,omitempty"`    // From is where ADS-B saw the flight climb out, because no message gave one
 	ToManual    bool      `json:"to_manual,omitempty"`
 	Departed    time.Time `json:"departed,omitzero"`      // when it left, if we know
 	DepartedHow string    `json:"departed_how,omitempty"` // "takeoff", "adsb", "pushback" or "taxi": see store.Departure
@@ -105,6 +109,8 @@ type Segment struct {
 	Joined []int64 `json:"joined,omitempty"` // when the pieces joined to this flight by hand started (unix seconds)
 
 	stopAfter bool // the aircraft stopped on the ground after this flight, and the next piece is another leg: never joined
+
+	Pending bool `json:"pending,omitempty"` // named by messages, with no position yet: the next flight. Only when asked for (see segments)
 
 	Why []Note `json:"why,omitempty"` // how it came about: only when asked for (Explain)
 }
@@ -201,10 +207,11 @@ func (r *run) distance(t time.Time) time.Duration {
 // flight it belongs to. An A350 delivers its stored reports up to a few days late.
 const Lookback = 7 * 24 * time.Hour
 
-// Segments returns the aircraft's flights in [since, until], oldest first: those that end in the window or were still going
-// at its start.
-func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segment, error) {
-	segs, err := segments(st, hexAddr, since.Add(-Lookback), until, nil)
+// Current is Segments with the flight still to leave: if the newest flight the aircraft's messages name has no position yet (the
+// next flight, announced while the aircraft is at the gate), it comes last, marked Pending. For showing what the aircraft is doing
+// now; the flights to draw and list are Segments.
+func Current(st *store.Store, hexAddr string, since, until time.Time) ([]Segment, error) {
+	segs, err := segments(st, hexAddr, since.Add(-Lookback), until, nil, true)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +224,25 @@ func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 	return out, nil
 }
 
-func segments(st *store.Store, hexAddr string, since, until time.Time, tr *trace) ([]Segment, error) {
+// Segments returns the aircraft's flights in [since, until], oldest first: those that end in the window or were still going
+// at its start.
+func Segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segment, error) {
+	segs, err := segments(st, hexAddr, since.Add(-Lookback), until, nil, false)
+	if err != nil {
+		return nil, err
+	}
+	out := segs[:0]
+	for _, sg := range segs {
+		if !sg.End.Before(since) {
+			out = append(out, sg)
+		}
+	}
+	return out, nil
+}
+
+// segments does the work of Segments. With pending, the newest flight the aircraft's messages name that has no position yet (the
+// next flight, announced while the aircraft is at the gate) is returned too, marked Pending.
+func segments(st *store.Store, hexAddr string, since, until time.Time, tr *trace, pending bool) ([]Segment, error) {
 	ev, err := st.FlightEvidence(hexAddr, since, until)
 	if err != nil {
 		return nil, err
@@ -298,8 +323,10 @@ func segments(st *store.Store, hexAddr string, since, until time.Time, tr *trace
 
 	// 4. a run with no position is not a flight we can show (ground chatter, a stray number)
 	var segs []Segment
+	var waiting *run // the newest run with no position, which may be the next flight
 	for _, r := range runs {
 		if r.positions == 0 {
+			waiting = r
 			tr.note("runs", "dropped", r.first, r.last, "%d sighting(s) of %s and no position: ground chatter or a stray number, not a flight we can show", r.n, r.id.display)
 			continue
 		}
@@ -310,6 +337,18 @@ func segments(st *store.Store, hexAddr string, since, until time.Time, tr *trace
 		if s.Flight == "" {
 			s.Flight = r.best()
 		}
+		segs = append(segs, s)
+	}
+
+	if waiting != nil && pending && len(segs) > 0 && !waiting.last.After(segs[len(segs)-1].End) {
+		waiting = nil // not newer than a flight we have: ground chatter of that one
+	}
+	if waiting != nil && pending {
+		s := Segment{Start: waiting.first, End: waiting.last, Identified: true, Pending: true, Flight: waiting.id.iata, Callsign: waiting.id.icao}
+		if s.Flight == "" {
+			s.Flight = waiting.best()
+		}
+		tr.note("runs", "pending", s.Start, s.End, "%s: sighted %d time(s) and no position yet: the next flight, still to leave", s.Flight, waiting.n)
 		segs = append(segs, s)
 	}
 
@@ -363,14 +402,9 @@ func segments(st *store.Store, hexAddr string, since, until time.Time, tr *trace
 				mine = append(mine, r)
 			}
 		}
-		s.From, s.To = modalRoute(mine, time.Time{}, time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC))
-		agree := 0
-		for _, r := range mine {
-			if tr != nil && r.From == s.From && r.To == s.To {
-				agree++
-			}
-		}
-		tr.note("route", "route", s.Start, s.End, "%d route report(s) belong to it; %s > %s is the most reported, by %d", len(mine), s.From, s.To, agree)
+		c := modalRoute(mine, time.Time{}, time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC))
+		s.From, s.To, s.RouteSource, s.RouteAt = c.From, c.To, c.Src, c.At
+		tr.note("route", "route", s.Start, s.End, "%d route report(s) belong to it; %s > %s is the most reported, by %d", len(mine), s.From, s.To, c.N)
 	}
 	for i := range segs {
 		setRoute(&segs[i])
@@ -444,6 +478,7 @@ func segments(st *store.Store, hexAddr string, since, until time.Time, tr *trace
 	segs = applyJoins(segs, joins, tr)
 	for i := range segs {
 		segs[i].Messages = st.CountMessages(hexAddr, segs[i].Start, segs[i].End)
+		segs[i].SeenBy, segs[i].SeenAt = seenBy(segs[i], ev)
 		segs[i].ID = segID(segs[i])
 	}
 	if n := len(segs); n > 0 {
@@ -551,27 +586,35 @@ func departureOf(sg Segment, deps []store.Departure) (time.Time, string) {
 	return best.T, best.How
 }
 
+// routeChoice is the origin and destination reported most often, how many reports said so, and the newest of them.
+type routeChoice struct {
+	From, To string
+	N        int
+	At       time.Time // the newest report that said it
+	Src      string    // and what kind of report it was
+}
+
 // modalRoute is the origin/destination reported most often in [from, to], the latest on a tie.
-func modalRoute(rs []store.RouteReport, from, to time.Time) (string, string) {
+func modalRoute(rs []store.RouteReport, from, to time.Time) routeChoice {
 	type pair struct{ from, to string }
 	count := map[pair]int{}
-	last := map[pair]time.Time{}
+	last := map[pair]store.RouteReport{}
 	for _, r := range rs {
 		if r.T.Before(from) || r.T.After(to) {
 			continue
 		}
 		p := pair{r.From, r.To}
 		count[p]++
-		last[p] = r.T
+		last[p] = r
 	}
 	var best pair
 	n := 0
 	for p, c := range count {
-		if c > n || (c == n && last[p].After(last[best])) {
+		if c > n || (c == n && last[p].T.After(last[best].T)) {
 			best, n = p, c
 		}
 	}
-	return best.from, best.to
+	return routeChoice{From: best.from, To: best.to, N: n, At: last[best].T, Src: last[best].Src}
 }
 
 func segID(s Segment) string {
@@ -612,6 +655,28 @@ func firstNonEmpty(ss ...string) string {
 		}
 	}
 	return ""
+}
+
+// seenBy is what carried the last sighting of the flight's number inside it: the newest sighting that is of that flight and falls
+// in its span.
+func seenBy(sg Segment, ev []store.Evidence) (string, time.Time) {
+	if !sg.Identified {
+		return "", time.Time{}
+	}
+	want, ok := parse(sg.Flight)
+	if !ok {
+		return "", time.Time{}
+	}
+	for i := len(ev) - 1; i >= 0; i-- {
+		e := ev[i]
+		if e.T.After(sg.End) || e.T.Before(sg.Start.Add(-AttachSlack)) {
+			continue
+		}
+		if id, ok := parse(e.ID); ok && same(id, want) {
+			return e.Src, e.T
+		}
+	}
+	return "", time.Time{}
 }
 
 // formsText lists the ways a flight number was written, most used first: "CX113 x120, CPA113 x30".
@@ -672,6 +737,7 @@ func join(a, b Segment) Segment {
 	out.End = maxTime(a.End, b.End)
 	out.Positions = a.Positions + b.Positions
 	out.stopAfter = b.stopAfter
+	out.Pending = a.Pending && b.Pending
 	return out
 }
 
@@ -895,7 +961,7 @@ func applyJoins(segs []Segment, joins []time.Time, tr *trace) []Segment {
 				m.From, m.FromManual = b.From, b.FromManual
 			}
 			if b.To != "" {
-				m.To, m.ToManual = b.To, b.ToManual
+				m.To, m.ToManual, m.RouteSource, m.RouteAt = b.To, b.ToManual, b.RouteSource, b.RouteAt
 			}
 			if !m.Identified && b.Identified {
 				m.Identified, m.Flight, m.Callsign = true, b.Flight, b.Callsign

@@ -607,14 +607,23 @@ func TestRouteFromREP081(t *testing.T) {
 }
 
 // The flight a message names comes from our own decode of its raw text.
+// lastSighting is the newest flight identity the aircraft's messages and positions name.
+func lastSighting(st *store.Store, hex string) (store.Evidence, bool) {
+	ev, err := st.FlightEvidence(hex, time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil || len(ev) == 0 {
+		return store.Evidence{}, false
+	}
+	return ev[len(ev)-1], true
+}
+
 func TestFlightFromMessages(t *testing.T) {
 	st := newStore(t)
 	f := fixture(t, "adsc_periodic_prefixed") // prefix J25ACX0833: flight CX833, tail B-LRM
 	if _, err := Ingest(st, "780AB8", msg(1, f)); err != nil {
 		t.Fatal(err)
 	}
-	got, ok := st.LastFlight("780AB8")
-	if !ok || got.Flight != "CX833" || !got.T.Equal(f.Received) {
+	got, ok := lastSighting(st, "780AB8")
+	if !ok || got.ID != "CX833" || !got.T.Equal(f.Received) {
 		t.Fatalf("from prefix = %+v %v", got, ok)
 	}
 	// An AFN logon names the ICAO callsign.
@@ -622,13 +631,13 @@ func TestFlightFromMessages(t *testing.T) {
 	if _, err := Ingest(st, "780AA4", msg(2, a)); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok = st.LastFlight("780AA4"); !ok || got.Callsign != "CPA833" {
+	if got, ok = lastSighting(st, "780AA4"); !ok || got.ID != "CPA833" {
 		t.Errorf("from AFN = %+v %v", got, ok)
 	}
 	// A message with no prefix and no AFN (a bare CPDLC) names no flight.
 	st2 := newStore(t)
 	Ingest(st2, "780AA4", msg(3, fixture(t, "cpdlc_wilco")))
-	if got, ok := st2.LastFlight("780AA4"); ok {
+	if got, ok := lastSighting(st2, "780AA4"); ok {
 		t.Errorf("flight from a bare CPDLC: %+v", got)
 	}
 }
@@ -961,7 +970,7 @@ func TestRouteAndFlightFromA350Reports(t *testing.T) {
 	if !ok || r.From != "KJFK" || r.To != "WSSS" || r.Source != "A350 report" {
 		t.Fatalf("route = %+v %v", r, ok)
 	}
-	if fl, ok := st.LastFlight("76CCE3"); !ok || fl.Callsign != "SIA23" {
+	if fl, ok := lastSighting(st, "76CCE3"); !ok || fl.ID != "SIA23" {
 		t.Errorf("flight = %+v %v", fl, ok)
 	}
 	// the XML maintenance report does the same

@@ -305,6 +305,9 @@ func TestWatchShowsReportedRoute(t *testing.T) {
 		st.AddWatch(e)
 		for i, r := range reports {
 			at := now.Add(-r.age)
+			for k := 0; k < 4; k++ { // the aircraft is heard around the report, so it belongs to a flight
+				st.AddPosition(store.Position{Hex: "780AB8", T: at.Add(time.Duration(k-2) * time.Minute), Lat: 10 + float64(i) + float64(k)/10, Lon: 100, Source: "adsb.lol"})
+			}
 			st.AddMessage(store.Message{ID: int64(i + 1), Hex: "780AB8", T: at, PosT: &at, Label: "MA", Text: fmt.Sprint("t", i), Kind: "miam",
 				Decoded: `{"fields":{"rep081":{"Origin":"` + r.from + `","Dest":"` + r.to + `"}}}`})
 		}
@@ -909,6 +912,14 @@ func TestFixesAPI(t *testing.T) {
 	}
 }
 
+// acrossThePacific gives an aircraft the positions of the flight that ends at fix: one every ten minutes for the four hours before, so
+// the reports sent on the way belong to a flight.
+func acrossThePacific(st *store.Store, hex string, fix time.Time) {
+	for i := 0; i < 24; i++ {
+		st.AddPosition(store.Position{Hex: hex, T: fix.Add(-4*time.Hour + time.Duration(i)*10*time.Minute), Lat: 28.7 + float64(i)*0.3, Lon: 173.8 - float64(i)*1.4, Source: "adsb.fi"})
+	}
+}
+
 // JA826J: its last ADS-B fix was 400 ft and 1.9 nm from Narita, then nothing. The watch says it landed there, and
 // where it was going comes from the airline's own position reports.
 func TestLandingAndTheRouteFromPositionReports(t *testing.T) {
@@ -918,6 +929,7 @@ func TestLandingAndTheRouteFromPositionReports(t *testing.T) {
 	f := func(v float64) *float64 { return &v }
 	st.AddPosition(store.Position{Hex: "86D646", T: fix.Add(-2 * time.Minute), Lat: 35.6455, Lon: 140.4613, AltFt: f(2400), GS: f(181), Track: f(329), VRate: f(-992), Source: "adsb.fi"})
 	st.AddPosition(store.Position{Hex: "86D646", T: fix, Lat: 35.738, Lon: 140.3946, AltFt: f(400), GS: f(147), Track: f(330), VRate: f(-1024), Source: "adsb.lol"})
+	acrossThePacific(st, "86D646", fix)
 	// A label-83 report four hours earlier names the destination.
 	rep := fix.Add(-4 * time.Hour)
 	rlat, rlon := 28.71, 173.77
@@ -963,6 +975,102 @@ func TestLandingAndTheRouteFromPositionReports(t *testing.T) {
 	}
 }
 
+// The sidebar's route and flight are those of the aircraft's newest flight, the same flights the map lists: an origin no report gave
+// but ADS-B saw is shown as seen, the next flight a message announces shows before it has a position, and the route of the flight
+// before is not carried over to the next.
+func TestSidebarReadsTheNewestFlight(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	f := func(v float64) *float64 { return &v }
+	now := time.Date(2026, 11, 1, 22, 0, 0, 0, time.UTC)
+	e, _ := watchlist.Parse("tail:N77019", now.Add(-12*time.Hour), time.Time{})
+	e.Hex = "AA6BA4"
+	st.AddWatch(e)
+	get := func(at time.Time) (w struct {
+		Route *struct {
+			From, To, Source string
+			FromName         string `json:"from_name"`
+			FromSeen         bool   `json:"from_seen"`
+			Stale            bool
+		}
+		Flight *struct{ Callsign, Number, Source string }
+	}) {
+		ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return at }}).Handler())
+		defer ts.Close()
+		_, body := do(t, "GET", ts.URL+"/api/watches", "")
+		var ws []struct {
+			Route *struct {
+				From, To, Source string
+				FromName         string `json:"from_name"`
+				FromSeen         bool   `json:"from_seen"`
+				Stale            bool
+			}
+			Flight *struct{ Callsign, Number, Source string }
+		}
+		if err := json.Unmarshal([]byte(body), &ws); err != nil || len(ws) != 1 {
+			t.Fatalf("%v: %s", err, body)
+		}
+		return ws[0]
+	}
+
+	// seen taking off from Los Angeles, and no message gave a route
+	t0 := now.Add(-3 * time.Hour)
+	for i := 0; i < 3; i++ {
+		st.AddPosition(store.Position{Hex: "AA6BA4", T: t0.Add(time.Duration(i) * time.Minute), Lat: 33.9402 + float64(i)*1e-4, Lon: -118.4118, OnGround: true, GS: f(0), Callsign: "TZP23", Source: "adsb.lol"})
+	}
+	for i, alt := range []float64{1500, 5000, 12000, 20000, 30000} {
+		st.AddPosition(store.Position{Hex: "AA6BA4", T: t0.Add(10*time.Minute + time.Duration(i)*5*time.Minute), Lat: 34.2 + float64(i)*0.3, Lon: -119 - float64(i)*0.4, AltFt: f(alt), Callsign: "TZP23", Source: "adsb.lol"})
+	}
+	w := get(now)
+	if w.Route == nil || w.Route.From != "KLAX" || !w.Route.FromSeen || w.Route.To != "" || w.Route.Source != "seen on ADS-B" || w.Route.FromName == "" {
+		t.Errorf("an origin seen on ADS-B: %+v", w.Route)
+	}
+	if w.Flight == nil || w.Flight.Callsign != "TZP23" || w.Flight.Source != "ADS-B" {
+		t.Errorf("the flight it is on: %+v", w.Flight)
+	}
+
+	// then the airline announces the next flight, due out at 23:30, before the aircraft has a position under it
+	sched := now.Add(90 * time.Minute)
+	st.AddMessage(store.Message{ID: 1, Hex: "AA6BA4", T: now.Add(-10 * time.Minute), Label: "RF", Text: "a", Kind: "ops_report", Flight: "UA888", Callsign: "UAL888",
+		Decoded: `{"fields":{"ops":{"event":"FDACOM","origin":"KLAX","dest":"RJAA","sched":"` + sched.Format(time.RFC3339) + `"}}}`})
+	if w = get(now); w.Route == nil || w.Route.From != "KLAX" || !w.Route.FromSeen {
+		t.Errorf("a flight not due yet is not the newest: %+v", w.Route)
+	}
+	w = get(sched.Add(time.Minute))
+	if w.Route == nil || w.Route.From != "KLAX" || w.Route.To != "RJAA" || w.Route.FromSeen || w.Route.Source != "airline report" || w.Flight == nil || w.Flight.Number != "UA888" || w.Flight.Source != "messages" {
+		t.Errorf("the next flight, announced and due: route %+v flight %+v", w.Route, w.Flight)
+	}
+
+	// once an aircraft is on a new flight with no route reported, the flight before's route is not shown for it
+	e2, _ := watchlist.Parse("tail:N24993", now.Add(-30*time.Hour), time.Time{})
+	e2.Hex = "A2551D"
+	st.AddWatch(e2)
+	for i := 0; i < 6; i++ {
+		at := now.Add(-20*time.Hour + time.Duration(i)*20*time.Minute)
+		st.AddPosition(store.Position{Hex: "A2551D", T: at, Lat: 40 + float64(i)/10, Lon: -100, AltFt: f(35000), Callsign: "UAL100", Source: "adsb.lol"})
+	}
+	rep := now.Add(-20*time.Hour + 20*time.Minute)
+	st.AddMessage(store.Message{ID: 2, Hex: "A2551D", T: rep, PosT: &rep, Label: "MA", Text: "b", Kind: "miam", Decoded: `{"fields":{"rep081":{"Origin":"KDEN","Dest":"EDDF"}}}`})
+	for i := 0; i < 4; i++ {
+		st.AddPosition(store.Position{Hex: "A2551D", T: now.Add(-2*time.Hour + time.Duration(i)*5*time.Minute), Lat: 41 + float64(i)/10, Lon: -101, AltFt: f(5000), Callsign: "UAL200", Source: "adsb.lol"})
+	}
+	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	_, body := do(t, "GET", ts.URL+"/api/watches", "")
+	var ws []struct {
+		Hex   string
+		Route *struct{ From, To string }
+	}
+	if err := json.Unmarshal([]byte(body), &ws); err != nil || len(ws) != 2 {
+		t.Fatalf("%v: %s", err, body)
+	}
+	for _, w := range ws {
+		if w.Hex == "A2551D" && w.Route != nil {
+			t.Errorf("UAL200 does not take the route of UAL100: %+v", w.Route)
+		}
+	}
+}
+
 // An aircraft parked at its destination is "landed" from when it touched down, not from its newest fix on the ground; and once it
 // takes the callsign of its next flight it is that flight, not yet departed.
 func TestAParkedAircraftTakesItsNextFlight(t *testing.T) {
@@ -995,6 +1103,12 @@ func TestAParkedAircraftTakesItsNextFlight(t *testing.T) {
 	l := get(land.Add(time.Hour))
 	if l == nil || l.Code != "KDEN" || !l.At.Equal(land) || l.Next != "" {
 		t.Fatalf("still the flight that landed: %+v", l)
+	}
+	// the airline names another flight before the aircraft's callsign changes: that is the next flight too
+	st.AddMessage(store.Message{ID: 90, Hex: "A2551D", T: land.Add(2 * time.Hour), Label: "RF", Text: "next", Kind: "ops_report", Flight: "UA300", Callsign: "UAL300",
+		Decoded: `{"fields":{"ops":{"event":"FDACOM"}}}`})
+	if l = get(land.Add(2*time.Hour + time.Minute)); l == nil || l.Next != "UAL300" || !l.At.Equal(land) {
+		t.Errorf("the next flight, named by a message: %+v", l)
 	}
 	gate(land.Add(3*time.Hour+30*time.Minute), "UAL177")
 	gate(land.Add(3*time.Hour+40*time.Minute), "UAL177")
@@ -1043,6 +1157,7 @@ func TestAirportsAPI(t *testing.T) {
 	fix := time.Date(2026, 10, 31, 3, 25, 59, 0, time.UTC)
 	f := func(v float64) *float64 { return &v }
 	st.AddPosition(store.Position{Hex: "86D646", T: fix, Lat: 35.738, Lon: 140.3946, AltFt: f(400), GS: f(147), Track: f(330), VRate: f(-1024), Source: "adsb.lol"})
+	acrossThePacific(st, "86D646", fix)
 	rep := fix.Add(-4 * time.Hour)
 	rlat, rlon := 28.71, 173.77
 	st.AddMessage(store.Message{ID: 1, Hex: "86D646", T: rep, Label: "83", Text: "x", Kind: "aoc_position", Lat: &rlat, Lon: &rlon, PosT: &rep,

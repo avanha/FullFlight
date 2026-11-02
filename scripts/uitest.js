@@ -371,6 +371,14 @@ highlightGroup = null;
   await t.refresh();
   assert.ok(!routeLine().textContent.includes('you set'), 'no note when they agree');
   delete watch.route; delete watch.dest;
+  // a route no report gave: the origin seen on ADS-B (~), or entered by hand (*), with no destination; marked as such, with no age
+  watch.route = {from: 'KLAX', to: '', from_seen: true, source: 'seen on ADS-B', t: new Date(Date.now() - 5 * 60000).toISOString(), from_name: 'Los Angeles International Airport'};
+  await t.refresh();
+  assert.strictEqual(routeLine().textContent, 'KLAX~ \u2192 ? (seen on ADS-B 5m ago)');
+  watch.route = {from: 'KLAX', to: 'RJAA', from_manual: true, to_manual: true, source: 'entered by hand'};
+  await t.refresh();
+  assert.strictEqual(routeLine().textContent, 'KLAX* \u2192 RJAA* (entered by hand)');
+  delete watch.route;
   await t.refresh();
 
   // 8f. the flight a tail watch is operating (callsign + flight number, with its age and source)

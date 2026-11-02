@@ -50,7 +50,7 @@ type Explanation struct {
 // Explain is Segments with the notes of how each flight came about.
 func Explain(st *store.Store, hexAddr string, since, until time.Time) (Explanation, error) {
 	tr := &trace{}
-	segs, err := segments(st, hexAddr, since.Add(-Lookback), until, tr)
+	segs, err := segments(st, hexAddr, since.Add(-Lookback), until, tr, false)
 	if err != nil {
 		return Explanation{}, err
 	}

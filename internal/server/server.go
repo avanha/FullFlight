@@ -42,7 +42,7 @@ type Server struct {
 	StationList StationSource    // airframes.io's list of receiving stations; nil if there is none
 
 	flightMu    sync.Mutex
-	flightCache map[string]cachedFlight // hex -> the aircraft's last flight, for the airframes page
+	flightCache map[string]cachedFlights // hex -> its recent flights, worked out once for everything that shows them
 }
 
 func (s *Server) Handler() http.Handler {
@@ -165,7 +165,7 @@ type landingJSON struct {
 
 // landing says whether the aircraft's newest position, from any source, is where it landed. A later
 // datalink position (ADS-C, a periodic report) means it did not.
-func (s *Server) landing(hex, dest string) *landingJSON {
+func (s *Server) landing(hex, dest string, segs []flights.Segment) *landingJSON {
 	p, ok := s.Store.LastPosition(hex)
 	if !ok {
 		return nil
@@ -183,29 +183,20 @@ func (s *Server) landing(hex, dest string) *landingJSON {
 	}
 	out := &landingJSON{Code: code, Name: l.Airport.Name, Lat: l.Airport.Lat, Lon: l.Airport.Lon, At: l.At, DistNM: l.DistNM, Basis: l.Basis}
 	if p.OnGround {
-		// The newest fix is only the latest of many on the ground: the landing was when the stay began, and a different
-		// callsign since then is the aircraft's next flight, still to leave.
+		// The newest fix is only the latest of many on the ground: the landing was when the stay began. A flight that began after
+		// that, under another number, is the aircraft's next, still to leave.
 		if since, ok := s.Store.OnGroundSince(hex); ok {
 			out.At = since
 		}
-		flown, now := airlineForm(s.Store.LastAirborneCallsign(hex)), airlineForm(p.Callsign)
-		if flown != "" && now != "" && flown != now {
-			out.Next = now
+		if n := len(segs); n > 0 && segs[n-1].Identified && segs[n-1].Start.After(out.At) {
+			out.Next = firstNonEmpty(segs[n-1].Callsign, segs[n-1].Flight)
 		}
 	}
 	return out
 }
 
-// airlineForm is a callsign in its ICAO form, as it is written for comparison.
-func airlineForm(id string) string {
-	if icao, _ := airlines.Forms(id); icao != "" {
-		return icao
-	}
-	return strings.ToUpper(strings.TrimSpace(id))
-}
-
-// flightJSON is the flight an aircraft is currently operating, from its newest ADS-B callsign
-// or the flight number in its newest message, whichever is later.
+// flightJSON is the flight an aircraft is currently operating: the newest flight we have worked out for it (see the flights
+// package), whichever of its ADS-B callsign and its messages named it last.
 type flightJSON struct {
 	Callsign string    `json:"callsign,omitempty"` // ICAO form, e.g. CPA113
 	Number   string    `json:"number,omitempty"`   // IATA form, e.g. CX113
@@ -214,23 +205,24 @@ type flightJSON struct {
 	Stale    bool      `json:"stale,omitempty"`
 }
 
-func (s *Server) flight(hex string) *flightJSON {
-	var id, src string
-	var at time.Time
-	if cs, t, ok := s.Store.LastCallsign(hex); ok {
-		id, at, src = cs, t, "ADS-B"
+func (s *Server) flight(segs []flights.Segment) *flightJSON {
+	var sg *flights.Segment
+	for i := len(segs) - 1; i >= 0; i-- {
+		if segs[i].Identified {
+			sg = &segs[i]
+			break
+		}
 	}
-	if f, ok := s.Store.LastFlight(hex); ok && f.T.After(at) {
-		id, at, src = firstNonEmpty(f.Callsign, f.Flight), f.T, "messages"
-	}
-	if id == "" {
+	if sg == nil {
 		return nil
 	}
-	age := s.now().Sub(at)
+	seen := firstTime(sg.SeenAt, sg.End)
+	age := s.now().Sub(seen)
 	if age > InfoHideAfter {
 		return nil
 	}
-	out := &flightJSON{T: at, Source: src, Stale: age > InfoFreshFor}
+	out := &flightJSON{T: seen, Source: firstNonEmpty(sg.SeenBy, "ADS-B"), Stale: age > InfoFreshFor}
+	id := firstNonEmpty(sg.Callsign, sg.Flight)
 	out.Callsign, out.Number = airlines.Forms(id)
 	if out.Callsign == "" && out.Number == "" {
 		out.Callsign = strings.ToUpper(id) // an airline we have no table entry for: show it as received
@@ -258,37 +250,64 @@ const (
 	InfoHideAfter = 24 * time.Hour
 )
 
-// routeJSON is the origin and destination the aircraft last reported (REP081, ACMF, an airline report or a flight plan).
+// routeJSON is the origin and destination of the aircraft's newest flight (see the flights package): what its reports said most
+// often (REP081, ACMF, an airline report, a flight plan), or, where they said nothing, what was entered by hand or seen on ADS-B.
 type routeJSON struct {
-	From     string    `json:"from"`
-	To       string    `json:"to"`
-	FromName string    `json:"from_name,omitempty"`
-	ToName   string    `json:"to_name,omitempty"`
-	ToLat    *float64  `json:"to_lat,omitempty"`
-	ToLon    *float64  `json:"to_lon,omitempty"`
-	T        time.Time `json:"t"`
-	Stale    bool      `json:"stale,omitempty"` // older than InfoFreshFor: may be out of date
-	Source   string    `json:"source"`
+	From       string    `json:"from"`
+	To         string    `json:"to"`
+	FromName   string    `json:"from_name,omitempty"`
+	ToName     string    `json:"to_name,omitempty"`
+	ToLat      *float64  `json:"to_lat,omitempty"`
+	ToLon      *float64  `json:"to_lon,omitempty"`
+	T          time.Time `json:"t,omitzero"`
+	Stale      bool      `json:"stale,omitempty"` // older than InfoFreshFor: may be out of date
+	Source     string    `json:"source"`
+	FromManual bool      `json:"from_manual,omitempty"` // entered by hand: see flights.Segment
+	FromSeen   bool      `json:"from_seen,omitempty"`   // seen on ADS-B: see flights.Segment
+	ToManual   bool      `json:"to_manual,omitempty"`
 }
 
-func (s *Server) route(hex string) *routeJSON {
-	r, ok := s.Store.LastRouteAt(hex, s.now())
-	if !ok {
+func (s *Server) route(segs []flights.Segment) *routeJSON {
+	if len(segs) == 0 {
 		return nil
 	}
-	age := s.now().Sub(r.T)
-	if age > InfoHideAfter {
+	sg := segs[len(segs)-1]
+	if sg.From == "" && sg.To == "" {
 		return nil
 	}
-	out := &routeJSON{From: r.From, To: r.To, T: r.T, Stale: r.Source != "flight plan" && age > InfoFreshFor || r.Source == "flight plan" && age > PlanFreshFor, Source: r.Source}
-	if a, ok := airports.Lookup(r.From); ok {
+	out := &routeJSON{From: sg.From, To: sg.To, T: sg.RouteAt, Source: sg.RouteSource, FromManual: sg.FromManual, FromSeen: sg.FromSeen, ToManual: sg.ToManual}
+	switch {
+	case sg.RouteSource != "": // a report said so, and is as old as it is
+		age := s.now().Sub(sg.RouteAt)
+		if age > InfoHideAfter {
+			return nil
+		}
+		out.Stale = sg.RouteSource != "flight plan" && age > InfoFreshFor || sg.RouteSource == "flight plan" && age > PlanFreshFor
+	case sg.FromManual || sg.ToManual:
+		out.Source = "entered by hand"
+		out.Stale = s.now().Sub(sg.End) > InfoFreshFor
+	default:
+		out.Source = "seen on ADS-B"
+		out.T = firstTime(sg.Departed, sg.Start)
+		out.Stale = s.now().Sub(sg.End) > InfoFreshFor
+	}
+	if a, ok := airports.Lookup(sg.From); ok {
 		out.FromName = a.Name
 	}
-	if a, ok := airports.Lookup(r.To); ok {
+	if a, ok := airports.Lookup(sg.To); ok {
 		lat, lon := a.Lat, a.Lon
 		out.ToName, out.ToLat, out.ToLon = a.Name, &lat, &lon
 	}
 	return out
+}
+
+func firstTime(ts ...time.Time) time.Time {
+	for _, t := range ts {
+		if !t.IsZero() {
+			return t
+		}
+	}
+	return time.Time{}
 }
 
 // lastPos is the newest position we hold for a watched aircraft, from ADS-B or
@@ -344,17 +363,18 @@ func (s *Server) withAircraft(j watchJSON) watchJSON {
 	if j.Hex != "" {
 		j.Type = s.Store.TypeForHex(j.Hex)
 		j.LastPos = s.lastPosition(j.Hex)
-		j.Route = s.route(j.Hex)
+		segs := s.recentFlights(j.Hex, s.now())
+		j.Route = s.route(segs)
 		dest := j.Dest
 		if dest == "" && j.Route != nil && !j.Route.Stale {
 			dest = j.Route.To
 		}
-		j.Landing = s.landing(j.Hex, dest)
+		j.Landing = s.landing(j.Hex, dest, segs)
 		if n, latest := s.Store.NoteSummary(j.Hex); n > 0 {
 			j.Notes, j.LastNote = n, preview(latest)
 		}
 		if j.Kind != string(watchlist.KindFlight) { // a flight watch already is a flight
-			j.Flight = s.flight(j.Hex)
+			j.Flight = s.flight(segs)
 		}
 	}
 	return j
@@ -543,40 +563,58 @@ type lastFlightJSON struct {
 	End         time.Time `json:"end"` // the last we heard of it on that flight
 }
 
-type cachedFlight struct {
-	at time.Time
-	v  *lastFlightJSON
+type cachedFlights struct {
+	at    time.Time
+	stamp string
+	segs  []flights.Segment
 }
 
-// lastFlightFor is the aircraft's newest identified flight in the last few days (else its newest flight of any kind), or
-// nil. Worked out the way the map's flights are, and kept for a minute because the airframes page asks every 30 seconds.
-func (s *Server) lastFlightFor(hex string, now time.Time) *lastFlightJSON {
+// recentFlights is the aircraft's flights over the last week (and what they need from before it), worked out once and kept until the
+// store holds something new for the aircraft, or a minute has gone: the map's list, the airframes page and the sidebar all read the
+// same flights, and working them out takes tens of milliseconds an aircraft.
+func (s *Server) recentFlights(hex string, now time.Time) []flights.Segment {
+	stamp := s.Store.Stamp(hex)
 	s.flightMu.Lock()
 	defer s.flightMu.Unlock()
-	if c, ok := s.flightCache[hex]; ok && now.Sub(c.at) < time.Minute {
-		return c.v
+	if c, ok := s.flightCache[hex]; ok && c.stamp == stamp && now.Sub(c.at) < time.Minute && now.Sub(c.at) >= 0 {
+		return c.segs
 	}
-	var out *lastFlightJSON
-	if segs, err := flights.Segments(s.Store, hex, now.Add(-lastFlightWindow), now.Add(time.Minute)); err == nil && len(segs) > 0 {
-		sg := segs[len(segs)-1]
-		for i := len(segs) - 1; i >= 0; i-- {
-			if segs[i].Identified {
-				sg = segs[i]
-				break
-			}
-		}
-		out = &lastFlightJSON{Flight: sg.Flight, Callsign: sg.Callsign, From: sg.From, To: sg.To, FromManual: sg.FromManual, FromSeen: sg.FromSeen, ToManual: sg.ToManual, Departed: sg.Departed, DepartedHow: sg.DepartedHow, Start: sg.Start, End: sg.End}
-		if a, ok := airports.Lookup(sg.From); ok {
-			out.FromName = a.Name
-		}
-		if a, ok := airports.Lookup(sg.To); ok {
-			out.ToName = a.Name
-		}
+	segs, err := flights.Current(s.Store, hex, now.Add(-lastFlightWindow), now.Add(time.Minute))
+	if err != nil {
+		segs = nil
 	}
 	if s.flightCache == nil {
-		s.flightCache = map[string]cachedFlight{}
+		s.flightCache = map[string]cachedFlights{}
 	}
-	s.flightCache[hex] = cachedFlight{now, out}
+	s.flightCache[hex] = cachedFlights{now, stamp, segs}
+	return segs
+}
+
+// lastFlightFor is the aircraft's newest identified flight in the last few days (else its newest flight of any kind), or nil.
+func (s *Server) lastFlightFor(hex string, now time.Time) *lastFlightJSON {
+	var segs []flights.Segment
+	for _, sg := range s.recentFlights(hex, now) {
+		if !sg.Pending { // a flight still to leave is not one it flew
+			segs = append(segs, sg)
+		}
+	}
+	if len(segs) == 0 {
+		return nil
+	}
+	sg := segs[len(segs)-1]
+	for i := len(segs) - 1; i >= 0; i-- {
+		if segs[i].Identified {
+			sg = segs[i]
+			break
+		}
+	}
+	out := &lastFlightJSON{Flight: sg.Flight, Callsign: sg.Callsign, From: sg.From, To: sg.To, FromManual: sg.FromManual, FromSeen: sg.FromSeen, ToManual: sg.ToManual, Departed: sg.Departed, DepartedHow: sg.DepartedHow, Start: sg.Start, End: sg.End}
+	if a, ok := airports.Lookup(sg.From); ok {
+		out.FromName = a.Name
+	}
+	if a, ok := airports.Lookup(sg.To); ok {
+		out.ToName = a.Name
+	}
 	return out
 }
 
