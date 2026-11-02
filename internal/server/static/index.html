@@ -60,6 +60,7 @@
   button.pause.suggest { border-color: #2b8a3e; color: #2b8a3e; font-weight: 600; }
   button.pause[hidden] { display: none; }
   button.copy { border: none; background: none; cursor: pointer; padding: 0 3px; font-size: 11px; vertical-align: baseline; }
+  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #222; color: #fff; padding: 6px 14px; border-radius: 4px; font-size: 13px; z-index: 5000; pointer-events: none; }
   button.copy:hover { background: #e8eefc; border-radius: 3px; }
   h4 { margin: 14px 0 4px; }
   #msgs .msg { padding: 5px 4px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 12px; }
@@ -514,6 +515,24 @@ function copyButton(text) {
   return b;
 }
 
+// An identifier in the watch list that a double click copies. Selecting it by hand does not last: the list is redrawn
+// every few seconds and takes the selection with it.
+function copyable(text) {
+  const e = document.createElement('span');
+  e.textContent = text;
+  e.title = 'Double-click to copy';
+  e.ondblclick = async ev => {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    const ok = await copyText(text);
+    const t = document.createElement('div');   // the span may be redrawn before anyone looks, so the answer is a toast
+    t.className = 'toast';
+    t.textContent = ok ? `Copied ${text}` : `Could not copy ${text}`;
+    document.body.append(t);
+    setTimeout(() => t.remove(), 1500);
+  };
+  return e;
+}
+
 // What the last ADS-B ask for a watch found, so a missing track can be explained: when it was asked, whether the aircraft
 // was in the answer, and when it was last heard. (The line under "last ADS-B" says when the newest position is from.)
 const POLL_RESULT = {heard: '', not_seen: 'not in the answer', no_position: 'in the answer, no usable position', error: 'the ask failed'};
@@ -585,14 +604,13 @@ async function refresh() {
     li.querySelector('b').append(chip);
     const idLine = li.querySelector('small');
     const bits = [];
-    if (w.kind === 'flight' && w.callsign) bits.push(document.createTextNode(w.callsign));
+    if (w.kind === 'flight' && w.callsign) bits.push(copyable(w.callsign));
     if (w.tail) {
-      const t = document.createElement('span');
-      t.append(document.createTextNode(w.tail));
+      const t = copyable(w.tail);
       if (w.kind !== 'tail') t.append(copyButton(w.tail));
       bits.push(t);
     }
-    if (w.hex) bits.push(document.createTextNode(w.hex));
+    if (w.hex) bits.push(copyable(w.hex));
     bits.forEach((b, i) => { if (i) idLine.append(document.createTextNode(' · ')); idLine.append(b); });
     idLine.append(document.createTextNode(`${bits.length ? ' — ' : ''}${fmt(w.start)} → ${fmt(w.end)}`));
     if (w.last_pos || w.type) {

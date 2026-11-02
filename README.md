@@ -274,7 +274,8 @@ them for alternates and ETOPS enroute alternates (on Cathay flights with a known
 destination, it was the first airport requested only 4 times in 16 and the last only 6).
 
 On flight and hex watches the tail has a 📋 button that copies it, so an aircraft first
-followed by callsign can be re-added by registration.
+followed by callsign can be re-added by registration. A double click on any identifier in the row (callsign, registration or hex) copies it too, and says so,
+which works where selecting it by hand does not: the list is redrawn every few seconds and the selection goes with it.
 
 ## ADS-B sources
 
@@ -354,7 +355,7 @@ and pieces of one flight that report the same REP081 route are joined (a flight 
 logged for its last hours is still one flight).
 
 A flight's **route** is the origin and destination the aircraft reported most often during it (REP081 and the other
-A350 reports, ACMF and airline position reports, `*POS` at the top of descent, Delta's departure report and UPS's three route messages, a filed
+A350 reports, ACMF, satellite (`SB...`) and airline position reports, `*POS` at the top of descent, Delta's departure report and UPS's three route messages, a filed
 plan), and **when it left** is the best evidence there is: a takeoff report's takeoff time, else ADS-B seeing it leave
 the ground, else a gate time from a departure report. Both are worked out afresh each time, so a flight that has
 only its number at first gains its route and departure time as the reports come in.

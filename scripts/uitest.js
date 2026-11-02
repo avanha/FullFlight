@@ -430,6 +430,23 @@ highlightGroup = null;
   delete watch.tail;
   await t.refresh();
   assert.strictEqual(copyBtn(), undefined, 'no tail, nothing to copy');
+  // a double click on any identifier copies it, whatever kind of watch: the registration of a tail watch has no button
+  watch.kind = 'flight'; watch.ident = 'CPA113'; watch.callsign = 'CPA113'; watch.tail = 'B-LRD';
+  await t.refresh();
+  const ids = () => descendants(idLine()).filter(c => c.title === 'Double-click to copy');
+  assert.deepStrictEqual(ids().map(c => textOf(c).replace(/\u{1F4CB}/u, '')), ['CPA113', 'B-LRD', '780AB8'], 'callsign, registration and hex');
+  calls.copied.length = 0;
+  let n = document.body.children.length;
+  await ids()[1].ondblclick({stopPropagation() {}});
+  await ids()[2].ondblclick({stopPropagation() {}});
+  assert.strictEqual(JSON.stringify(calls.copied), '["B-LRD","780AB8"]');
+  const toast = document.body.children.at(-1);
+  assert.ok(document.body.children.length === n + 2 && toast.className === 'toast' && toast.textContent === 'Copied 780AB8', 'each copy is acknowledged');
+  calls.timers.at(-1)();
+  assert.ok(toast.removed, 'and the acknowledgement goes');
+  watch.kind = 'tail'; watch.ident = 'B-LRM'; watch.tail = 'B-LRM';
+  await t.refresh();
+  assert.strictEqual(ids().length >= 2 && textOf(ids()[0]), 'B-LRM', 'a tail watch can copy its registration too');
   watch.kind = was.kind; watch.ident = was.ident; watch.callsign = was.callsign; watch.tail = 'B-LRM';
   await t.refresh();
 
