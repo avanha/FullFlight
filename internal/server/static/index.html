@@ -2152,8 +2152,9 @@ async function drawAllFixes() {
 const airportGroup = L.layerGroup().addTo(map);
 let airportData = null, airportChosen = null, airportTimer = null, airportSeq = 0;
 const LANDING_RADIUS_NM = 15;
-// Airports are written by their four-letter ICAO codes everywhere (the three-letter IATA code can still be typed to find one).
-const airportCodes = a => a.icao;
+// Routes and aircraft popups give the four-letter ICAO code alone; the airport list, its search and the airport's own popup
+// give both codes, which is where a reader learns what a route's code stands for.
+const airportCodes = a => a.icao + (a.iata ? ' / ' + a.iata : '');
 
 function airportLines(a) {
   const lines = [[a.name, a.city && !a.name.includes(a.city) ? a.city : ''].filter(Boolean).join(' · ')];

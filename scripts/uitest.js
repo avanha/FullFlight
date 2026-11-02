@@ -1503,7 +1503,7 @@ highlightGroup = null;
         {icao: 'HKGA', iata: 'GAS', name: 'Garissa Airport', city: 'Garissa', lat: -0.46, lon: 39.64});
       await type('#routeto', 'HKG');
       const rows = () => list().children.map(li => li.children[0].textContent + ' | ' + li.children[1].textContent);
-      assert.deepStrictEqual(rows(), ['VHHH | Hong Kong International Airport', 'HKGA | Garissa Airport'], 'the exact code first, written as ICAO whatever was typed, and not filtered away');
+      assert.deepStrictEqual(rows(), ['VHHH / HKG | Hong Kong International Airport', 'HKGA / GAS | Garissa Airport'], 'the exact code first, with both codes shown, and not filtered away');
       assert.strictEqual(list().hidden, false);
       assert.strictEqual(document.querySelector('#aptlist').children.length, 0, 'the airport tab\'s list is not the suggestions\' list');
 
@@ -1550,7 +1550,7 @@ highlightGroup = null;
 
       airportData.airports.splice(0, airportData.airports.length, ...keep);
       await type('#routeto', 'jnb');
-      assert.strictEqual(rows()[0].startsWith('FAOR | O.R. Tambo'), true, rows()[0]);
+      assert.strictEqual(rows()[0].startsWith('FAOR / JNB | O.R. Tambo'), true, rows()[0]);
       byId['#routecancel'].onclick();
       assert.strictEqual(list().hidden, true);
     });

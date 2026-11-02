@@ -49,7 +49,7 @@ Type into the web UI (or `POST /api/watches {"input": "...", "until": "<RFC3339>
   countries hand out addresses by a rule (`internal/regs`). Anywhere else the hex comes from what we have already seen, or airframes.io (asked at
   most once an hour per registration).
 
-Add an optional destination, as its 4-letter ICAO code (the 3-letter IATA code is accepted too): `UA869 2026-10-31 KSFO`. Airports are shown by their ICAO codes throughout the page.
+Add an optional destination, as its 4-letter ICAO code (the 3-letter IATA code is accepted too): `UA869 2026-10-31 KSFO`. Routes and aircraft popups show airports by their ICAO codes; the Airports tab, its search and an airport's own popup show the IATA code beside it.
 
 - **With a destination**, the watch ends when the aircraft is on the ground
   within 10 nm of that airport (or was last seen low, within 15 nm, and has been
