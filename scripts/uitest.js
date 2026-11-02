@@ -1313,13 +1313,11 @@ highlightGroup = null;
     assert.match(html, /<div id="menu"[^>]*><a id="menu-airframes" href="\/airframes\.html"/, 'Airframes is in the menu');
     assert.match(html, /<a id="menu-stations" href="\/stations\.html"/, 'and so are the stations');
     assert.ok(!/class="navlink"/.test(html), 'and no longer beside the title');
-    assert.strictEqual(byId['#menu-backfill'].href, '/backfill.html?hex=780AB8', 'the backfill screen opens on the selected aircraft');
+    assert.ok(vm.runInContext('selected', ctx), 'an aircraft is selected');
+    assert.match(html, /<a id="menu-backfill" href="\/backfill\.html" /, 'the backfill link is the plain page');
+    assert.strictEqual((byId['#menu-backfill'] || {}).href, undefined, 'and is not rewritten when an aircraft is selected: the screen opens on all aircraft');
     byId['#menubtn'].onclick(); assert.strictEqual(byId['#menu'].hidden, true, 'and closes it');
     const prevSelected = vm.runInContext('selected', ctx);
-    vm.runInContext('selected = null', ctx);
-    byId['#menubtn'].onclick();
-    assert.strictEqual(byId['#menu-backfill'].href, '/backfill.html', 'with nothing selected it opens on all aircraft');
-    byId['#menubtn'].onclick();
     vm.runInContext(`selected = ${prevSelected}`, ctx);
   }
 

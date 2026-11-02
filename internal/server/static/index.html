@@ -2295,10 +2295,6 @@ $('#fixall').onchange = drawAllFixes;
 function toggleMenu(on) {
   const open = on ?? $('#menu').hidden;
   $('#menu').hidden = !open; $('#menubtn').className = open ? 'on' : '';
-  if (open) {   // the backfill screen opens on the selected aircraft
-    const w = watches.find(x => x.id === selected && x.hex);
-    $('#menu-backfill').href = '/backfill.html' + (w ? `?hex=${w.hex}` : '');
-  }
 }
 $('#menubtn').onclick = e => { toggleMenu(); if (e && e.stopPropagation) e.stopPropagation(); };
 if (document.addEventListener) document.addEventListener('click', e => { if ($('#menu').hidden || (e.target && e.target.id === 'menubtn')) return; toggleMenu(false); });

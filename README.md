@@ -509,8 +509,8 @@ tracking data as an archive (<https://github.com/adsblol/globe_history_2026>, on
       cache_max_gib: 100                             # the oldest days are deleted to stay within this
 
 Nothing is downloaded or read unless `enabled` is on and you start it. The hamburger menu at the top right of the left
-panel has **Backfill history...**, which opens its own screen (`/backfill.html`; opened from the map with an aircraft
-selected, it starts on that aircraft). The screen lists every day that could be read, with how many aircraft it is for,
+panel has **Backfill history...**, which opens its own screen (`/backfill.html`, which starts on all tracked aircraft; one
+aircraft can be chosen in the list at the top, or by adding `?hex=` and its address to the link). The screen lists every day that could be read, with how many aircraft it is for,
 whether it is already in the cache or would be downloaded (a day is 3 to 4 GB, in two or three tar parts), and its size.
 Days already read for all their aircraft stay listed, greyed and not tickable, so what the cache holds can be seen. Tick the days to read (all, none, or only the cached ones are one click each); under the list it says what the chosen
 days come to: the download, the cache's room, and which old days would be deleted to make room. Press Start. Each row
