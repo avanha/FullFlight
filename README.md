@@ -274,7 +274,7 @@ them for alternates and ETOPS enroute alternates (on Cathay flights with a known
 destination, it was the first airport requested only 4 times in 16 and the last only 6).
 
 On flight and hex watches the tail has a 📋 button that copies it, so an aircraft first
-followed by callsign can be re-added by registration. A double click on any identifier in the row (callsign, registration or hex) copies it too, and says so,
+followed by callsign can be re-added by registration. A double click on any identifier in the row (callsign, registration or hex, and both forms of the flight line, CPA113 and CX113) copies it too, and says so,
 which works where selecting it by hand does not: the list is redrawn every few seconds and the selection goes with it.
 
 ## ADS-B sources

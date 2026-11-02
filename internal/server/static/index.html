@@ -624,8 +624,10 @@ async function refresh() {
     if (w.flight) {
       const f = document.createElement('small');
       f.className = 'flight' + (w.flight.stale ? ' stale' : '');
-      const name = [w.flight.callsign, w.flight.number].filter(Boolean).join(' · ');
-      f.textContent = `flight ${name} (${w.flight.source === 'messages' ? 'from messages' : w.flight.source} ${ago(w.flight.t)}${w.flight.stale ? ', may be out of date' : ''})`;
+      const names = [w.flight.callsign, w.flight.number].filter(Boolean);   // both forms of the flight, each copied by a double click
+      f.append(document.createTextNode('flight '));
+      names.forEach((n, i) => { if (i) f.append(document.createTextNode(' · ')); f.append(copyable(n)); });
+      f.append(document.createTextNode(` (${w.flight.source === 'messages' ? 'from messages' : w.flight.source} ${ago(w.flight.t)}${w.flight.stale ? ', may be out of date' : ''})`));
       li.append(f);
     }
     if (w.route) {

@@ -381,16 +381,24 @@ highlightGroup = null;
   assert.strictEqual(flightLine(), undefined, 'no flight line when none known');
   watch.flight = {callsign: 'CPA113', number: 'CX113', t: new Date(Date.now() - 4 * 60000).toISOString(), source: 'messages'};
   await t.refresh();
-  assert.strictEqual(flightLine().textContent, 'flight CPA113 \u00b7 CX113 (from messages 4m ago)');
+  assert.strictEqual(textOf(flightLine()), 'flight CPA113 \u00b7 CX113 (from messages 4m ago)');
   assert.ok(!flightLine().className.includes('stale'));
+  { // both forms of the flight are copied by a double click
+    const forms = descendants(flightLine()).filter(c => c.title === 'Double-click to copy');
+    assert.deepStrictEqual(forms.map(c => textOf(c)), ['CPA113', 'CX113']);
+    calls.copied.length = 0;
+    await forms[0].ondblclick({stopPropagation() {}});
+    await forms[1].ondblclick({stopPropagation() {}});
+    assert.strictEqual(JSON.stringify(calls.copied), '["CPA113","CX113"]');    calls.copied.length = 0;
+  }
   assert.ok(!textOf(idLine()).includes('CPA113'), 'a tail watch no longer shows a possibly out-of-date callsign in the id line');
   watch.flight = {...watch.flight, t: new Date(Date.now() - 3 * 3600000).toISOString(), source: 'ADS-B', stale: true};
   await t.refresh();
-  assert.strictEqual(flightLine().textContent, 'flight CPA113 \u00b7 CX113 (ADS-B 3h ago, may be out of date)');
+  assert.strictEqual(textOf(flightLine()), 'flight CPA113 \u00b7 CX113 (ADS-B 3h ago, may be out of date)');
   assert.ok(flightLine().className.includes('stale'));
   watch.flight = {callsign: 'ZZZ123', t: new Date().toISOString(), source: 'ADS-B'};   // an airline with no IATA code
   await t.refresh();
-  assert.match(flightLine().textContent, /^flight ZZZ123 \(ADS-B /);
+  assert.match(textOf(flightLine()), /^flight ZZZ123 \(ADS-B /);
   delete watch.flight;
 
   // 8g. copy-to-clipboard next to the tail, on watches that were not started by tail
