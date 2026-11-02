@@ -126,7 +126,7 @@ func (s *Store) Stations() ([]StationStats, error) {
 	rows.Close()
 
 	// the lags: how long after the time the aircraft put in a message it reached us
-	if rows, err = s.db.Query(`SELECT station, ts - ` + eventAt + ` FROM message WHERE station <> '' AND time_flag = 0 AND ` + eventAt + ` IS NOT NULL`); err != nil {
+	if rows, err = s.db.Query(`SELECT station, ts - at_ts FROM message WHERE station <> '' AND time_flag = 0 AND at_basis = '` + AtEvent + `'`); err != nil {
 		return nil, err
 	}
 	lags := map[string][]time.Duration{}

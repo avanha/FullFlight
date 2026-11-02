@@ -425,6 +425,13 @@ the next flight's data) can name the next flight while the aircraft is still fly
 aircraft itself named another flight within two hours before it and again within two hours after; it counts as before at either end
 of a flight (the flight just finished, the one about to start).
 
+**The time a message counts as.** Every message has two times: when it arrived, and the time it counts as for the flight it
+belongs to. The second is the time the aircraft put in it where that is a full date and time (or a day of the month and a time of
+day, placed in the month it arrived or the one before), the position time of the report kinds that give the date, or, for a flight
+that has not left yet, when it is due to; otherwise it is the arrival. It is worked out once, when the message is stored or decoded
+again (`-redecode`), and kept in the message row with the basis it rests on (`event`, `scheduled` or `receipt`), so a rule change
+reaches stored messages the same way a decoder change does. Everything that places a message in a flight reads that one time.
+
 **Reports delivered late.** An A350 keeps its reports and sends them later: of the ones that name a route, about half reach us
 more than a day after the event. Each counts for the flight it happened during, by the time the aircraft put in it. One that
 happened at a moment none of our flights holds (the flight itself is only known from the messages that arrived late) counts for

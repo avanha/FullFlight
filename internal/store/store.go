@@ -242,7 +242,74 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := fillEventTimes(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("event times: %w", err)
+	}
 	return &Store{db: db}, nil
+}
+
+// fillEventTimes keeps the time each message counts as in the message row (see EventTime): it adds the columns if the database
+// predates them, and works the time out for every message that has none yet. (This is code and not a numbered migration because the
+// numbered ones are plain SQL, and the rules for the time are Go.)
+func fillEventTimes(db *sql.DB) error {
+	var have int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('message') WHERE name = 'at_ts'`).Scan(&have); err != nil {
+		return err
+	}
+	if have == 0 {
+		if _, err := db.Exec(`ALTER TABLE message ADD COLUMN at_ts INTEGER; ALTER TABLE message ADD COLUMN at_basis TEXT NOT NULL DEFAULT '';
+			CREATE INDEX message_hex_at ON message (hex, at_ts);`); err != nil {
+			return err
+		}
+	}
+	type row struct {
+		id    int64
+		at    int64
+		basis string
+	}
+	for {
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		rows, err := tx.Query(`SELECT id, ts, kind, pos_ts, decoded FROM message WHERE at_ts IS NULL LIMIT 5000`)
+		if err != nil {
+			tx.Rollback()
+			return err
+		}
+		var todo []row
+		for rows.Next() {
+			var id, t int64
+			var kind, decoded string
+			var posTS *int64
+			if err := rows.Scan(&id, &t, &kind, &posTS, &decoded); err != nil {
+				rows.Close()
+				tx.Rollback()
+				return err
+			}
+			var posT *time.Time
+			if posTS != nil {
+				v := time.Unix(*posTS, 0).UTC()
+				posT = &v
+			}
+			at, basis := EventTime(time.Unix(t, 0).UTC(), kind, posT, decoded)
+			todo = append(todo, row{id, ts(at), basis})
+		}
+		rows.Close()
+		if len(todo) == 0 {
+			return tx.Commit()
+		}
+		for _, r := range todo {
+			if _, err := tx.Exec(`UPDATE message SET at_ts=?, at_basis=? WHERE id=?`, r.at, r.basis, r.id); err != nil {
+				tx.Rollback()
+				return err
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+	}
 }
 
 func migrate(db *sql.DB) error {

@@ -770,6 +770,7 @@ type messageJSON struct {
 	PosT           *time.Time     `json:"pos_t,omitempty"`
 	Elsewhere      *elsewhereJSON `json:"elsewhere,omitempty"` // airframes.io tagged it with another flight of this aircraft, which we have: it probably belongs there
 	At             *time.Time     `json:"at,omitempty"`        // when it counts for its flight, if not when it arrived: the aircraft's own time on a message delivered late
+	AtBasis        string         `json:"at_basis,omitempty"`  // and why: "event" (the time it gives for itself) or "scheduled" (its flight is due to leave then)
 	Suspect        string         `json:"suspect,omitempty"`
 	TimeNote       string         `json:"time_note,omitempty"`
 	TimeUnverified bool           `json:"time_unverified,omitempty"`
@@ -876,7 +877,7 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 			Mismatch: m.Mismatch, AFTail: m.AFTail, AFFlight: m.AFFlight}
 		if !m.At.IsZero() && !m.At.Equal(m.T) {
 			at := m.At
-			j.At = &at
+			j.At, j.AtBasis = &at, m.AtBasis
 		}
 		// A message with no flight of its own that airframes.io tagged with another flight number, and no time of its own to put it
 		// there: if that flight is one we have and the message falls outside it, it belongs to that flight (it was delivered late).
