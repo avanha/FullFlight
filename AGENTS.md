@@ -2,9 +2,9 @@
 
 FullFlight is a self-hosted tracker: it follows chosen aircraft by joining live ADS-B positions with the ACARS, ADS-C and
 CPDLC messages they send, and shows one track on a web map. It is a Go program (module `github.com/avanha/fullflight`)
-with a SQLite database and a single-page web UI. Read this file, then `README.md` (what the app does, section by section)
-and `HANDOFF.md` (design, data-source findings and decoding gotchas). Both are accurate enough to rely on; the README is
-the user-facing reference and must be kept in step with the code.
+with a SQLite database and a single-page web UI. Read this file, then `README.md` (the features, summarised, each linking to its rules in `docs/details.md`, which describes
+the app section by section) and `HANDOFF.md` (design, data-source findings and decoding gotchas). Both are accurate enough to rely on; the README and
+`docs/details.md` are the user-facing reference and must be kept in step with the code.
 
 ## Layout
 
@@ -59,7 +59,8 @@ syntax check with another engine is not a test. Add or update a test with each b
 - Match the surrounding code: comment density, naming and idiom. Comments explain why, in plain sentences; the existing
   code is the guide. Run `gofmt`.
 - Change as little as the task needs. The UI is one large file; edit in place rather than restructuring it.
-- Keep `README.md` current when behaviour changes (it is organised by feature). `HANDOFF.md` is the original design record.
+- Keep `docs/details.md` current when behaviour changes (it is organised by feature), and the README's one-line summary of it
+  and its link when a feature is added or its rules change. `HANDOFF.md` is the original design record.
   Do not rewrite it, but correct a statement that has become wrong.
 
 ## Commits and releases
