@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -89,6 +90,28 @@ func newFetcher(h *fakeHub) (*Fetcher, *syncBuf) {
 	buf := &syncBuf{}
 	return &Fetcher{API: h.URL, UserAgent: "test", IdleTimeout: 5 * time.Second,
 		Log: slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))}, buf
+}
+
+// A position the backfill itself added is not a reason to search the day before it: that would walk back one day at a time
+// for as long as the aircraft flew. Only what we polled and received counts.
+func TestPlanIgnoresDaysOnlyBackfillFilled(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	st.AddPosition(store.Position{Hex: "7C4926", T: time.Date(2026, 10, 31, 22, 0, 0, 0, time.UTC), Lat: 1, Lon: 1, Source: "adsb.lol"})
+	// the archive gave it tracks on the 29th and 30th
+	st.AddHistory("7C4926", []store.Position{
+		{Hex: "7C4926", T: time.Date(2026, 10, 30, 10, 0, 0, 0, time.UTC), Lat: 2, Lon: 2, Source: Source},
+		{Hex: "7C4926", T: time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC), Lat: 3, Lon: 3, Source: Source}})
+	m := &Manager{Store: st, Cache: Cache{Dir: t.TempDir()}, Now: func() time.Time { return time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC) }}
+	p, err := m.Plan("", nil)
+	var days []string
+	for _, d := range p.Days {
+		days = append(days, d.Day)
+	}
+	sort.Strings(days)
+	if err != nil || strings.Join(days, " ") != "2026-10-30 2026-10-31 2026-11-01" {
+		t.Errorf("only the day it was polled on and the days either side: %v %v", days, err)
+	}
 }
 
 func TestDownloadAndImportADay(t *testing.T) {

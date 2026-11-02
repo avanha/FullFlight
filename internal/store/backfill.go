@@ -118,11 +118,15 @@ func (s *Store) MarkBackfill(day, hexAddr string, positions int, now time.Time) 
 	return err
 }
 
+// HistorySource marks positions that came from the downloaded archives rather than from polling.
+const HistorySource = "adsb.lol-hist"
+
 // HexDays returns, for each aircraft we hold a position or a message for (or just hexAddr, if given), the UTC days
-// (YYYY-MM-DD) those fall on.
+// (YYYY-MM-DD) those fall on. Positions that backfill itself added do not count: they would make the day before each one
+// worth searching, and so on back for as long as the aircraft flew.
 func (s *Store) HexDays(hexAddr string) (map[string][]string, error) {
 	rows, err := s.db.Query(`
-		SELECT hex, date(ts, 'unixepoch') d FROM position WHERE ?1 = '' OR hex = ?1 GROUP BY hex, d
+		SELECT hex, date(ts, 'unixepoch') d FROM position WHERE source <> '`+HistorySource+`' AND (?1 = '' OR hex = ?1) GROUP BY hex, d
 		UNION
 		SELECT hex, date(ts, 'unixepoch') d FROM message WHERE hex <> '' AND (?1 = '' OR hex = ?1) GROUP BY hex, d
 		ORDER BY 1, 2`, hexAddr)

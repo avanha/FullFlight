@@ -515,10 +515,11 @@ whether it is already in the cache or would be downloaded (a day is 3 to 4 GB, i
 Days already read for all their aircraft stay listed, greyed and not tickable, so what the cache holds can be seen. Tick the days to read (all, none, or only the cached ones are one click each); under the list it says what the chosen
 days come to: the download, the cache's room, and which old days would be deleted to make room. Press Start. Each row
 shows its progress and, once read, how many positions it gave. Stop ends the run after the file in hand; a half-finished
-download is kept and resumed next time. The aircraft can be the one selected or all tracked aircraft.
+download is kept and resumed next time. The aircraft can be one chosen in the list at the top or all tracked aircraft.
 
-Which days: for each aircraft, those it has positions or messages on and the day either side, that are already published and
-not yet searched for that aircraft. Each day is downloaded once into the cache (parts are written as `name.part` and renamed
+Which days: for each aircraft, those it has positions (polled, not backfilled) or messages on and the day either side, that are
+already published and not yet searched for that aircraft. Positions the backfill added do not count, or each day read would make the
+day before it worth reading, one at a time, for as long as the aircraft flew. Each day is downloaded once into the cache (parts are written as `name.part` and renamed
 when complete and the size GitHub gave, so a file without `.part` is whole), then read once for every aircraft that needs it
 (about ten seconds a day). Days you downloaded by hand work too, if the files are named as in the release and placed in
 `adsblol/` under the cache directory. `fullflight -backfill 2026-10-31` reads one cached day from the command line (stop the

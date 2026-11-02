@@ -14,7 +14,7 @@ import (
 )
 
 // Source marks positions that came from the archive rather than from polling.
-const Source = "adsb.lol-hist"
+const Source = store.HistorySource
 
 // A trace file is gzipped JSON from readsb: a base time, and one row per point,
 //
