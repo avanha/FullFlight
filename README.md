@@ -2,18 +2,23 @@
 
 Self-hosted tracker that follows specific aircraft by combining live ADS-B positions (adsb.lol, adsb.fi) with
 ACARS/ADS-C/CPDLC datalink messages (airframes.io), decoded with [golibacars](https://github.com/avanha/golibacars), a Go
-port of [libacars](https://github.com/szpajder/libacars). One map, one track per flight, with the messages beside it.
+port of [libacars](https://github.com/szpajder/libacars). Airplanes are shown individually with as much data as can be gleaned
+from the feeds, and there is a lot of data in datalink messages! It makes me wish for more feeders for better coverarge.
+
+Thanks to thebaldgeek of TBG-LBAND-APAC and all you other feeders.
+
+Note: This app is 99% built with Claude (Opus 5.5 @ Medium). That includes this README file. It gets the point across, but it reads
+like it's AI slop.  My plan is to edit and rewrite it, to improve its readability, especially if this project gets any attention.
 
 [![FullFlight tracking an A359 over the Andaman Sea](docs/screenshot.png)](https://avanha.github.io/FullFlight/)
 
 **[Home page](https://avanha.github.io/FullFlight/)** · **[Details of every feature](docs/details.md)** ·
 [Design notes](HANDOFF.md) · [airframes.io API findings](docs/airframes-api.md)
 
-Each point below is a summary; follow its link for the full rules.
 
 ## Build and run
 
-FullFlight is a pure Go program: SQLite through `modernc.org/sqlite`, no C compiler or system libraries, and it
+FullFlight is now a pure Go program: SQLite through `modernc.org/sqlite`, no C compiler or system libraries, and it
 cross-compiles (`GOOS=linux GOARCH=arm64 go build ./cmd/...`).
 
 - **Go** 1.27.3 or newer (see `go.mod`) from <https://go.dev/dl/>. Optional: `git` (names the release in the User-Agent),
