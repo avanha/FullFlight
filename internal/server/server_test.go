@@ -963,6 +963,47 @@ func TestLandingAndTheRouteFromPositionReports(t *testing.T) {
 	}
 }
 
+// An aircraft parked at its destination is "landed" from when it touched down, not from its newest fix on the ground; and once it
+// takes the callsign of its next flight it is that flight, not yet departed.
+func TestAParkedAircraftTakesItsNextFlight(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	f := func(v float64) *float64 { return &v }
+	land := time.Date(2026, 11, 1, 20, 53, 6, 0, time.UTC)
+	air := store.Position{Hex: "A2551D", T: land.Add(-3 * time.Minute), Lat: 39.89, Lon: -104.5, AltFt: f(7000), GS: f(160), Track: f(270), Callsign: "UAL181", Source: "adsb.lol"}
+	st.AddPosition(air)
+	n := 0
+	gate := func(at time.Time, cs string) {
+		n++ // a position at the same place as the last is not stored again
+		st.AddPosition(store.Position{Hex: "A2551D", T: at, Lat: 39.8554 + float64(n)*1e-5, Lon: -104.6806, OnGround: true, GS: f(0), Callsign: cs, Source: "adsb.lol"})
+	}
+	gate(land, "UAL181")
+	gate(land.Add(10*time.Minute), "UAL181")
+	e, _ := watchlist.Parse("tail:N24993", land.Add(-time.Hour), time.Time{})
+	e.Hex = "A2551D"
+	st.AddWatch(e)
+	get := func(now time.Time) *landingJSON {
+		ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
+		defer ts.Close()
+		_, body := do(t, "GET", ts.URL+"/api/watches", "")
+		var ws []struct{ Landing *landingJSON }
+		if err := json.Unmarshal([]byte(body), &ws); err != nil || len(ws) != 1 {
+			t.Fatalf("%v: %s", err, body)
+		}
+		return ws[0].Landing
+	}
+	l := get(land.Add(time.Hour))
+	if l == nil || l.Code != "KDEN" || !l.At.Equal(land) || l.Next != "" {
+		t.Fatalf("still the flight that landed: %+v", l)
+	}
+	gate(land.Add(3*time.Hour+30*time.Minute), "UAL177")
+	gate(land.Add(3*time.Hour+40*time.Minute), "UAL177")
+	l = get(land.Add(4 * time.Hour))
+	if l == nil || l.Next != "UAL177" || !l.At.Equal(land) {
+		t.Errorf("the next flight, not departed, with the landing time unchanged: %+v", l)
+	}
+}
+
 func TestAirportsAPI(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()

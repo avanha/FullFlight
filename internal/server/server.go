@@ -159,6 +159,7 @@ type landingJSON struct {
 	At     time.Time `json:"at"` // when it probably touched down
 	DistNM float64   `json:"dist_nm"`
 	Basis  string    `json:"basis"`
+	Next   string    `json:"next,omitempty"` // the callsign it has taken on since landing: the next flight, which has not departed
 }
 
 // landing says whether the aircraft's newest position, from any source, is where it landed. A later
@@ -179,7 +180,27 @@ func (s *Server) landing(hex, dest string) *landingJSON {
 	if code == "" {
 		code = l.Airport.IATA
 	}
-	return &landingJSON{Code: code, Name: l.Airport.Name, Lat: l.Airport.Lat, Lon: l.Airport.Lon, At: l.At, DistNM: l.DistNM, Basis: l.Basis}
+	out := &landingJSON{Code: code, Name: l.Airport.Name, Lat: l.Airport.Lat, Lon: l.Airport.Lon, At: l.At, DistNM: l.DistNM, Basis: l.Basis}
+	if p.OnGround {
+		// The newest fix is only the latest of many on the ground: the landing was when the stay began, and a different
+		// callsign since then is the aircraft's next flight, still to leave.
+		if since, ok := s.Store.OnGroundSince(hex); ok {
+			out.At = since
+		}
+		flown, now := airlineForm(s.Store.LastAirborneCallsign(hex)), airlineForm(p.Callsign)
+		if flown != "" && now != "" && flown != now {
+			out.Next = now
+		}
+	}
+	return out
+}
+
+// airlineForm is a callsign in its ICAO form, as it is written for comparison.
+func airlineForm(id string) string {
+	if icao, _ := airlines.Forms(id); icao != "" {
+		return icao
+	}
+	return strings.ToUpper(strings.TrimSpace(id))
 }
 
 // flightJSON is the flight an aircraft is currently operating, from its newest ADS-B callsign

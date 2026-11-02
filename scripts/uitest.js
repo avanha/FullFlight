@@ -101,7 +101,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -448,6 +448,19 @@ highlightGroup = null;
   await t.refresh();
   assert.strictEqual(ids().length >= 2 && textOf(ids()[0]), 'B-LRM', 'a tail watch can copy its registration too');
   watch.kind = was.kind; watch.ident = was.ident; watch.callsign = was.callsign; watch.tail = 'B-LRM';
+  await t.refresh();
+
+  // a parked aircraft says when it landed, or, once it has taken its next flight's callsign, that the flight has not departed
+  const lastLine = () => byId['#list'].children[0].children.find(c => c.className === 'lastpos');
+  watch.landing = {code: 'KDEN', name: 'Denver International Airport', at: '2026-11-01T20:53:06Z', basis: 'last fix on the ground'};
+  await t.refresh();
+  assert.match(lastLine().textContent, /landed KDEN ~/);
+  watch.landing.next = 'UAL177';
+  await t.refresh();
+  assert.match(lastLine().textContent, /UAL177 not departed, at KDEN since /);
+  assert.doesNotMatch(lastLine().textContent, /landed/);
+  assert.match(t.landingNote(watch.landing), /^UAL177 has not departed: on the ground at Denver International Airport \(KDEN\)/);
+  delete watch.landing;
   await t.refresh();
 
   // 8h. position messages are listed at their report time, not their arrival time

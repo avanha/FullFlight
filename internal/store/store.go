@@ -466,6 +466,26 @@ func (s *Store) LastCallsign(hexAddr string) (string, time.Time, bool) {
 	return cs, time.Unix(t, 0).UTC(), true
 }
 
+// OnGroundSince returns when the aircraft's current stay on the ground began: its first position on the ground after the
+// newest one in the air. It is false if the newest position is not on the ground.
+func (s *Store) OnGroundSince(hexAddr string) (time.Time, bool) {
+	var t sql.NullInt64
+	err := s.db.QueryRow(`SELECT MIN(ts) FROM position WHERE hex=?1 AND on_ground=1
+		AND ts > COALESCE((SELECT ts FROM position WHERE hex=?1 AND on_ground=0 ORDER BY ts DESC LIMIT 1), 0)`, hexAddr).Scan(&t)
+	if err != nil || !t.Valid {
+		return time.Time{}, false
+	}
+	return time.Unix(t.Int64, 0).UTC(), true
+}
+
+// LastAirborneCallsign returns the callsign on the aircraft's newest ADS-B position in the air that has one: the flight it
+// last flew, whatever it is called on the ground afterwards.
+func (s *Store) LastAirborneCallsign(hexAddr string) string {
+	var cs string
+	s.db.QueryRow(`SELECT callsign FROM position WHERE hex=? AND on_ground=0 AND callsign != '' ORDER BY ts DESC LIMIT 1`, hexAddr).Scan(&cs)
+	return cs
+}
+
 // lastPosition is the newest position or the zero value.
 func (s *Store) lastPosition(hex string) Position {
 	var p Position

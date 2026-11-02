@@ -774,6 +774,9 @@ destination wins when several airports are near. The watch then carries `landing
 evidence); the plane turns green with a `landed` badge, the projection is not drawn, and the sidebar and hover say
 `landed RJAA ~03:26:44Z`. A newer position of any kind clears it. It is an inference: a missed approach that then
 leaves coverage would be called a landing until the aircraft is heard again.
+An aircraft seen on the ground is landed from when its stay began (its first position on the ground after the last in the
+air), not from its newest fix. Once ADS-B gives it a different callsign than the flight it flew in on, the sidebar and hover
+say `UAL177 not departed, at KDEN since 20:53Z`: it is the next flight, waiting at the gate.
 
 ## Web page
 

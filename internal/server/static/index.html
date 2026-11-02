@@ -585,7 +585,7 @@ async function refresh() {
     pb.hidden = !(isOpen || isPaused);
     pb.textContent = isPaused ? '\u25b6 Resume' : '\u23f8 Pause';
     pb.className = 'pause' + (w.landing && isOpen ? ' suggest' : '');
-    pb.title = isPaused ? 'Resume tracking' : w.landing ? `It has landed at ${w.landing.code}: pause to stop polling for it. It stays in the list with everything we hold about it.`
+    pb.title = isPaused ? 'Resume tracking' : w.landing ? `It is on the ground at ${w.landing.code}: pause to stop polling for it. It stays in the list with everything we hold about it.`
       : 'Stop polling for it. It stays in the list with everything we hold about it.';
     pb.onclick = async e => {
       e.stopPropagation();
@@ -616,7 +616,7 @@ async function refresh() {
     if (w.last_pos || w.type) {
       const lp = document.createElement('small');
       lp.className = 'lastpos';
-      lp.textContent = [w.last_pos && `last ${w.last_pos.kind} ${fmtTime(w.last_pos.t)} (${ago(w.last_pos.t)})`, w.landing && `landed ${w.landing.code} ~${fmtTime(w.landing.at)}`, w.type].filter(Boolean).join(' · ');
+      lp.textContent = [w.last_pos && `last ${w.last_pos.kind} ${fmtTime(w.last_pos.t)} (${ago(w.last_pos.t)})`, w.landing && (w.landing.next ? `${w.landing.next} not departed, at ${w.landing.code} since ${fmtTime(w.landing.at)}` : `landed ${w.landing.code} ~${fmtTime(w.landing.at)}`), w.type].filter(Boolean).join(' · ');
       li.append(lp);
     }
     const pl = pollLine(w);
@@ -828,7 +828,8 @@ const AGE_STEPS = [
 const ageStep = ageMs => AGE_STEPS.filter(s => ageMs >= s.min * 60000).pop() || null;
 const staleNote = ageMs => (ageStep(ageMs) || {}).note || '';
 // The server's inference that the aircraft landed (its last fix was low, near an airport, and nothing followed).
-const landingNote = l => `landed at ${l.name} (${l.code}), inferred, about ${fmtTime(l.at)}: ${l.basis}`;
+const landingNote = l => l.next ? `${l.next} has not departed: on the ground at ${l.name} (${l.code}) since about ${fmtTime(l.at)}, when the flight before it landed`
+  : `landed at ${l.name} (${l.code}), inferred, about ${fmtTime(l.at)}: ${l.basis}`;
 const fixNote = (w, ageMs) => w.landing ? landingNote(w.landing) : w.status === 'paused' ? 'tracking is paused: no newer positions are being fetched' : staleNote(ageMs);
 let planeMark = null;   // the plane at the newest fix: {marker, track, t, html}
 // Put the plane on the map at a fix of time t (ms).
