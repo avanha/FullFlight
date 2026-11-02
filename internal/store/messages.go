@@ -657,7 +657,7 @@ var routeReportsSQL = `
 	UNION ALL
 	SELECT COALESCE(pos_ts, ts), COALESCE(json_extract(decoded, '$.fields.origin'), ''), json_extract(decoded, '$.fields.dest'),
 		CASE kind WHEN 'acmf_report' THEN 'ACMF' ELSE 'airline report' END, COALESCE(pos_ts, ts)
-	FROM message WHERE hex=?1 AND kind IN ('acmf_report', 'aoc_position', 'posrpt', 'pos_report') AND COALESCE(pos_ts, ts) BETWEEN ?2 AND ?3 AND time_flag=0
+	FROM message WHERE hex=?1 AND kind IN ('acmf_report', 'aoc_position', 'posrpt', 'pos_report', 'sbpos') AND COALESCE(pos_ts, ts) BETWEEN ?2 AND ?3 AND time_flag=0
 	  AND json_extract(decoded, '$.fields.dest') IS NOT NULL AND json_extract(decoded, '$.fields.dest') != ''
 	UNION ALL
 	SELECT ts, COALESCE(json_extract(decoded, '$.fields.plan.from'), ''), json_extract(decoded, '$.fields.plan.to'), 'flight plan', ts

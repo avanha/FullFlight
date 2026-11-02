@@ -1139,6 +1139,19 @@ func TestA350RouteReportsCountFromTheirOwnTime(t *testing.T) {
 	}
 }
 
+// A satellite position report (SB..._N77019  KSFOZBAA...) names the flight's origin and destination, and is route evidence like
+// the other position reports.
+func TestSatellitePositionReportsNameTheRoute(t *testing.T) {
+	s := open(t)
+	at := time.Date(2026, 11, 1, 19, 30, 0, 0, time.UTC)
+	s.AddMessage(Message{ID: 1, Hex: "AA6BA4", T: at.Add(100 * time.Second), PosT: &at, Label: "H1", Text: "SB0122BA_N77019  KSFOZBAA777", Kind: "sbpos",
+		Decoded: `{"fields":{"origin":"KSFO","dest":"ZBAA","reg":"N77019"}}`})
+	rs, err := s.RouteReports("AA6BA4", at.Add(-time.Hour), at.Add(time.Hour))
+	if err != nil || len(rs) != 1 || rs[0].From != "KSFO" || rs[0].To != "ZBAA" || !rs[0].T.Equal(at) {
+		t.Fatalf("%+v %v", rs, err)
+	}
+}
+
 // A message counts as the time the aircraft put in it, where that is a full date and time, not as the time it arrived: an A350
 // report delivered two days late is evidence of its flight at the time it was sent, and is listed with that flight.
 func TestLateMessagesCountFromTheirOwnTime(t *testing.T) {
