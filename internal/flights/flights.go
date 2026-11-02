@@ -78,10 +78,17 @@ const (
 	unseenNearNM   = 8.0  // how close to an airport the climb-out fix is
 	unseenFromNM   = 40.0 // how far the fix before it was from that airport
 	unseenClimbFt  = 6000.0
-	departedNM     = 4.0 // how close to an airport the fix on the ground is, for a flight seen taking off from it
-	StaleGap       = time.Hour
-	StaleWithin    = 2 * time.Minute
-	StaleFollowers = 5
+	// ...or the fix before it was an approach to that airport (low, close and descending) and the silence after it lasted this long:
+	// it landed, and nothing it did in the next hour would be circling (QF1 at Singapore: down to 1,600 ft six miles out, then nothing
+	// for two hours and thirty-nine minutes, then the climb-out).
+	unseenApproachGap = time.Hour
+	unseenApproachNM  = 8.0
+	unseenApproachFt  = 2000.0
+	approachKt        = 150.0 // for the time left to touchdown from the last fix of an approach
+	departedNM        = 4.0   // how close to an airport the fix on the ground is, for a flight seen taking off from it
+	StaleGap          = time.Hour
+	StaleWithin       = 2 * time.Minute
+	StaleFollowers    = 5
 )
 
 type Segment struct {
@@ -374,7 +381,7 @@ func segments(st *store.Store, hexAddr string, since, until time.Time, tr *trace
 	unseen := unseenStops(fixes)
 	for _, u := range unseen {
 		stops = append(stops, u.GroundStop)
-		tr.note("stops", "unseen-stop", u.Land, u.Depart, "a stop at %s that no fix showed: the fix at %s is low, climbing and next to it, long after one far away", u.Airport, u.Depart.Format("15:04:05"))
+		tr.note("stops", "unseen-stop", u.Land, u.Depart, "a stop at %s that no fix showed: the fix at %s is low, climbing and next to it, long after one far away or one on the way in", u.Airport, u.Depart.Format("15:04:05"))
 	}
 	segs = splitAtStopovers(segs, stops, ev, posTimes, tr)
 
@@ -990,7 +997,7 @@ func unseenStops(fixes []store.AirFix) []unseenStop {
 	var out []unseenStop
 	for k := 1; k < len(fixes); k++ {
 		prev, f := fixes[k-1], fixes[k]
-		if f.T.Sub(prev.T) < UnseenStopGap || f.OnGround || f.AltFt == nil || *f.AltFt > unseenClimbFt {
+		if f.T.Sub(prev.T) < unseenApproachGap || f.OnGround || f.AltFt == nil || *f.AltFt > unseenClimbFt {
 			continue
 		}
 		climbing := false
@@ -1006,13 +1013,34 @@ func unseenStops(fixes []store.AirFix) []unseenStop {
 		}
 		a := hits[0]
 		away := geo.DistNM(prev.Lat, prev.Lon, a.Lat, a.Lon)
-		if away < unseenFromNM {
+		land := prev.T.Add(time.Duration(away / UnseenCruiseKt * float64(time.Hour))) // (a stop shorter than StopoverMin does not split anything)
+		switch {
+		case away < unseenFromNM:
+			if !approach(fixes, k-1, away) {
+				continue
+			}
+			land = prev.T.Add(time.Duration(away / approachKt * float64(time.Hour)))
+		case f.T.Sub(prev.T) < UnseenStopGap:
 			continue
 		}
-		land := prev.T.Add(time.Duration(away / UnseenCruiseKt * float64(time.Hour))) // (a stop shorter than StopoverMin does not split anything)
 		out = append(out, unseenStop{store.GroundStop{Land: land, Depart: f.T}, a.ICAO})
 	}
 	return out
+}
+
+// approach reports whether fixes[i], away nm from the airport, was an aircraft coming in to it: in the air, low, close, and lower than
+// a fix in the ten minutes before.
+func approach(fixes []store.AirFix, i int, away float64) bool {
+	f := fixes[i]
+	if f.OnGround || f.AltFt == nil || *f.AltFt > unseenApproachFt || away > unseenApproachNM {
+		return false
+	}
+	for j := i - 1; j >= 0 && f.T.Sub(fixes[j].T) <= 10*time.Minute; j-- {
+		if fixes[j].AltFt != nil && *fixes[j].AltFt >= *f.AltFt+500 {
+			return true
+		}
+	}
+	return false
 }
 
 // leftFrom is the airport an aircraft was seen to leave in [from, to]: its first fix there is on the ground within departedNM of

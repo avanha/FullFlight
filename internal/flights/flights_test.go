@@ -801,6 +801,27 @@ func TestAStopADSBNeverSawSplitsTheFlight(t *testing.T) {
 		t.Errorf("the leg on from Singapore starts where it was seen leaving, from there: %+v", b)
 	}
 
+	// What the backfill showed of the real flight: the approach, down to 1,600 ft six miles out, then nothing for 2h39m, then the climb-out.
+	withApproach := func(gapMin int, alt0 float64) []Segment {
+		return build(func(r *rig) {
+			for i, alt := range []float64{alt0 + 1100, alt0 + 500, alt0} {
+				r.air(at(0, 13, 54+i).Add(time.Duration(i)*time.Minute), "QFA1", 1.17+float64(i)*0.05, 103.93, alt, false)
+			}
+			for i, alt := range []float64{475, 1575, 3150, 7000, 12000} {
+				r.air(at(0, 13, 56).Add(time.Duration(gapMin+i*2)*time.Minute), "QFA1", 1.38+float64(i)*0.1, 104.0-float64(i)*0.1, alt, false)
+			}
+		})
+	}
+	if segs := withApproach(159, 1600); len(segs) != 2 || segs[1].From != "WSSS" || !segs[1].FromSeen || segs[0].To != "WSSS" {
+		t.Errorf("an approach, a long silence and a climb-out from the same airport are a stop: %s %+v", names(segs), segs)
+	}
+	if segs := withApproach(40, 1600); len(segs) != 1 {
+		t.Errorf("forty minutes of silence is a go-around or a hold, not a stop: %s", names(segs))
+	}
+	if segs := withApproach(159, 4500); len(segs) != 1 {
+		t.Errorf("an aircraft still at 4,500 ft was not landing: %s", names(segs))
+	}
+
 	for name, then := range map[string]func(r *rig){
 		"a descent into Singapore, not a climb out of it": func(r *rig) {
 			for i, alt := range []float64{5500, 4000, 2500, 1500, 800} { // low, and getting lower

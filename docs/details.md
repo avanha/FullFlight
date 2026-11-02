@@ -390,8 +390,9 @@ climb-out ten hours after the last fix near Sydney, the climb-out is the evidenc
 before, below 6,000 ft and climbing, within 8 nm of an airport that the earlier fix was over 40 nm from, and with the time to have
 got there at 450 kt. The flight is then two: the first keeps the route its messages gave (YSSY to WSSS), and the second, which
 has none, gets its origin from the airport it was seen leaving, shown with a tilde (`WSSS~`). A route entered by hand replaces a
-seen origin. Where there is no such climb-out (an aircraft last seen near the airport, or first seen at cruise height) the flight
-is left whole.
+seen origin. The same holds when the fix before was the approach itself (low, within 8 nm, descending, as the backfill can supply) and
+nothing was heard for an hour or more: it landed, and the climb-out from that airport is the next flight. Where there is no
+such climb-out (an aircraft last seen circling near the airport, or first seen at cruise height) the flight is left whole.
 
 ### Seen taking off
 
