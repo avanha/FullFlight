@@ -767,3 +767,90 @@ func TestElsewhere(t *testing.T) {
 		t.Errorf("a flight of that number four days on does not hold it back: %v %v", o.ID, ok)
 	}
 }
+
+// QF1 flies Sydney to Singapore and on to London under one number. ADS-B and the messages saw it leave Sydney (reporting that route),
+// and nothing of the flight to Singapore; then, ten hours later, ADS-B saw it climb out of Singapore. That climb-out shows a stop that
+// no position recorded, and the flight is two: Sydney to Singapore, and from Singapore on.
+func TestAStopADSBNeverSawSplitsTheFlight(t *testing.T) {
+	// the first leg: a report of its route at 05:30, a fix near Sydney at 06:40, then only messages every two hours
+	build := func(then func(r *rig)) []Segment {
+		r := newRig(t)
+		r.said(at(0, 5, 30), "QF1")
+		r.route(at(0, 5, 30), "YSSY", "WSSS")
+		r.air(at(0, 6, 40), "QFA1", -33.4, 150.5, 30000, false)
+		for _, h := range []int{8, 10, 12, 14} {
+			r.said(at(0, h, 0), "QF1")
+		}
+		then(r)
+		return r.segments()
+	}
+	climbOut := func(r *rig) {
+		for i, alt := range []float64{1575, 3150, 7000, 12000, 17000} { // up from Changi
+			r.air(at(0, 16, 36).Add(time.Duration(i)*2*time.Minute), "QFA1", 1.40+float64(i)*0.1, 104.0-float64(i)*0.1, alt, false)
+		}
+	}
+	segs := build(climbOut)
+	if len(segs) != 2 || segs[0].Flight != "QF1" || segs[1].Flight != "QF1" {
+		t.Fatalf("two legs of QF1: %s %+v", names(segs), segs)
+	}
+	a, b := segs[0], segs[1]
+	if a.From != "YSSY" || a.To != "WSSS" || a.FromSeen || !a.End.Equal(at(0, 14, 0)) {
+		t.Errorf("the leg to Singapore keeps its route and ends with its last message: %+v", a)
+	}
+	if b.From != "WSSS" || !b.FromSeen || b.To != "" || !b.Start.Equal(at(0, 16, 36)) || b.Positions != 5 {
+		t.Errorf("the leg on from Singapore starts where it was seen leaving, from there: %+v", b)
+	}
+
+	for name, then := range map[string]func(r *rig){
+		"a descent into Singapore, not a climb out of it": func(r *rig) {
+			for i, alt := range []float64{5500, 4000, 2500, 1500, 800} { // low, and getting lower
+				r.air(at(0, 16, 36).Add(time.Duration(i)*2*time.Minute), "QFA1", 1.40+float64(i)*0.1, 104.0-float64(i)*0.1, alt, false)
+			}
+		},
+		"first seen at cruise height over Singapore, on a step climb": func(r *rig) {
+			for i, alt := range []float64{33000, 34000, 36000} {
+				r.air(at(0, 16, 36).Add(time.Duration(i)*2*time.Minute), "QFA1", 1.40+float64(i)*0.1, 104.0-float64(i)*0.1, alt, false)
+			}
+		},
+		"a fix near Singapore before the climb-out: it may only have circled": func(r *rig) {
+			r.air(at(0, 13, 0), "QFA1", 1.5, 104.2, 3000, false)
+			climbOut(r)
+		},
+		"a climb with too little time to have got there": func(r *rig) {
+			// Sydney at 06:40 to Singapore at 450 kt is about 7.5 hours (to 14:13): a climb-out at 14:40 leaves no stop worth the name
+			for i, alt := range []float64{1575, 3150, 7000, 12000} {
+				r.air(at(0, 14, 40).Add(time.Duration(i)*2*time.Minute), "QFA1", 1.40+float64(i)*0.1, 104.0-float64(i)*0.1, alt, false)
+			}
+		},
+	} {
+		if segs := build(then); len(segs) != 1 {
+			t.Errorf("%s: %d flights, want one: %+v", name, len(segs), segs)
+		}
+	}
+
+	// a fix near Jakarta at 14:00 and the climb-out of Singapore at 16:36: time enough for a stop, but a silence of under three hours is
+	// not long enough to say it was one
+	r := newRig(t)
+	r.said(at(0, 5, 30), "QF1")
+	r.route(at(0, 5, 30), "YSSY", "WSSS")
+	r.air(at(0, 14, 0), "QFA1", -6.0, 107.0, 30000, false)
+	for i, alt := range []float64{1575, 3150, 7000, 12000} {
+		r.air(at(0, 16, 36).Add(time.Duration(i)*2*time.Minute), "QFA1", 1.40+float64(i)*0.1, 104.0-float64(i)*0.1, alt, false)
+	}
+	if segs := r.segments(); len(segs) != 1 {
+		t.Errorf("a silence of under three hours: %d flights", len(segs))
+	}
+}
+
+func TestAnOriginSeenOnADSBGivesWayToOneEnteredByHand(t *testing.T) {
+	sg := Segment{From: "WSSS", FromSeen: true, Start: at(0, 16, 0), End: at(0, 22, 0)}
+	applyManualRoute(&sg, []store.ManualRoute{{From: "VHHH", To: "EGLL", Start: at(0, 15, 0), End: at(0, 23, 0), Created: at(1, 0, 0)}})
+	if sg.From != "VHHH" || !sg.FromManual || sg.FromSeen || sg.To != "EGLL" {
+		t.Errorf("%+v", sg)
+	}
+	sg = Segment{From: "WSSS", FromSeen: true, Start: at(0, 16, 0), End: at(0, 22, 0)}
+	applyManualRoute(&sg, []store.ManualRoute{{To: "EGLL", Start: at(0, 15, 0), End: at(0, 23, 0), Created: at(1, 0, 0)}})
+	if sg.From != "WSSS" || !sg.FromSeen || sg.To != "EGLL" {
+		t.Errorf("a destination alone leaves the seen origin: %+v", sg)
+	}
+}

@@ -511,6 +511,7 @@ type lastFlightJSON struct {
 	From        string    `json:"from,omitempty"`
 	To          string    `json:"to,omitempty"`
 	FromManual  bool      `json:"from_manual,omitempty"` // entered by hand: see flights.Segment
+	FromSeen    bool      `json:"from_seen,omitempty"`   // where ADS-B saw it climb out: see flights.Segment
 	ToManual    bool      `json:"to_manual,omitempty"`
 	FromName    string    `json:"from_name,omitempty"`
 	ToName      string    `json:"to_name,omitempty"`
@@ -542,7 +543,7 @@ func (s *Server) lastFlightFor(hex string, now time.Time) *lastFlightJSON {
 				break
 			}
 		}
-		out = &lastFlightJSON{Flight: sg.Flight, Callsign: sg.Callsign, From: sg.From, To: sg.To, FromManual: sg.FromManual, ToManual: sg.ToManual, Departed: sg.Departed, DepartedHow: sg.DepartedHow, Start: sg.Start, End: sg.End}
+		out = &lastFlightJSON{Flight: sg.Flight, Callsign: sg.Callsign, From: sg.From, To: sg.To, FromManual: sg.FromManual, FromSeen: sg.FromSeen, ToManual: sg.ToManual, Departed: sg.Departed, DepartedHow: sg.DepartedHow, Start: sg.Start, End: sg.End}
 		if a, ok := airports.Lookup(sg.From); ok {
 			out.FromName = a.Name
 		}

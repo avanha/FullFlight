@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/avanha/fullflight/internal/airlines"
+	"github.com/avanha/fullflight/internal/airports"
 	"github.com/avanha/fullflight/internal/geo"
 	"github.com/avanha/fullflight/internal/store"
 )
@@ -69,6 +70,14 @@ const (
 	// An aircraft that has sat for StaleGap sends its last callsign again when it powers up, then changes it to the next
 	// flight's within StaleWithin. Those first sightings, under the old number, are the next flight's and not a late end to
 	// the last one, when that next flight is then heard from at least StaleFollowers times in the following ten minutes.
+	// Stops ADS-B never saw: a fix this long after the one before, climbing out of an airport far from where the aircraft was, shows
+	// it landed and took off again between them (QF1 from Sydney to Singapore and on to London, with ADS-B only for the second).
+	// It had time to get there at UnseenCruiseKt, with StopoverMin to spare.
+	UnseenStopGap  = 3 * time.Hour
+	UnseenCruiseKt = 450.0
+	unseenNearNM   = 8.0  // how close to an airport the climb-out fix is
+	unseenFromNM   = 40.0 // how far the fix before it was from that airport
+	unseenClimbFt  = 6000.0
 	StaleGap       = time.Hour
 	StaleWithin    = 2 * time.Minute
 	StaleFollowers = 5
@@ -85,6 +94,7 @@ type Segment struct {
 	From        string    `json:"from,omitempty"` // from REP081, where the aircraft sends one
 	To          string    `json:"to,omitempty"`
 	FromManual  bool      `json:"from_manual,omitempty"` // From was entered by hand, because no message gave one
+	FromSeen    bool      `json:"from_seen,omitempty"`   // From is where ADS-B saw the flight climb out, because no message gave one
 	ToManual    bool      `json:"to_manual,omitempty"`
 	Departed    time.Time `json:"departed,omitzero"`      // when it left, if we know
 	DepartedHow string    `json:"departed_how,omitempty"` // "takeoff", "adsb", "pushback" or "taxi": see store.Departure
@@ -315,6 +325,10 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 	if err != nil {
 		return nil, err
 	}
+	unseen := unseenStops(fixes)
+	for _, u := range unseen {
+		stops = append(stops, u.GroundStop)
+	}
 	segs = splitAtStopovers(segs, stops, ev, posTimes)
 
 	// 6. the route the aircraft reported; pieces of one flight that share it are joined
@@ -355,6 +369,14 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 				segs = append(segs[:i+1], segs[i+2:]...)
 				merged = true
 				break
+			}
+		}
+	}
+	// A flight that ADS-B saw climb out of an airport after a stop it never saw, and whose messages gave no origin, left from there.
+	for _, u := range unseen {
+		for i := range segs {
+			if sg := &segs[i]; sg.From == "" && sg.Start.After(u.Land) && !sg.Start.After(u.Depart) && !sg.End.Before(u.Depart) {
+				sg.From, sg.FromSeen = u.Airport, true
 			}
 		}
 	}
@@ -460,8 +482,8 @@ func applyManualRoute(sg *Segment, manual []store.ManualRoute) {
 	if best == nil {
 		return
 	}
-	if sg.From == "" && best.From != "" {
-		sg.From, sg.FromManual = best.From, true
+	if (sg.From == "" || sg.FromSeen) && best.From != "" { // what was entered by hand wins over where the track was seen to start
+		sg.From, sg.FromManual, sg.FromSeen = best.From, true, false
 	}
 	if sg.To == "" && best.To != "" {
 		sg.To, sg.ToManual = best.To, true
@@ -789,6 +811,44 @@ func applyJoins(segs []Segment, joins []time.Time) []Segment {
 		}
 	}
 	return segs
+}
+
+// An unseenStop is a stop on the ground that no position showed: at Airport, from Land (when the aircraft could have got there) to
+// Depart (when it was seen climbing away).
+type unseenStop struct {
+	store.GroundStop
+	Airport string
+}
+
+// unseenStops finds the stops on the ground that the fixes only imply: one fix long after the one before, low, climbing, and next to
+// an airport the aircraft cannot have been at before.
+func unseenStops(fixes []store.AirFix) []unseenStop {
+	var out []unseenStop
+	for k := 1; k < len(fixes); k++ {
+		prev, f := fixes[k-1], fixes[k]
+		if f.T.Sub(prev.T) < UnseenStopGap || f.OnGround || f.AltFt == nil || *f.AltFt > unseenClimbFt {
+			continue
+		}
+		climbing := false
+		for j := k + 1; j < len(fixes) && fixes[j].T.Sub(f.T) <= 10*time.Minute; j++ {
+			if fixes[j].AltFt != nil && *fixes[j].AltFt >= *f.AltFt+2000 {
+				climbing = true
+				break
+			}
+		}
+		hits := airports.Near(f.Lat, f.Lon, unseenNearNM)
+		if !climbing || len(hits) == 0 {
+			continue
+		}
+		a := hits[0]
+		away := geo.DistNM(prev.Lat, prev.Lon, a.Lat, a.Lon)
+		if away < unseenFromNM {
+			continue
+		}
+		land := prev.T.Add(time.Duration(away / UnseenCruiseKt * float64(time.Hour))) // (a stop shorter than StopoverMin does not split anything)
+		out = append(out, unseenStop{store.GroundStop{Land: land, Depart: f.T}, a.ICAO})
+	}
+	return out
 }
 
 // SameFlight reports whether two flight numbers or callsigns name one flight (CX833, CX0833 and CPA833).

@@ -1348,6 +1348,25 @@ highlightGroup = null;
     t.renderMessages(before);
   }
 
+  // ===== 8r12. an origin that no message gave, seen where the track left the ground ====================================
+  {
+    const hoursAgo = h => new Date(Date.now() - h * 3600e3).toISOString();
+    const A = seg('QF1@1', 'QF1', hoursAgo(20), hoursAgo(12), {from: 'YSSY', to: 'WSSS'});
+    const B = seg('QF1@2', 'QF1', hoursAgo(5), hoursAgo(1), {from: 'WSSS', from_seen: true, to: 'EGLL', latest: true});
+    await withFlights([A, B], async () => {
+      const label = sg => vm.runInContext(`segLabel(flightSegs.find(s => s.id === '${sg}'))`, ctx);
+      t.chooseFlight('QF1@2'); await settle();
+      assert.match(label('QF1@2'), /WSSS~\u2192EGLL$/, 'a tilde on an origin that was seen, not reported: ' + label('QF1@2'));
+      assert.match(label('QF1@1'), /YSSY\u2192WSSS$/, 'and none on one that was');
+      assert.strictEqual(byId['#routeedit'].hidden, false, 'the route can be edited though the origin is there');
+      assert.match(byId['#routenote'].textContent, /~ origin seen on ADS-B climbing out/); assert.strictEqual(byId['#routenote'].hidden, false);
+      byId['#routebtn'].onclick();
+      assert.strictEqual(byId['#routefrom'].disabled, false, 'the seen origin can be replaced'); assert.strictEqual(byId['#routefrom'].value, 'WSSS');
+      t.chooseFlight('QF1@1'); await settle();
+      assert.strictEqual(byId['#routeedit'].hidden, true, 'a flight whose messages gave both ends cannot');
+    });
+  }
+
   // ===== 8s. how what was typed is read ===========================================================
   const submit = async (input, reply) => {
     postReply = reply;

@@ -406,6 +406,15 @@ the flight and press **Join with the flight before** under the Flights selector;
 earlier piece started), and **Split the joined flights** undoes it. A join is kept (`PUT /api/flights/{hex}/join`
 with `{"start": unix seconds, "join": true|false}`) against when the later piece started, and goes with it if that flight changes.
 
+**A stop ADS-B never saw.** A through-flight (QF1 from Sydney to Singapore and on to London) keeps one number for both legs. When
+ADS-B saw the aircraft sit on the ground between them, the flight is cut there (above). When it saw nothing of the first leg, and the
+second shows only as a climb-out ten hours after the last fix near Sydney, the climb-out is the evidence: a fix at least three
+hours after the one before, below 6,000 ft and climbing, within 8 nm of an airport that the earlier fix was over 40 nm from, and
+with the time to have got there at 450 kt, shows that the aircraft landed and took off again between them. The flight is then two:
+the first keeps the route its messages gave (YSSY to WSSS), and the second, which has none, gets its origin from the airport it was
+seen leaving, shown with a tilde (`WSSS~`). A route entered by hand replaces a seen origin. Where there is no such climb-out (an
+aircraft last seen near the airport, or one first seen at cruise height) the flight is left whole.
+
 **Next-flight chatter.** Airline operations messages (a cockpit asking for the weather along the next route, the airline sending
 the next flight's data) can name the next flight while the aircraft is still flying this one. Such a sighting is set aside when the
 aircraft itself named another flight within two hours before it and again within two hours after; it counts as before at either end
