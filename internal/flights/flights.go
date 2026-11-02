@@ -78,6 +78,7 @@ const (
 	unseenNearNM   = 8.0  // how close to an airport the climb-out fix is
 	unseenFromNM   = 40.0 // how far the fix before it was from that airport
 	unseenClimbFt  = 6000.0
+	departedNM     = 4.0 // how close to an airport the fix on the ground is, for a flight seen taking off from it
 	StaleGap       = time.Hour
 	StaleWithin    = 2 * time.Minute
 	StaleFollowers = 5
@@ -377,6 +378,14 @@ func segments(st *store.Store, hexAddr string, since, until time.Time) ([]Segmen
 		for i := range segs {
 			if sg := &segs[i]; sg.From == "" && sg.Start.After(u.Land) && !sg.Start.After(u.Depart) && !sg.End.Before(u.Depart) {
 				sg.From, sg.FromSeen = u.Airport, true
+			}
+		}
+	}
+	// So did one whose first fix was on the ground at an airport and that was then seen in the air: ADS-B watched it take off.
+	for i := range segs {
+		if sg := &segs[i]; sg.From == "" {
+			if a, ok := leftFrom(fixes, sg.Start, sg.End); ok {
+				sg.From, sg.FromSeen = a, true
 			}
 		}
 	}
@@ -849,6 +858,33 @@ func unseenStops(fixes []store.AirFix) []unseenStop {
 		out = append(out, unseenStop{store.GroundStop{Land: land, Depart: f.T}, a.ICAO})
 	}
 	return out
+}
+
+// leftFrom is the airport an aircraft was seen to leave in [from, to]: its first fix there is on the ground within departedNM of
+// an airport, and a later one is in the air.
+func leftFrom(fixes []store.AirFix, from, to time.Time) (string, bool) {
+	for k, f := range fixes {
+		if f.T.Before(from) {
+			continue
+		}
+		if f.T.After(to) || !f.OnGround {
+			return "", false
+		}
+		hits := airports.Near(f.Lat, f.Lon, departedNM)
+		if len(hits) == 0 {
+			return "", false
+		}
+		for _, g := range fixes[k+1:] {
+			if g.T.After(to) {
+				break
+			}
+			if !g.OnGround {
+				return hits[0].ICAO, true
+			}
+		}
+		return "", false
+	}
+	return "", false
 }
 
 // SameFlight reports whether two flight numbers or callsigns name one flight (CX833, CX0833 and CPA833).

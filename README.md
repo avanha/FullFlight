@@ -416,6 +416,10 @@ the first keeps the route its messages gave (YSSY to WSSS), and the second, whic
 seen leaving, shown with a tilde (`WSSS~`). A route entered by hand replaces a seen origin. Where there is no such climb-out (an
 aircraft last seen near the airport, or one first seen at cruise height) the flight is left whole.
 
+**Seen taking off.** A flight whose messages gave no origin, but whose first fix is ADS-B on the ground within 4 nm of an airport
+and which is then seen in the air, left from that airport, and the route shows it with the same tilde (`KLAX~`). A flight first seen
+in the air, or on the ground away from any airport, or only ever on the ground, gets none.
+
 **Next-flight chatter.** Airline operations messages (a cockpit asking for the weather along the next route, the airline sending
 the next flight's data) can name the next flight while the aircraft is still flying this one. Such a sighting is set aside when the
 aircraft itself named another flight within two hours before it and again within two hours after; it counts as before at either end

@@ -842,6 +842,56 @@ func TestAStopADSBNeverSawSplitsTheFlight(t *testing.T) {
 	}
 }
 
+// JA826J's ZG23 from Los Angeles: no message named the route, but ADS-B saw it on the ground at KLAX and then in the air.
+func TestAFlightSeenTakingOffLeftFromThere(t *testing.T) {
+	build := func(lat, lon float64, flyOn bool, route bool) Segment {
+		r := newRig(t)
+		r.said(at(0, 17, 50), "ZG23")
+		if !flyOn {
+			r.said(at(0, 22, 50), "ZG24")
+			r.air(at(0, 23, 0), "TZP24", 40.0, -100.0, 30000, false) // in the air hours later: another flight, not this one
+		}
+		if route {
+			r.route(at(0, 17, 50), "KSFO", "RJAA")
+		}
+		for i := 0; i < 3; i++ {
+			r.air(at(0, 17, 52).Add(time.Duration(i)*time.Minute), "TZP23", lat+float64(i)*1e-4, lon, 0, true)
+		}
+		if flyOn {
+			for i, alt := range []float64{1500, 5000, 12000} {
+				r.air(at(0, 18, 10).Add(time.Duration(i)*2*time.Minute), "TZP23", 34.2+float64(i)*0.2, -119.0-float64(i)*0.2, alt, false)
+			}
+		}
+		segs := r.segments()
+		if len(segs) == 0 || segs[0].Flight != "ZG23" {
+			t.Fatalf("%d flights: %+v", len(segs), segs)
+		}
+		return segs[0]
+	}
+	if sg := build(33.9402, -118.4118, true, false); sg.From != "KLAX" || !sg.FromSeen {
+		t.Errorf("seen taking off from Los Angeles: %+v", sg)
+	}
+	if sg := build(33.9402, -118.4118, false, false); sg.From != "" {
+		t.Errorf("never seen in the air: it may be only taxiing: %+v", sg)
+	}
+	{ // its first fix in the air over the airport, then on the ground: it arrived there
+		r := newRig(t)
+		r.said(at(0, 17, 50), "ZG23")
+		r.air(at(0, 17, 51), "TZP23", 33.9402, -118.4118, 1500, false)
+		r.air(at(0, 17, 52), "TZP23", 33.9403, -118.4118, 0, true)
+		r.air(at(0, 17, 54), "TZP23", 34.5, -119.0, 9000, false)
+		if segs := r.segments(); len(segs) != 1 || segs[0].From != "" {
+			t.Errorf("first seen in the air: %+v", segs)
+		}
+	}
+	if sg := build(36.0, -110.0, true, false); sg.From != "" {
+		t.Errorf("on the ground nowhere near an airport: %+v", sg)
+	}
+	if sg := build(33.9402, -118.4118, true, true); sg.From != "KSFO" || sg.FromSeen {
+		t.Errorf("what the messages say wins: %+v", sg)
+	}
+}
+
 func TestAnOriginSeenOnADSBGivesWayToOneEnteredByHand(t *testing.T) {
 	sg := Segment{From: "WSSS", FromSeen: true, Start: at(0, 16, 0), End: at(0, 22, 0)}
 	applyManualRoute(&sg, []store.ManualRoute{{From: "VHHH", To: "EGLL", Start: at(0, 15, 0), End: at(0, 23, 0), Created: at(1, 0, 0)}})
