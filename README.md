@@ -648,12 +648,28 @@ These formats are read from samples, not specifications. Stored messages show th
 
 A request for an oceanic clearance (`/EGGX.OC1/RCL 030 UAL26-ATSIX/1316 M085F370`: the entry fix and time, Mach and level)
 and the centre's reply (`CLA`: the destination, the track, the route from the entry fix, and the level and Mach to hold) are
-decoded as `oceanic_clearance`. The cleared route is drawn on the map as its own layer, "Oceanic clearance" in the legend
+decoded as `oceanic_clearance`. The cleared route is drawn on the map as its own layer, "Clearances (oceanic, departure)" in the legend
 (dashed teal, a dot on each fix, the track, level and entry in the hover). It is only the route over the ocean, so it is not
 treated as the flight's plan, and a filed plan stays the route that is projected along. Fixes given by coordinates
 (`62N020W`) are placed as written; named ones from what we have learned of them or the navigation database. Seen so far: one clearance
 and two requests, so a form that does not fit is left undecoded. Free text from the crew that mentions a route (a `7B` message)
 is shown as text and not plotted: it has no fixed form.
+
+## Pre-departure clearances
+
+Qantas sends each aircraft its departure clearance at the gate over the VHF data link (label RA, `.HDQOXQF ~1 PDC UPLINK`): the day
+and time it was issued, the flight, type, origin and departure time, the destination, the runway and departure procedure with its
+transition, the route to fly, the first altitude, the departure frequency, the transponder code and now and then a remark.
+They are decoded as `departure_clearance`, and the aircraft's short reply (the header again, `/~1`) as a reply to it. The route is
+airways and fixes joined by `DCT`, and, over the ocean, latitudes and longitudes in degrees and minutes (`4219S14239E`); a lone `T`
+ends it, and the routes seen stop well short of the destination (Sydney to Johannesburg stops at 59S 92E).
+
+The route is drawn in the same legend layer as the oceanic clearance, in amber, from the origin airport along the fixes it names, with
+the runway, procedure, climb, departure frequency, squawk and remark in the hover; nothing is drawn on to the destination. It is not the
+flight's plan, and the plan stays the route that is projected along. A clearance counts from the day and time it was issued, not from
+when a station delivered it (one reached us three days late). The navigation database is from 2013, so a newer fix may be missing, or
+share its name with an older one far away: a named point that sends the route more than 300 nm out of its way and back is left off and
+listed as not placed. Stored messages show it after `fullflight -redecode`. Read from six clearances.
 
 ## Predicted winds
 

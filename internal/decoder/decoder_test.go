@@ -1429,3 +1429,53 @@ func TestOceanicClearance(t *testing.T) {
 		}
 	}
 }
+
+// Pre-departure clearances sent to Qantas aircraft at the gate. Real messages.
+func TestPreDepartureClearance(t *testing.T) {
+	r, err := Decode(Message{Label: "RA", Text: ".HDQOXQF ~1 PDC UPLINK\r\nPDC 012148\r\nQFA63 A388 YSSY 2230\r\nCLEARED TO FAOR VIA\r\n34L TONTO1 DEP NWA:TRAN\r\nROUTE:DCT WOL H20 OTKED DCT 3846S14812E 4219S14239E 4542S13821E \r\n4951S13210E\r\n5147S12801E 5506S12030E 5706S11442E 5857S10542E 5928S10021E \r\n5919S09210E T\r\nCLIMB VIA SID TO: 5000\r\nDEP FREQ: 129.700\r\nSQUAWK 1246\r\n..\r\n"})
+	c, _ := r.Fields["pdc"].(DepartureClearance)
+	if err != nil || r.Kind != KindPDC || r.Dir != Uplink || r.Identity.Callsign != "QFA63" || r.Identity.Flight != "QF63" {
+		t.Fatalf("%v %v %+v %+v", err, r.Kind, r.Identity, c)
+	}
+	if c.Day != "01" || c.Time != "21:48" || c.Type != "A388" || c.Origin != "YSSY" || c.Departure != "2230" || c.Dest != "FAOR" || c.Runway != "34L" ||
+		c.SID != "TONTO1" || c.Transition != "NWA" || c.ClimbTo != 5000 || c.DepFreq != "129.700" || c.Squawk != "1246" || c.Remark != "" {
+		t.Errorf("%+v", c)
+	}
+	var names []string
+	for _, f := range c.Route.Fixes {
+		names = append(names, f.Name+f.Via)
+	}
+	if got := strings.Join(names, " "); got != "WOL OTKEDH20 3846S14812E 4219S14239E 4542S13821E 4951S13210E 5147S12801E 5506S12030E 5706S11442E 5857S10542E 5928S10021E 5919S09210E" {
+		t.Errorf("route %q", got)
+	}
+	if f := c.Route.Fixes[2]; !f.HasPos || f.Lat > -38.76 || f.Lat < -38.77 || f.Lon < 148.19 || f.Lon > 148.21 {
+		t.Errorf("3846S14812E is 38°46' S 148°12' E: %+v", f)
+	}
+	if c.Route.Fixes[0].HasPos || c.Route.From != "YSSY" {
+		t.Errorf("a named fix has no position of its own: %+v", c.Route)
+	}
+	if want := "Pre-departure clearance QFA63 YSSY → FAOR: runway 34L, TONTO1 (NWA), WOL OTKED"; !strings.HasPrefix(r.Summary, want) || !strings.HasSuffix(r.Summary, ", squawk 1246") {
+		t.Errorf("summary %q", r.Summary)
+	}
+
+	// no transition ("XXX"), a space inside the procedure's name, and a remark at the end
+	r, _ = Decode(Message{Label: "RA", Text: ".HDQOXQF ~1 PDC UPLINK\r\nPDC 250122\r\nQFA7 A388 YSSY 0205\r\nCLEARED TO KDFW VIA\r\n34L SYDNEY 4 DEP: XXX\r\nROUTE:DCT NOBAR B450 ABARB DCT 3203S15822E 3100S16213E 3047S16300E \r\n2927S16718E\r\n2809S17337E 2739S17605E 2545S17758W 2421S17407W 2152S16914W \r\n1918S16518W T\r\nCLIMB VIA SID TO: 5000\r\nDEP FREQ: 123.000\r\nSQUAWK 1245\r\nCONFIRM REQUIRE EARLY R TURN\r\n"})
+	c, _ = r.Fields["pdc"].(DepartureClearance)
+	if r.Kind != KindPDC || c.SID != "SYDNEY 4" || c.Transition != "" || c.Remark != "CONFIRM REQUIRE EARLY R TURN" || c.Route.Fixes[1].Via != "B450" {
+		t.Errorf("%v %+v", r.Kind, c)
+	}
+	if f := c.Route.Fixes[len(c.Route.Fixes)-4]; f.Name != "2545S17758W" || f.Lon != -(177+58.0/60) {
+		t.Errorf("a west longitude: %+v", f)
+	}
+
+	// the aircraft's reply, and things that are not clearances
+	r, _ = Decode(Message{Label: "RB", Text: ".HDQOXQF /~1  PDC UPLINK"})
+	if c, _ = r.Fields["pdc"].(DepartureClearance); r.Kind != KindPDC || !c.Acknowledge || r.Dir != Downlink {
+		t.Errorf("reply: %v %+v", r.Kind, c)
+	}
+	for _, s := range []string{".HDQOXQF ~1 PDC UPLINK\r\nPDC 012148\r\nQFA63 A388 YSSY 2230\r\nCLEARED TO FAOR VIA\r\nnonsense", ".HDQOXQF ~1 PDC UPLINK\r\nPDC 012560\r\nQFA63 A388 YSSY 2230\r\nCLEARED TO FAOR VIA\r\n34L TONTO1 DEP NWA:TRAN\r\nROUTE:DCT WOL T\r\nCLIMB VIA SID TO: 5000\r\nDEP FREQ: 129.700\r\nSQUAWK 1246\r\n"} {
+		if r, _ = Decode(Message{Label: "RA", Text: s}); r.Kind == KindPDC {
+			t.Errorf("%q decoded as a clearance", s)
+		}
+	}
+}

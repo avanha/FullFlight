@@ -1405,6 +1405,54 @@ func TestOceanicClearanceIsServedAsItsOwnRoute(t *testing.T) {
 	}
 }
 
+// A pre-departure clearance is served as its own route, from the origin airport along the cleared fixes, with no destination
+// point, and counts from the day and time it was issued, not from when a station delivered it.
+func TestPreDepartureClearanceIsServedAsItsOwnRoute(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 10, 30, 16, 0, 0, 0, time.UTC)
+	nav := navdata.New()
+	nav.Add("WOL", navdata.Point{Lat: -34.56, Lon: 150.79, Kind: "vor"})
+	nav.Add("OTKED", navdata.Point{Lat: -36.5, Lon: 151.5, Kind: "fix"})
+	nav.Add("STUIE", navdata.Point{Lat: -12.8, Lon: 131.5, Kind: "fix"}) // an older fix of that name, a long way from where the route goes
+	dec := `{"fields":{"pdc":{"day":"27","time":"21:48","callsign":"QFA63","origin":"YSSY","dest":"FAOR","runway":"16R","sid":"GROOK2","transition":"WOL",
+		"climb_to":5000,"dep_freq":"129.700","squawk":"1372","route":{"callsign":"QFA63","from":"YSSY","to":"","fixes":[{"name":"WOL"},{"name":"OTKED","via":"H20"},
+		{"name":"STUIE"},{"name":"3756S13533E","lat":-37.93,"lon":135.55,"has_pos":true}]}}}}`
+	// delivered three days late, and twice
+	st.AddMessage(store.Message{ID: 1, Hex: "7C4927", T: now.Add(-40 * time.Minute), Label: "RA", Text: "a", Kind: "departure_clearance", Decoded: dec})
+	st.AddMessage(store.Message{ID: 2, Hex: "7C4927", T: now.Add(-30 * time.Minute), Label: "RA", Text: "b", Kind: "departure_clearance", Decoded: dec})
+	st.AddMessage(store.Message{ID: 3, Hex: "7C4927", T: now.Add(-20 * time.Minute), Label: "RB", Text: "c", Kind: "departure_clearance", Decoded: `{"fields":{"pdc":{"acknowledge":true}}}`})
+	ts := httptest.NewServer((&Server{Store: st, Nav: nav, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	_, body := do(t, "GET", ts.URL+"/api/plan/7C4927", "")
+	var plans []struct {
+		Kind, Detail, From, To string
+		T                      time.Time
+		ID                     int64
+		Missing                []string
+		Points                 []struct {
+			Name string
+			Kind string
+		}
+	}
+	if err := json.Unmarshal([]byte(body), &plans); err != nil || len(plans) != 1 {
+		t.Fatalf("%v: %s", err, body)
+	}
+	p := plans[0]
+	if p.Kind != "pdc" || p.From != "YSSY" || p.To != "FAOR" || p.ID != 2 || !p.T.Equal(time.Date(2026, 10, 27, 21, 48, 0, 0, time.UTC)) {
+		t.Errorf("pdc: %+v", p)
+	}
+	if p.Detail != "runway 16R, GROOK2 (WOL) \u00b7 climb 5000 ft \u00b7 departure 129.700 \u00b7 squawk 1372 \u00b7 issued on day 27 at 21:48Z" || len(p.Points) != 4 {
+		t.Errorf("detail %q, %d points", p.Detail, len(p.Points))
+	}
+	if len(p.Missing) != 1 || p.Missing[0] != "STUIE" {
+		t.Errorf("a fix of that name 1,300 nm off the route is not drawn: %v", p.Missing)
+	}
+	if p.Points[0].Name != "YSSY" || p.Points[0].Kind != "airport" || p.Points[1].Name != "WOL" || p.Points[3].Name != "3756S13533E" {
+		t.Errorf("points: %+v (the origin, the fixes, and no destination)", p.Points)
+	}
+}
+
 // "until" fetches a window that ended in the past, so an older flight comes by itself and not as the oldest part of the
 // newest rows; it can never reach into the future.
 func TestWindowUntil(t *testing.T) {

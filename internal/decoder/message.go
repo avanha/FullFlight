@@ -27,6 +27,7 @@ const (
 	KindOps        Kind = "ops_report"
 	KindText       Kind = "text_message"
 	KindClearance  Kind = "oceanic_clearance"
+	KindPDC        Kind = "departure_clearance"
 	KindWeather    Kind = "weather_report"
 	KindDisconnect Kind = "disconnect"
 	KindPOS        Kind = "pos_report"
@@ -197,6 +198,9 @@ func Decode(m Message) (Result, error) {
 		return r, nil
 	}
 	if r, ok := decodeOceanic(m); ok {
+		return r, nil
+	}
+	if r, ok := decodePDC(m); ok {
 		return r, nil
 	}
 	prefix, body := SplitPrefix(m.Text)

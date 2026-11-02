@@ -10,6 +10,7 @@ import (
 	"github.com/avanha/fullflight/internal/airports"
 	"github.com/avanha/fullflight/internal/decoder"
 	"github.com/avanha/fullflight/internal/flightplan"
+	"github.com/avanha/fullflight/internal/geo"
 )
 
 // planJSON is a filed flight plan resolved to positions, for drawing and projecting along.
@@ -23,7 +24,7 @@ type planJSON struct {
 	ToName   string             `json:"to_name,omitempty"`
 	Points   []flightplan.Point `json:"points"`
 	Missing  []string           `json:"missing,omitempty"` // fixes whose position we could not find
-	Kind     string             `json:"kind,omitempty"`    // "clearance": an oceanic clearance, the route over the ocean only, not a flight plan
+	Kind     string             `json:"kind,omitempty"`    // "clearance": an oceanic clearance, the route over the ocean only, not a flight plan; "pdc": a pre-departure clearance
 	Detail   string             `json:"detail,omitempty"`  // a clearance's track, level and entry
 }
 
@@ -92,6 +93,41 @@ func (s *Server) plans(w http.ResponseWriter, r *http.Request) {
 			out = append(out, planJSON{ID: m.ID, T: m.T, Callsign: c.Callsign, To: c.Dest, Points: pts, Missing: missing, Kind: "clearance", Detail: detail})
 			continue
 		}
+		if m.Kind == "departure_clearance" {
+			var d struct {
+				Fields struct {
+					PDC *decoder.DepartureClearance `json:"pdc"`
+				} `json:"fields"`
+			}
+			if json.Unmarshal([]byte(m.Decoded), &d) != nil || d.Fields.PDC == nil || d.Fields.PDC.Route == nil {
+				continue
+			}
+			c := d.Fields.PDC
+			route := *c.Route // from the origin airport, to no airport: the clearance stops short of the destination
+			route.From = c.Origin
+			pts, missing := flightplan.Resolve(&route, lookup, airport)
+			pts, missing = dropDetours(pts, missing)
+			at := m.At // issued on its day and time, whenever it was delivered
+			if at.IsZero() {
+				at = m.T
+			}
+			key := "pdc|" + c.Callsign + "|" + c.Origin + "|" + routeKey(c.Route)
+			if k, dup := seen[key]; dup {
+				out[k].T, out[k].ID = at, m.ID
+				continue
+			}
+			detail := fmt.Sprintf("runway %s, %s", c.Runway, c.SID)
+			if c.Transition != "" {
+				detail += " (" + c.Transition + ")"
+			}
+			detail += fmt.Sprintf(" \u00b7 climb %d ft \u00b7 departure %s \u00b7 squawk %s \u00b7 issued on day %s at %sZ", c.ClimbTo, c.DepFreq, c.Squawk, c.Day, c.Time)
+			if c.Remark != "" {
+				detail += " \u00b7 " + strings.ToLower(c.Remark)
+			}
+			seen[key] = len(out)
+			out = append(out, planJSON{ID: m.ID, T: at, Callsign: c.Callsign, From: c.Origin, To: c.Dest, Points: pts, Missing: missing, Kind: "pdc", Detail: detail})
+			continue
+		}
 		if m.Kind != "flight_plan" {
 			continue
 		}
@@ -130,6 +166,27 @@ func (s *Server) plans(w http.ResponseWriter, r *http.Request) {
 		out = append(out, j)
 	}
 	writeJSON(w, 200, out)
+}
+
+// dropDetours takes out of a resolved route the named points that send it a long way off and back: the navigation database is from
+// 2013, and a fix introduced since can share its name with an older one on the far side of the world. A point is dropped when the
+// route goes over 300 nm out of its way to reach it, and is listed as not placed.
+func dropDetours(pts []flightplan.Point, missing []string) ([]flightplan.Point, []string) {
+	out := pts[:0:0]
+	for i, p := range pts {
+		if p.Kind == "fix" || p.Kind == "learned" {
+			if i > 0 && i+1 < len(pts) {
+				prev, next := out[len(out)-1], pts[i+1]
+				in, onward, direct := geo.DistNM(prev.Lat, prev.Lon, p.Lat, p.Lon), geo.DistNM(p.Lat, p.Lon, next.Lat, next.Lon), geo.DistNM(prev.Lat, prev.Lon, next.Lat, next.Lon)
+				if in+onward-direct > 300 && in+onward > 2*direct {
+					missing = append(missing, p.Name)
+					continue
+				}
+			}
+		}
+		out = append(out, p)
+	}
+	return out, missing
 }
 
 func routeKey(p *flightplan.Plan) string {

@@ -432,7 +432,7 @@ L.control.layers(null, {
   '<span style="font-weight:bold">&#9671;</span> Waypoints': wptGroup,
   '<span style="color:#e8590c;font-weight:bold">&#8211; &#8211;</span> Predictions': predGroup,
   '<span style="color:#5c6b8a;font-weight:bold">&#8211; &#8211;</span> Planned route': planGroup,
-  '<span style="color:#0f766e;font-weight:bold">&#8211; &#8211;</span> Oceanic clearance': clearanceGroup,
+  '<span style="color:#0f766e;font-weight:bold">&#8211; &#8211;</span><span style="color:#b45309;font-weight:bold">&#8211;</span> Clearances (oceanic, departure)': clearanceGroup,
   '<span style="color:#777;font-weight:bold">&middot;&middot;&middot;</span> Estimated path': bridgeGroup,
   '<span style="color:#666;font-weight:bold">&middot;&middot;&middot;</span> Projection': projGroup,
   '<span style="font-weight:bold">&#8627;</span> Wind barbs': windGroup,
@@ -1059,25 +1059,28 @@ function drawGhost(m, pan) {
 function choosePlan(plans, chosen, nowMs = Date.now()) {
   const lo = chosen ? chosen.startMs - 12 * 3600000 : nowMs - 48 * 3600000;
   const hi = chosen ? chosen.endMs + FLIGHT_TOL : nowMs + 5 * 60000;
-  const ok = (plans || []).filter(p => { const t = Date.parse(p.t); return p.kind !== 'clearance' && t >= lo && t <= hi && p.points && p.points.length >= 2; });
+  const ok = (plans || []).filter(p => { const t = Date.parse(p.t); return !isClearance(p) && t >= lo && t <= hi && p.points && p.points.length >= 2; });
   return ok.length ? ok[ok.length - 1] : null;
 }
 
-// An oceanic clearance is the route over the ocean the centre cleared the aircraft to fly: only its own fixes, drawn apart from
-// the filed plan, which stays the flight's route. Those that arrived during the flight shown (or in the last two days).
-const CLEARANCE_COLOR = '#0f766e';
+// A clearance is a route the aircraft was cleared to fly, drawn apart from the filed plan, which stays the flight's route: the
+// oceanic clearance gives the route over the ocean (only its own fixes), the pre-departure clearance the one from the gate (the
+// origin and the fixes it names, stopping short of the destination). Those that arrived during the flight shown (or in the last two days).
+const isClearance = p => p.kind === 'clearance' || p.kind === 'pdc';
+const CLEARANCE_COLOR = '#0f766e', PDC_COLOR = '#b45309';
 function drawClearances(plans, chosen, nowMs = Date.now()) {
   clearanceGroup.clearLayers();
   const lo = chosen ? chosen.startMs - 12 * 3600000 : nowMs - 48 * 3600000;
   const hi = chosen ? chosen.endMs + FLIGHT_TOL : nowMs + 5 * 60000;
   for (const c of plans || []) {
     const t = Date.parse(c.t);
-    if (c.kind !== 'clearance' || t < lo || t > hi || !c.points || c.points.length < 2) continue;
-    L.polyline(c.points.map(p => ll(p.lat, p.lon)), {color: CLEARANCE_COLOR, weight: 3, dashArray: '2 7', opacity: .8, interactive: false}).addTo(clearanceGroup);
+    if (!isClearance(c) || t < lo || t > hi || !c.points || c.points.length < 2) continue;
+    const pdc = c.kind === 'pdc', color = pdc ? PDC_COLOR : CLEARANCE_COLOR;
+    L.polyline(c.points.map(p => ll(p.lat, p.lon)), {color, weight: 3, dashArray: '2 7', opacity: .8, interactive: false}).addTo(clearanceGroup);
     const head = `${c.callsign ? c.callsign + ' ' : ''}cleared to ${c.to}`;
     for (const p of c.points) {
-      L.circleMarker(ll(p.lat, p.lon), {radius: 3, color: CLEARANCE_COLOR, weight: 1.5, fillColor: '#fff', fillOpacity: 1}).addTo(clearanceGroup)
-        .bindTooltip(tip(p.name, `oceanic clearance ${head}`, c.detail, `received ${fmtAgo(c.t)}`, c.missing && c.missing.length ? `not placed: ${c.missing.join(', ')}` : ''));
+      L.circleMarker(ll(p.lat, p.lon), {radius: p.kind === 'airport' ? 5 : 3, color, weight: 1.5, fillColor: '#fff', fillOpacity: 1}).addTo(clearanceGroup)
+        .bindTooltip(tip(p.name, `${pdc ? 'departure' : 'oceanic'} clearance ${head}`, c.detail, `${pdc ? 'issued' : 'received'} ${fmtAgo(c.t)}`, c.missing && c.missing.length ? `not placed: ${c.missing.join(', ')}` : ''));
     }
   }
 }

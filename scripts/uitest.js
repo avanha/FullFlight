@@ -265,7 +265,7 @@ highlightGroup = null;
   const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
   // the legend lists all five sources
   assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS', 'ACMF', 'AOC', 'POS', 'POSRPT', 'POSA1', 'SB', 'Airline', 'AeroDataBox']);
-  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Satellite (IR)|Waypoints|Predictions|Planned route|Oceanic clearance|Estimated path|Projection|Wind barbs|D-ATIS requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
+  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Satellite (IR)|Waypoints|Predictions|Planned route|Clearances (oceanic, departure)|Estimated path|Projection|Wind barbs|D-ATIS requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
   // each source gets its own colour and style
   for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {
     const r = await lineOf([], [at2(0, 41, -105, kind), at2(10, 41.1, -104, kind), at2(20, 41.2, -103, kind)]);
@@ -1204,6 +1204,20 @@ highlightGroup = null;
     calls.lines.length = 0;
     t.drawClearances([{...clr, t: '2026-10-20T12:30:00Z'}, {...clr, points: [pt('ATSIX', 61, -10)]}], null, NOW_MS);
     assert.strictEqual(t.clearanceGroup.items.length, 0);
+
+    // a pre-departure clearance: from the origin along the cleared fixes, in its own colour, and not the flight's plan
+    const pdc = {id: 3, t: '2026-10-27T13:48:00Z', kind: 'pdc', callsign: 'QFA63', from: 'YSSY', to: 'FAOR', detail: 'runway 34L, TONTO1 (NWA) · climb 5000 ft',
+      points: [pt('YSSY', -33.9, 151.2, 'airport'), pt('WOL', -34.6, 150.8), pt('3846S14812E', -38.77, 148.2, 'given')], missing: []};
+    assert.strictEqual(t.choosePlan([filed, pdc], null, NOW_MS).id, 1, 'a departure clearance is not the flight\'s plan either');
+    assert.strictEqual(t.choosePlan([pdc], null, NOW_MS), null);
+    calls.lines.length = 0; calls.circles.length = 0;
+    t.drawClearances([clr, pdc], null, NOW_MS);
+    const pl = calls.lines.find(l => l.o.color === '#b45309');
+    assert.ok(pl && JSON.stringify(pl.ll) === '[[-33.9,151.2],[-34.6,150.8],[-38.77,148.2]]', 'the origin and the cleared fixes');
+    const pdots = calls.circles.filter(c => c.o.color === '#b45309');
+    assert.strictEqual(pdots.length, 3);
+    assert.ok(lines(pdots[1].tooltip).includes('departure clearance QFA63 cleared to FAOR'), lines(pdots[1].tooltip).join(' | '));
+    assert.strictEqual(calls.circles.filter(c => c.o.color === '#0f766e').length, 3, 'the oceanic one keeps its colour');
   }
 
   // ===== 8r5. flights older than the window are listed, and fetched one at a time ====================

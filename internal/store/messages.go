@@ -601,27 +601,35 @@ func (s *Store) GroundStops(hexAddr string, since, until time.Time) ([]GroundSto
 // time of the report kinds that carry a date (ACMF, AOC position, *POS, POSRPT), an operations event's day of the month and time
 // of day. One about a flight that has not left yet (Qantas sends the next flight's data while the aircraft is still on its way
 // in) counts from when that flight is due to leave. Any other counts from when it arrived.
-const atTime = `COALESCE(` + eventAt + `,
+var atTime = `COALESCE(` + eventAt + `,
 	MAX(ts, COALESCE(CASE WHEN json_valid(decoded) THEN CAST(strftime('%s', json_extract(decoded, '$.fields.ops.sched')) AS INTEGER) END, 0)))`
 
 // eventAt is the time the aircraft put in a message, where it gave a full date and time (or a day of the month and a time of
 // day), and NULL where it did not.
-const eventAt = `COALESCE(CASE WHEN json_valid(decoded) THEN CAST(strftime('%s', json_extract(decoded, '$.fields.ops.at')) AS INTEGER) END,
+var eventAt = `COALESCE(CASE WHEN json_valid(decoded) THEN CAST(strftime('%s', json_extract(decoded, '$.fields.ops.at')) AS INTEGER) END,
 	` + a350Event + `,
 	CASE WHEN kind = 'miam' AND json_valid(decoded) AND json_extract(decoded, '$.fields.rep081') IS NOT NULL THEN pos_ts END,
 	CASE WHEN kind IN ('acmf_report', 'aoc_position', 'pos_report', 'posrpt') THEN pos_ts END,
-	` + opsDayTime + `)`
+	` + opsDayTime + `,
+	` + pdcDayTime + `)`
 
-// opsDayTime is the time of an operations event that gives a day of the month and a time of day ("27", "11:58Z"): that day of the
-// month in the month it arrived, or the month before if that would be after it arrived. Such events are often delivered late.
-const opsDayTime = `CASE WHEN json_valid(decoded) AND json_extract(decoded, '$.fields.ops.info.time') LIKE '__:__%'
-		AND json_extract(decoded, '$.fields.ops.info.day') GLOB '[0-9]*' THEN
+// dayTime is the time of a message that gives a day of the month and a time of day ("27", "11:58Z"), read from the JSON paths of
+// the two: that day of the month in the month it arrived, or the month before if that would be after it arrived. Such messages are
+// often delivered late.
+func dayTime(dayPath, timePath string) string {
+	return `CASE WHEN json_valid(decoded) AND json_extract(decoded, '` + timePath + `') LIKE '__:__%'
+		AND json_extract(decoded, '` + dayPath + `') GLOB '[0-9]*' THEN
 	(SELECT CASE WHEN this <= ts + 3600 THEN this ELSE prev END
 	 FROM (SELECT
 		CAST(strftime('%s', ts, 'unixepoch', 'start of month', '+' || (d - 1) || ' days', '+' || hh || ' hours', '+' || mm || ' minutes') AS INTEGER) AS this,
 		CAST(strftime('%s', ts, 'unixepoch', 'start of month', '-1 month', '+' || (d - 1) || ' days', '+' || hh || ' hours', '+' || mm || ' minutes') AS INTEGER) AS prev
-		FROM (SELECT CAST(json_extract(decoded, '$.fields.ops.info.day') AS INTEGER) AS d, CAST(substr(json_extract(decoded, '$.fields.ops.info.time'), 1, 2) AS INTEGER) AS hh,
-			CAST(substr(json_extract(decoded, '$.fields.ops.info.time'), 4, 2) AS INTEGER) AS mm) WHERE d BETWEEN 1 AND 31)) END`
+		FROM (SELECT CAST(json_extract(decoded, '` + dayPath + `') AS INTEGER) AS d, CAST(substr(json_extract(decoded, '` + timePath + `'), 1, 2) AS INTEGER) AS hh,
+			CAST(substr(json_extract(decoded, '` + timePath + `'), 4, 2) AS INTEGER) AS mm) WHERE d BETWEEN 1 AND 31)) END`
+}
+
+// opsDayTime is the time of an operations event, and pdcDayTime that of a pre-departure clearance, which give a day and a time.
+var opsDayTime = dayTime("$.fields.ops.info.day", "$.fields.ops.info.time")
+var pdcDayTime = dayTime("$.fields.pdc.day", "$.fields.pdc.time")
 
 // opsWindow bounds the messages to look at for a time window: a report can be delivered days after its event.
 const opsWindow = `ts BETWEEN ?2 - 172800 AND ?3 + 604800`
@@ -633,7 +641,7 @@ const a350Event = `CASE WHEN json_valid(decoded) THEN
 	(SELECT t FROM (SELECT CAST(strftime('%s', COALESCE(json_extract(decoded, '$.fields.a350.Time'), json_extract(decoded, '$.fields.rtr.Time'), json_extract(decoded, '$.fields.takeoff.Time'))) AS INTEGER) AS t) WHERE t > 946684800) END`
 
 // a350Time is when an A350 report counts as made: its own time, or when it arrived if it gave none.
-const a350Time = `COALESCE(` + a350Event + `, ts)`
+var a350Time = `COALESCE(` + a350Event + `, ts)`
 
 var routeReportsSQL = `
 	SELECT COALESCE(pos_ts, ts) AS t, COALESCE(json_extract(decoded, '$.fields.rep081.Origin'), '') AS origin,
