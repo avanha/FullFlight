@@ -1,14 +1,21 @@
 # FullFlight
 
-Self-hosted tracker that follows specific aircraft by combining live ADS-B positions (adsb.lol, adsb.fi) with
-ACARS/ADS-C/CPDLC datalink messages (airframes.io), decoded with [golibacars](https://github.com/avanha/golibacars), a Go
+Self-hosted tracker that follows specific aircraft by combining live ADS-B positions ([adsb.lol](https://www.adsb.lol/), [adsb.fi](https://adsb.fi/)) with
+ACARS/ADS-C/CPDLC datalink messages ([airframes.io](https://app.airframes.io/)), decoded with [golibacars](https://github.com/avanha/golibacars), a Go
 port of [libacars](https://github.com/szpajder/libacars). Airplanes are shown individually with as much data as can be gleaned
 from the feeds, and there is a lot of data in datalink messages! It makes me wish for more feeders for better coverarge.
 
-Thanks to thebaldgeek of TBG-LBAND-APAC and all you other feeders.
+Thanks to *thebaldgeek* of TBG-LBAND-APAC and all you datalink and ADS-B feeders!
 
-Note: This app is 99% built with Claude (Sonnet 5.5 @ Medium), and that includes this README file. It gets the point across, but it reads
-like it's AI.  My plan is to edit and rewrite it, to improve its readability, especially if this project gets any attention.
+**Note:** This app is 99% built with Claude (Sonnet 5.5 @ Medium), and that includes this README file. It gets the point across, but it reads
+like AI slop, because it is.  My plan is to edit and rewrite it, to improve its readability, especially if this project gets any attention.
+
+### Terms and Licenses
+
+* adsb.lol provides data under the [Open Data Commons Open Database License](https://opendatacommons.org/licenses/odbl/1-0/)
+* adsb.fi provides data for personal, non-commercial use only.  Check their full [terms](https://github.com/adsbfi/opendata/blob/main/README.md#terms).
+* airframes.io provides a free, limited API tier. See https://app.airframes.io/pricing
+* FullFlight is free open source released under the MIT license.
 
 [![FullFlight tracking an A359 over the Andaman Sea](docs/screenshot.png)](https://avanha.github.io/FullFlight/)
 
