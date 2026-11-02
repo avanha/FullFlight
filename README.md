@@ -82,7 +82,7 @@ Then:
   [Stop never seen](docs/details.md#a-stop-ads-b-never-saw) · [Seen taking off](docs/details.md#seen-taking-off)
 - **Next-flight chatter** (messages about the following flight sent mid-flight) is set aside.
   [Details](docs/details.md#next-flight-chatter)
-- **Explain.** `GET /api/flights/{hex}/explain` says why each flight looks the way it does.
+- **Explain.** A link under the Flights selector (and `GET /api/flights/{hex}/explain`) says why each flight looks the way it does.
   [Details](docs/details.md#why-a-flight-looks-the-way-it-does)
 - **The time a message counts as** is worked out once, when it is stored, and every flight rule reads that one time.
   [Details](docs/details.md#the-time-a-message-counts-as)

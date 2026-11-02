@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why the flights look this way</title>
+<style>
+  body { margin: 0; font: 14px system-ui, sans-serif; color: #222; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid #ccc; background: #f4f6fa; }
+  header h2 { margin: 0; font-size: 18px; }
+  header a { color: #1d4ed8; text-decoration: none; }
+  #err { color: #b00; margin: 8px 16px; }
+  #err:empty { display: none; }
+  main { padding: 8px 16px 32px; max-width: 1100px; }
+  .lead { color: #444; max-width: 80ch; }
+  #empty { color: #777; padding: 16px 0; }
+  details { border: 1px solid #ddd; border-radius: 4px; margin: 8px 0; }
+  details.want { border-color: #1d4ed8; box-shadow: 0 0 0 2px #dbe6ff; }
+  summary { padding: 8px 10px; cursor: pointer; background: #fafafa; }
+  summary b { font-size: 15px; }
+  summary .sub { display: block; color: #555; font-size: 12px; margin-top: 2px; }
+  summary .last { color: #1d4ed8; font-size: 12px; margin-left: 6px; }
+  table { border-collapse: collapse; width: 100%; }
+  th { text-align: left; font-size: 12px; color: #555; padding: 4px 10px; border-bottom: 2px solid #ccc; white-space: nowrap; }
+  td { padding: 4px 10px; border-bottom: 1px solid #eee; vertical-align: top; }
+  td.when, td.rule { font-family: ui-monospace, monospace; font-size: 12px; white-space: nowrap; }
+  td.stage { color: #666; white-space: nowrap; }
+  .none { padding: 6px 10px; color: #777; }
+  h3 { font-size: 15px; margin: 22px 0 4px; }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">&larr; Map</a>
+  <h2>Why the flights look this way</h2>
+  <span id="who"></span>
+  <label>Look back <select id="hours">
+    <option value="96">4 days</option><option value="168">7 days</option><option value="336">14 days</option><option value="720">30 days</option>
+  </select></label>
+</header>
+<div id="err"></div>
+<main>
+  <p class="lead">What the flight logic did to divide this aircraft's history into flights, in the order it did it: the runs of flight-number sightings,
+    what was set aside, which pieces were joined or cut apart, and where each route and departure came from. Open a flight to read its notes.</p>
+  <div id="empty" hidden>No flights in this span.</div>
+  <div id="flights"></div>
+  <div id="loose" hidden>
+    <h3>Notes that belong to no flight</h3>
+    <table><tbody id="looserows"></tbody></table>
+  </div>
+</main>
+<script>
+// ---- the explain page: GET /api/flights/{hex}/explain, a flight at a time ----
+const $ = s => document.querySelector(s);
+const params = new URLSearchParams(typeof location === 'undefined' ? '' : location.search);
+const hex = (params.get('hex') || '').toUpperCase();
+const want = params.get('flight') || '';   // the flight to open (its id), when the map sent us from one
+
+const utc = t => { const d = new Date(t); return `${d.toISOString().slice(5, 10)} ${d.toISOString().slice(11, 16)}Z`; };
+const span = (a, b) => (!b || a === b) ? utc(a) : `${utc(a)} to ${utc(b)}`;
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+
+function routeText(f) {
+  const from = f.from ? f.from + (f.from_manual ? '*' : f.from_seen ? '~' : '') : '?';
+  const to = f.to ? f.to + (f.to_manual ? '*' : '') : '?';
+  return `${from} → ${to}`;
+}
+function noteRows(notes) {
+  return notes.map(n => {
+    const tr = el('tr');
+    tr.append(el('td', 'when', span(n.from, n.to)), el('td', 'stage', n.stage), el('td', 'rule', n.rule), el('td', 'detail', n.detail));
+    return tr;
+  });
+}
+function card(f, open) {
+  const d = el('details', open && want ? 'want' : '');
+  d.open = open;
+  const s = el('summary');
+  const name = [f.flight || 'unidentified flight', f.callsign && f.callsign !== f.flight ? f.callsign : ''].filter(Boolean).join(' · ');
+  const b = el('b', '', name);
+  s.append(b, document.createTextNode(`  ${routeText(f)}`));
+  if (f.latest) s.append(el('span', 'last', 'latest'));
+  const bits = [span(f.start, f.end), `${f.messages} messages`, `${f.positions} positions`];
+  if (f.departed) bits.push(`left ${utc(f.departed)} (${f.departed_how})`);
+  if (f.route_source) bits.push(`route from ${f.route_source}`);
+  s.append(el('span', 'sub', bits.join(' · ')));
+  d.append(s);
+  const why = f.why || [];
+  if (!why.length) d.append(el('div', 'none', 'Nothing was done to this flight: it is one run of sightings.'));
+  else {
+    const t = el('table'), body = el('tbody');
+    body.append(...noteRows(why));
+    t.append(body);
+    d.append(t);
+  }
+  return d;
+}
+
+async function load() {
+  $('#err').textContent = '';
+  if (!hex) { $('#err').textContent = 'No aircraft given: open this from the map (?hex=ABC123).'; return; }
+  $('#who').textContent = hex;
+  let ex;
+  try {
+    const r = await fetch(`/api/flights/${hex}/explain?hours=${$('#hours').value}`);
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    ex = j;
+  } catch (e) { $('#err').textContent = e.message; return; }
+  const flights = (ex.flights || []).slice().reverse();   // the newest first
+  const cards = flights.map(f => card(f, !want || f.id === want));
+  $('#flights').replaceChildren(...cards);
+  $('#empty').hidden = flights.length > 0;
+  const loose = ex.unplaced || [];
+  $('#loose').hidden = !loose.length;
+  $('#looserows').replaceChildren(...noteRows(loose));
+  const hit = cards.find((c, i) => flights[i].id === want);
+  if (hit && hit.scrollIntoView) hit.scrollIntoView({block: 'start'});
+}
+$('#hours').onchange = load;
+load();
+</script>
+</body>
+</html>

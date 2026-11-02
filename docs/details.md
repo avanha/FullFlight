@@ -422,6 +422,11 @@ each, in a `why` list in the order the work was done:
 A note that belongs to no flight (a number heard once with no position near it) is listed apart under `unplaced`. The usual list
 carries none of it and is not slowed by it.
 
+The map page shows it: with an aircraft selected, **Why are the flights this way?** under the Flights selector opens
+`/explain.html?hex=...` in a new tab, with the chosen flight (if one is chosen) opened and marked. The page lists the aircraft's
+flights newest first, each folded to its route, span and departure with its notes underneath (span, stage, rule, what was done),
+and the notes that belong to no flight at the end. A selector sets how far back to look (4 to 30 days).
+
 ### The time a message counts as
 
 Every message has two times: when it arrived, and the time it counts as for the flight it belongs to. The second is, in order:

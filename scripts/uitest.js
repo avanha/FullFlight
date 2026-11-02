@@ -7,7 +7,7 @@ const src = html.match(/<script>\n(const map[\s\S]*?)<\/script>/)[1];
 // Two elements with one id make $('#id') find the first, and whatever draws into the second draws into the wrong place
 // (a route-suggestion list once took over the airport list this way). Every page must have each id once, and every
 // list="..." must name an id that exists.
-for (const page of ['index.html', 'airframes.html', 'backfill.html', 'stations.html']) {
+for (const page of ['index.html', 'airframes.html', 'backfill.html', 'stations.html', 'explain.html']) {
   const text = fs.readFileSync(require('path').join(__dirname, '../internal/server/static', page), 'utf8');
   const ids = [...text.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]);
   const dup = ids.filter((id, i) => ids.indexOf(id) !== i);
@@ -1283,6 +1283,8 @@ highlightGroup = null;
       assert.strictEqual(byId['#joinbtn'].hidden, false, 'with a flight before it to join to');
       assert.strictEqual(byId['#splitbtn'].hidden, true, 'and nothing joined to split');
       assert.ok(/QF8/.test(byId['#joinbtn'].title), byId['#joinbtn'].title);
+      assert.strictEqual(byId['#explainedit'].hidden, false);
+      assert.strictEqual(byId['#explainlink'].href, '/explain.html?hex=780AB8&flight=QF8%40' + '2', 'the explain page opens on the aircraft and the chosen flight');
       await byId['#joinbtn'].onclick(); await settle();
       assert.ok(lastPut && /\/api\/flights\/780AB8\/join$/.test(lastPut.url) && lastPut.body.join === true && lastPut.body.start === Math.floor(Date.parse(B.start) / 1000), JSON.stringify(lastPut));
       assert.strictEqual(t.flightChoice, 'QF8@1', 'the joined flight starts where the earlier piece did: that is the one to show');
@@ -1291,6 +1293,8 @@ highlightGroup = null;
       assert.strictEqual(byId['#joinbtn'].hidden, true, 'the first flight has nothing before it');
       t.chooseFlight('all'); await settle();
       assert.strictEqual(byId['#joinedit'].hidden, true, 'nor does the all-flights view');
+      assert.strictEqual(byId['#explainedit'].hidden, false, 'but the explanation is of the whole aircraft');
+      assert.strictEqual(byId['#explainlink'].href, '/explain.html?hex=780AB8');
     });
     // a flight made of joined pieces can be split
     const J = seg('QF8@1', 'QF8', hoursAgo(20), hoursAgo(8), {latest: true, joined: [Math.floor((Date.now() - 10 * 3600e3) / 1000)]});

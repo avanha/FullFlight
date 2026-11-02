@@ -180,6 +180,9 @@
     <button type="button" id="splitbtn" title="Take the join made by hand away: this goes back to being separate flights">Split the joined flights</button>
     <span id="joinmsg" style="color:#b00"></span>
   </p>
+  <p class="hint" id="explainedit" style="margin:4px 0 0" hidden>
+    <a id="explainlink" href="/explain.html" target="_blank" rel="noopener" title="Opens a page saying what the flight logic did to divide this aircraft's history into flights, and why">Why are the flights this way?</a>
+  </p>
   <p class="hint" id="routeedit" style="margin:4px 0 0" hidden>
     <button type="button" id="routebtn" title="This flight's messages did not say where it went. Enter the origin and destination yourself; anything the messages do say wins.">Set route</button>
     <span id="routeform" hidden>
@@ -1353,6 +1356,13 @@ function syncJoinEditor() {
   if (i > 0) $('#joinbtn').title = `Make this and ${segLabel(flightSegs[i - 1])} one flight`;
   $('#splitbtn').hidden = !(sg && sg.joined && sg.joined.length);
   $('#joinmsg').textContent = '';
+  syncExplainLink(sg);
+}
+// The explain page (explain.html) opens on the aircraft, and on the chosen flight when there is one.
+function syncExplainLink(sg) {
+  const w = watches.find(x => x.id === selected);
+  $('#explainedit').hidden = !(w && w.hex && flightSegs.length);
+  if (w && w.hex) $('#explainlink').href = `/explain.html?hex=${w.hex}${sg ? '&flight=' + encodeURIComponent(sg.id) : ''}`;
 }
 async function setJoin(join) {
   const sg = chosenFlight(), w = watches.find(x => x.id === selected);
