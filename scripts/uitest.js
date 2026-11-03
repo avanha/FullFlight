@@ -974,6 +974,9 @@ highlightGroup = null;
   assert.strictEqual(rowText(73), 'CPDLC position report', 'the CPDLC summary already carries its names (from the decoder)');
 
   // ===== 8r. flights: most recent by default, all of them on request ==============================
+  // The flights below are dated in October, and the page and the fake server both count four days back from the clock:
+  // stand it where these were written (the day after the latest flight) so the test does not age out.
+  Date.now = () => Date.parse('2026-10-31T00:00:00Z');
   const seg = (id, flight, start, end, extra = {}) => ({id, flight, callsign: flight && 'CPA' + flight.slice(2), start, end, messages: 10, positions: 5, identified: !!flight, latest: false, ...extra});
   const OLD = seg('CX840@1', 'CX840', '2026-10-29T10:00:00Z', '2026-10-29T16:00:00Z', {from: 'VHHH', to: 'KJFK', messages: 40});
   const NEW = seg('CX843@2', 'CX843', '2026-10-30T10:00:00Z', '2026-10-30T20:00:00Z', {from: 'KJFK', to: 'VHHH', messages: 67, latest: true, from_name: 'John F Kennedy Intl', to_name: 'Hong Kong Intl', departed: '2026-10-30T10:05:00Z', departed_how: 'takeoff'});
