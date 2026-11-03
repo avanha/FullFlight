@@ -265,7 +265,7 @@ highlightGroup = null;
   const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
   // the legend lists all five sources
   assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS', 'ACMF', 'AOC', 'POS', 'POSRPT', 'POSA1', 'SB', 'Airline', 'AeroDataBox']);
-  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Satellite (IR)|Waypoints|Predictions|Planned route|Clearances (oceanic, departure)|Estimated path|Projection|Wind barbs|D-ATIS requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
+  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Satellite (IR)|Waypoints|Predictions|Planned route|Clearances (oceanic, departure)|Estimated path|Projection|Wind barbs|D-ATIS and METAR requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
   // each source gets its own colour and style
   for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {
     const r = await lineOf([], [at2(0, 41, -105, kind), at2(10, 41.1, -104, kind), at2(20, 41.2, -103, kind)]);
@@ -1128,8 +1128,8 @@ highlightGroup = null;
     const tt = lines(dots[0].tooltip);
     assert.ok(tt[0] === 'D-ATIS arrival request: RJBB' && tt.includes('position estimated between the fixes either side') && tt.includes('click to show the airports'), tt.join(' | '));
     // it is on the legend, as its own layer
-    const entry = Object.keys(calls.legendExtra).find(k => /D-ATIS requests/.test(k));
-    assert.ok(entry && calls.legendExtra[entry] === groups.find(g => g === calls.legendExtra[entry]), 'D-ATIS requests have a legend entry');
+    const entry = Object.keys(calls.legendExtra).find(k => /D-ATIS and METAR requests/.test(k));
+    assert.ok(entry && calls.legendExtra[entry] === groups.find(g => g === calls.legendExtra[entry]), 'D-ATIS and METAR requests have a legend entry');
 
     // clicking the diamond selects the message and shows its airports: a ring, and a label held up and to the right
     calls.circles.length = 0; calls.markers.length = 0; calls.lines.length = 0;
@@ -1171,6 +1171,19 @@ highlightGroup = null;
     let stopped = false;
     again.o.icon.html.ondblclick({stopPropagation() { stopped = true; }});
     assert.ok(stopped && Math.abs(again.ll[0] - 37.43) < 1e-6 && storage.calloutPos === '{}', 'double-click returns it to the default place');
+
+    // a METAR request is marked the same way and says what it is
+    const YSSY = {code: 'YSSY', iata: 'SYD', name: 'Sydney Kingsford Smith', lat: -33.95, lon: 151.18, wx: 'METAR'};
+    const metar = {id: 404, t: '2026-10-30T11:03:10Z', kind: 'ops_report', summary: 'Weather request (METAR) for YSSY', raw: 'r', label: '5U', rx_count: 1, airports: [YSSY]};
+    const r3 = await draw(FPTS, [...AM, metar], true);
+    const md = dotsOf(r3).find(d => /METAR/.test(lines(d.tooltip)[0]));
+    assert.ok(md && lines(md.tooltip)[0] === 'METAR request: YSSY', 'a diamond for the METAR request: ' + (md && lines(md.tooltip)[0]));
+    calls.circles.length = 0; calls.markers.length = 0; calls.lines.length = 0;
+    md.handlers.click();
+    assert.strictEqual(t.selectedMsg, 404);
+    assert.strictEqual(rings().length, 1);
+    assert.strictEqual(labelOf({markers: calls.markers}).o.icon.html.textContent, 'METAR YSSY');
+    assert.strictEqual(lines(rings()[0].tooltip)[0], 'METAR: YSSY');
 
     // no airports, no diamonds
     const none = await draw(FPTS, FMSGS, true);

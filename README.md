@@ -111,7 +111,7 @@ Then:
 
 - **Unified track.** One line runs through every plausible position from every source, each in its own colour; the legend
   switches to a line per source. [Details](docs/details.md#web-page)
-- **Labels** sit beside what they name and can be dragged; D-ATIS requests are marked and show their airports.
+- **Labels** sit beside what they name and can be dragged; D-ATIS and METAR requests are marked and show their airports.
   [Labels](docs/details.md#labels-are-held-away-from-what-they-name) · [D-ATIS](docs/details.md#d-atis-requests)
 - **Predictions.** A selected report draws the route it expects. [Details](docs/details.md#predictions)
 - **Waypoints** named in CPDLC reports get coordinates from the aircraft's own ADS-C, then the navigation database, then an

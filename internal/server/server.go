@@ -834,7 +834,7 @@ type partJSON struct {
 	Label string    `json:"label"`
 }
 
-// atisAirport is where a D-ATIS message points on the map.
+// atisAirport is where a D-ATIS message, or a METAR request, points on the map.
 type atisAirport struct {
 	Code string  `json:"code"`
 	IATA string  `json:"iata,omitempty"`
@@ -842,13 +842,15 @@ type atisAirport struct {
 	Lat  float64 `json:"lat"`
 	Lon  float64 `json:"lon"`
 	Type string  `json:"type,omitempty"` // arrival or departure
+	Wx   string  `json:"wx,omitempty"`   // "METAR" for a METAR request; empty for D-ATIS
 }
 
 // A D-ATIS request ("D-ATIS arrival request for CYVR", or "D-ATIS request for YSSY, YMML" from Qantas) or the
-// broadcast sent back ("D-ATIS arrival information P for PHNL: 060°/8 kt ...").
-var atisSummary = regexp.MustCompile(`^D-ATIS (?:(arrival|departure) )?(?:request|information(?: [A-Z])?) for ([A-Z0-9]{4}(?:, [A-Z0-9]{4})*)`)
+// broadcast sent back ("D-ATIS arrival information P for PHNL: 060°/8 kt ..."), or Qantas asking for METARs
+// ("Weather request (METAR) for YPPH, YSSY"), which the map treats the same way.
+var atisSummary = regexp.MustCompile(`^(?:D-ATIS (?:(arrival|departure) )?(?:request|information(?: [A-Z])?)|Weather request \((METAR)\)) for ([A-Z0-9]{4}(?:, [A-Z0-9]{4})*)`)
 
-// atisAirportsOf finds the airports a D-ATIS message names (from its summary), those we know where to put.
+// atisAirportsOf finds the airports a D-ATIS message or METAR request names (from its summary), those we know where to put.
 func atisAirportsOf(m store.Message) []atisAirport {
 	if m.Kind != "datis_request" && m.Kind != "weather_report" && m.Kind != "ops_report" {
 		return nil
@@ -858,9 +860,9 @@ func atisAirportsOf(m store.Message) []atisAirport {
 		return nil
 	}
 	var out []atisAirport
-	for _, code := range strings.Split(f[2], ", ") {
+	for _, code := range strings.Split(f[3], ", ") {
 		if a, ok := airports.Lookup(code); ok {
-			out = append(out, atisAirport{Code: a.ICAO, IATA: a.IATA, Name: a.Name, Lat: a.Lat, Lon: a.Lon, Type: f[1]})
+			out = append(out, atisAirport{Code: a.ICAO, IATA: a.IATA, Name: a.Name, Lat: a.Lat, Lon: a.Lon, Type: f[1], Wx: f[2]})
 		}
 	}
 	return out

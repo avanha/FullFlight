@@ -1424,17 +1424,19 @@ func TestMessagesDATISAirport(t *testing.T) {
 	st.AddMessage(store.Message{ID: 3, Hex: "C023C8", T: now.Add(-40 * time.Minute), Label: "SA", Text: "c", Kind: "media_advisory", Summary: "Link"})
 	st.AddMessage(store.Message{ID: 4, Hex: "C023C8", T: now.Add(-30 * time.Minute), Label: "5U", Text: "d", Kind: "ops_report", Summary: "D-ATIS request for YSSY, YMML"})
 	st.AddMessage(store.Message{ID: 5, Hex: "C023C8", T: now.Add(-20 * time.Minute), Label: "A9", Text: "e", Kind: "weather_report", Summary: "D-ATIS arrival information P for PHNL: 060°/8 kt, 10 SM"})
+	st.AddMessage(store.Message{ID: 6, Hex: "C023C8", T: now.Add(-10 * time.Minute), Label: "5U", Text: "f", Kind: "ops_report", Summary: "Weather request (METAR) for YPPH, YSSY"})
+	st.AddMessage(store.Message{ID: 7, Hex: "C023C8", T: now.Add(-5 * time.Minute), Label: "5U", Text: "g", Kind: "ops_report", Summary: "Weather request (TAF) for YSSY"})
 	ts := httptest.NewServer((&Server{Store: st, Now: func() time.Time { return now }}).Handler())
 	defer ts.Close()
 	_, body := do(t, "GET", ts.URL+"/api/messages/C023C8", "")
 	var ms []struct {
 		ID       int64 `json:"id"`
 		Airports []struct {
-			Code, IATA, Type string
-			Lat, Lon         float64
+			Code, IATA, Type, Wx string
+			Lat, Lon             float64
 		} `json:"airports"`
 	}
-	if err := json.Unmarshal([]byte(body), &ms); err != nil || len(ms) != 5 {
+	if err := json.Unmarshal([]byte(body), &ms); err != nil || len(ms) != 7 {
 		t.Fatalf("%v: %s", err, body)
 	}
 	if len(ms[0].Airports) != 1 || ms[0].Airports[0].Code != "RJBB" || ms[0].Airports[0].IATA != "KIX" || ms[0].Airports[0].Type != "arrival" || ms[0].Airports[0].Lat < 34 || ms[0].Airports[0].Lat > 35 {
@@ -1446,6 +1448,10 @@ func TestMessagesDATISAirport(t *testing.T) {
 	// Qantas asks for two at once, and a broadcast sent back names its airport too
 	if len(ms[3].Airports) != 2 || ms[3].Airports[1].Code != "YMML" || len(ms[4].Airports) != 1 || ms[4].Airports[0].Code != "PHNL" {
 		t.Errorf("two airports, and a reply: %+v %+v", ms[3].Airports, ms[4].Airports)
+	}
+	// a METAR request is marked the same way and says what it is; a forecast request is not marked
+	if len(ms[5].Airports) != 2 || ms[5].Airports[0].Code != "YPPH" || ms[5].Airports[1].Code != "YSSY" || ms[5].Airports[0].Wx != "METAR" || ms[3].Airports[0].Wx != "" || len(ms[6].Airports) != 0 {
+		t.Errorf("a METAR request: %+v, a TAF request: %+v", ms[5].Airports, ms[6].Airports)
 	}
 }
 
