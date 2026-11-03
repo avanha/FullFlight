@@ -45,6 +45,15 @@ func TestSpreadDefaultsOn(t *testing.T) {
 	}
 }
 
+func TestADSBLolAPIKey(t *testing.T) {
+	if c, err := load(t, "{}"); err != nil || c.ADSB.LolAPIKey != "" {
+		t.Fatalf("default: %q %v", c.ADSB.LolAPIKey, err)
+	}
+	if c, err := load(t, "adsb: {lol_api_key: abc123}"); err != nil || c.ADSB.LolAPIKey != "abc123" {
+		t.Errorf("key not read: %q %v", c.ADSB.LolAPIKey, err)
+	}
+}
+
 func TestBackfillConfig(t *testing.T) {
 	c, err := load(t, "{}")
 	if err != nil || c.Backfill.Enabled || c.Backfill.CacheMaxGiB != 20 {

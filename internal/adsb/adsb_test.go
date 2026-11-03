@@ -340,6 +340,47 @@ func TestSpreadRotatesTheFirstSource(t *testing.T) {
 }
 
 // Every request says who is asking, with the version.
+// A source's API key goes in X-API-Key on its own requests and no one else's, and not after a redirect to another host.
+func TestAPIKeyIsSentToItsSourceOnly(t *testing.T) {
+	var keyed, plain, elsewhere string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		elsewhere = r.Header.Get(APIKeyHeader)
+		w.Write([]byte(`{"ac":[]}`))
+	}))
+	defer other.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/hex/abc123" {
+			keyed = r.Header.Get(APIKeyHeader)
+		}
+		if r.URL.Path == "/reg/B-LRM" {
+			http.Redirect(w, r, other.URL+"/moved", http.StatusFound)
+			return
+		}
+		w.Write([]byte(`{"ac":[]}`))
+	}))
+	defer srv.Close()
+	nokey := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		plain = r.Header.Get(APIKeyHeader)
+		w.Write([]byte(`{"ac":[]}`))
+	}))
+	defer nokey.Close()
+	c := NewClient(Source{Name: "keyed", BaseURL: srv.URL, RegPath: "reg", APIKey: "s3cret"}, Source{Name: "plain", BaseURL: nokey.URL, RegPath: "reg"})
+	c.MinSpacing = time.Millisecond
+	if _, err := c.Hex(context.Background(), "ABC123"); err != nil {
+		t.Fatal(err)
+	}
+	if keyed != "s3cret" || plain != "" {
+		t.Errorf("key sent to its source %q, to the other %q", keyed, plain)
+	}
+	keyed, plain = "", ""
+	if _, err := c.Reg(context.Background(), "B-LRM"); err != nil {
+		t.Fatal(err)
+	}
+	if elsewhere != "" {
+		t.Errorf("the key followed a redirect to another host: %q", elsewhere)
+	}
+}
+
 func TestUserAgent(t *testing.T) {
 	var got string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -150,7 +151,11 @@ func main() {
 	for _, name := range cfg.ADSB.Sources {
 		switch name {
 		case "adsb.lol":
-			sources = append(sources, adsb.ADSBLol)
+			lol := adsb.ADSBLol
+			if lol.APIKey = strings.TrimSpace(cfg.ADSB.LolAPIKey); lol.APIKey != "" {
+				log.Info("adsb.lol requests will carry the API key from the configuration")
+			}
+			sources = append(sources, lol)
 		case "adsb.fi":
 			sources = append(sources, adsb.ADSBFi)
 		case "airplanes.live":

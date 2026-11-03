@@ -24,7 +24,14 @@ type Source struct {
 	RegPath string // "reg" (adsb.lol) or "registration" (adsb.fi)
 	// FallbackOnly keeps a source out of the rotation (see Client.Spread): it is only asked after the others.
 	FallbackOnly bool
+	// APIKey, if set, is sent with every request to this source in the APIKeyHeader header. adsb.lol gives a key to feeders and
+	// on request; the API answers without one today.
+	APIKey string
 }
+
+// APIKeyHeader is where adsb.lol looks for a key, as in the curl example it gives with a key (header names are not case sensitive).
+// A key it does not accept is answered 401 "invalid api key".
+const APIKeyHeader = "X-API-Key"
 
 var (
 	ADSBLol = Source{Name: "adsb.lol", BaseURL: "https://api.adsb.lol/v2", RegPath: "reg"}
@@ -159,8 +166,17 @@ func NewClient(sources ...Source) *Client {
 	if len(sources) == 0 {
 		sources = []Source{ADSBLol, ADSBFi}
 	}
-	return &Client{Sources: sources, HTTP: &http.Client{Timeout: 15 * time.Second},
-		UserAgent: version.UserAgent()}
+	return &Client{Sources: sources, UserAgent: version.UserAgent(), HTTP: &http.Client{Timeout: 15 * time.Second,
+		// a redirect to another host does not take a key with it (Go forwards custom headers, only dropping Authorization and cookies)
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+			if req.URL.Host != via[0].URL.Host {
+				req.Header.Del(APIKeyHeader)
+			}
+			return nil
+		}}}
 }
 
 func (c *Client) Hex(ctx context.Context, hex string) ([]Aircraft, error) {
@@ -304,6 +320,9 @@ func (c *Client) get(ctx context.Context, s Source, path string) ([]Aircraft, er
 		return nil, err
 	}
 	req.Header.Set("User-Agent", c.UserAgent)
+	if s.APIKey != "" {
+		req.Header.Set(APIKeyHeader, s.APIKey)
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, err

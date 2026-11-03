@@ -248,6 +248,11 @@ The feeds rate-limit, so we go gently: at most about one request a second to eac
 minutes is polled every 3 minutes instead of every 45 s; a source that answers 401/403 is left alone for an hour, 429 for 30 s or
 its `Retry-After`. Each pause is logged once with the HTTP status.
 
+If you have an adsb.lol API key (from adsb.lol, for feeders or on request), put it in `config.yaml` as `adsb.lol_api_key` and every
+request to adsb.lol carries it in the `X-API-Key` header, as in the example adsb.lol gives with a key. It answers without a key today. The key goes to adsb.lol only, and is dropped if a request is redirected to another host. A
+key it refuses is answered 401, which pauses adsb.lol for an hour like any other refusal, so check the log for `adsb source refused us`.
+The key does not apply to the archive downloads for the backfill, which come from GitHub.
+
 Every request to a service (the ADS-B sources, airframes.io, AeroDataBox) carries the User-Agent `FullFlight/<version> (personal
 flight tracker; +https://github.com/avanha/FullFlight)`. A build from a git checkout names its release (the tag, such as
 `v0.6.0`, or a pseudo-version after it); a build with no git information says `dev`. The weather imagery (RainViewer, NASA GIBS)

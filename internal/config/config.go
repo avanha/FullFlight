@@ -24,6 +24,9 @@ type Config struct {
 		// Spread rotates which source is asked first so each carries a share of the load (default true). With
 		// false the first is always asked first. airplanes.live is always last either way.
 		Spread *bool `yaml:"spread"`
+		// LolAPIKey is sent with every request to adsb.lol (as X-API-Key). Keys come from adsb.lol (feeders, or on request);
+		// it answers without one, so leaving this empty is fine.
+		LolAPIKey string `yaml:"lol_api_key"`
 	} `yaml:"adsb"`
 
 	// AeroDataBox is the optional fallback for finding a flight by number when ADS-B has lost it, such as

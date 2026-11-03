@@ -10,6 +10,7 @@ adsb:
   sources: [adsb.lol, adsb.fi] # tried in order; first to answer wins
   spread: true                 # take turns at being asked first, so each source carries a share of the load
                                # (false: always the first in the list; airplanes.live is always last)
+  lol_api_key: ""              # optional: adsb.lol's API key (from adsb.lol, for feeders or on request), sent with every request to it
   # airplanes.live can be added at the end once its operators have given you access (api.airplanes.live
   # answers 403 until then; a source that refuses us is left alone for an hour).
 
