@@ -282,6 +282,26 @@ each separately). Looking up a registration at airframes.io does not count, and 
 
 API: `GET /api/airframes`, and `GET`/`POST /api/airframes/{hex}/notes`, `PUT`/`DELETE .../notes/{id}`.
 
+## Recording the radar
+
+Off by default (`weather.record` in the config). RainViewer lists only the last two hours of radar frames, ten minutes apart, so
+the weather an aircraft flew through is gone unless it is kept as it happens. The recorder visits RainViewer about every 75
+minutes (`weather.every`, 10 to 100 minutes), reads its frame list, keeps the frames 20 minutes apart (those on :00, :20 and :40),
+and for each downloads the zoom-7 tiles (the finest RainViewer serves) within two tiles of where each followed aircraft was
+during the ten minutes either side of the frame. The path comes from the stored positions, interpolated across a silence of up
+to an hour and never beyond; an aircraft on the ground has none. A tile already held is not fetched again, and one RainViewer
+does not have is skipped.
+
+Tiles are files under `weather.dir` (`radar/<frame time>/<z>/<x>/<y>.png`); the `wx_tile` table says what is there. The oldest
+frames are deleted to stay under `weather.max_mib`. The tiles are the picture the map's radar layer shows (RainViewer now serves
+its Universal Blue scheme whatever scheme is asked for: light blue is about 15 dBZ, blue 20 to 30, yellow 35, orange 40, red 45
+to 50, pink 55 to 60, white 65 and over, so the colour is rain intensity, not temperature).
+
+It is polite: one request at a time with a pause between, our User-Agent, and a refusal (429 or a server error) ends the visit
+and holds off for an hour, remembered across a restart. The index must name a RainViewer host over https. If the app is not
+running for more than two hours the radar for that time is lost. Nothing draws the recorded tiles yet; see
+[the plan](weather-recording-plan.md) for what comes next (showing them, and keeping a filtered copy of the infrared imagery).
+
 ## Storage and purging
 
 Everything is kept by default. Measured: about 1.7 KB per datalink message (decoded text included) and about 90 bytes per ADS-B

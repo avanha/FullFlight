@@ -221,6 +221,17 @@ var migrations = []string{
 		nearest_airport TEXT NOT NULL DEFAULT '',
 		fetched_at      INTEGER NOT NULL
 	 );`,
+	// The weather tiles recorded along followed flights (the files themselves live in a directory; this says what is there).
+	`CREATE TABLE IF NOT EXISTS wx_tile (
+		source   TEXT NOT NULL,    -- radar
+		frame_ts INTEGER NOT NULL, -- the frame's time (the weather the tile shows)
+		z        INTEGER NOT NULL,
+		x        INTEGER NOT NULL,
+		y        INTEGER NOT NULL,
+		bytes    INTEGER NOT NULL,
+		fetched  INTEGER NOT NULL,
+		PRIMARY KEY (source, frame_ts, z, x, y)
+	 ) WITHOUT ROWID;`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.

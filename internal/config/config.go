@@ -49,6 +49,15 @@ type Config struct {
 		CacheMaxGiB int    `yaml:"cache_max_gib"` // oldest days are deleted beyond this; default 20
 	} `yaml:"backfill"`
 
+	// Weather is the optional record of the radar around the aircraft being followed, so the weather an aircraft flew
+	// through can be seen again. Nothing is fetched unless Record is set.
+	Weather struct {
+		Record bool          `yaml:"record"`
+		Dir    string        `yaml:"dir"`     // default data/weather
+		MaxMiB int           `yaml:"max_mib"` // oldest frames are deleted beyond this; default 1024
+		Every  time.Duration `yaml:"every"`   // between visits to RainViewer; default 75m, and under 2h, how far back it lists
+	} `yaml:"weather"`
+
 	Poll struct {
 		Waiting  time.Duration `yaml:"waiting"`  // unmatched flight entries; default 3m
 		Tracking time.Duration `yaml:"tracking"` // followed aircraft; default 45s
@@ -83,6 +92,15 @@ func Load(path string) (*Config, error) {
 	if c.Backfill.CacheMaxGiB == 0 {
 		c.Backfill.CacheMaxGiB = 20
 	}
+	if c.Weather.Dir == "" {
+		c.Weather.Dir = "data/weather"
+	}
+	if c.Weather.MaxMiB == 0 {
+		c.Weather.MaxMiB = 1024
+	}
+	if c.Weather.Every == 0 {
+		c.Weather.Every = 75 * time.Minute
+	}
 	if len(c.ADSB.Sources) == 0 {
 		c.ADSB.Sources = []string{"adsb.lol", "adsb.fi"}
 	}
@@ -99,6 +117,12 @@ func (c *Config) validate() error {
 	}
 	if c.Backfill.CacheMaxGiB < 0 {
 		return fmt.Errorf("backfill.cache_max_gib must not be negative")
+	}
+	if c.Weather.MaxMiB < 0 {
+		return fmt.Errorf("weather.max_mib must not be negative")
+	}
+	if c.Weather.Every < 10*time.Minute || c.Weather.Every > 100*time.Minute {
+		return fmt.Errorf("weather.every must be between 10m and 100m: RainViewer lists only the last two hours, so it has to be visited more often than that")
 	}
 	host, _, err := net.SplitHostPort(c.Listen)
 	if err != nil {

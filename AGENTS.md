@@ -14,6 +14,7 @@ the app section by section) and `HANDOFF.md` (design, data-source findings and d
 - `internal/datalink/` fetches and stores messages, `internal/airframes/` is the airframes.io client,
   `internal/adsb/` and `internal/poller/` are the ADS-B sources and polling, `internal/aerodatabox/` is the optional lookup.
 - `internal/history/` reads adsb.lol's daily archives (cached by hand) into positions for the time before an aircraft was followed.
+- `internal/weather/` records the radar tiles around followed aircraft (see `docs/weather-recording-plan.md`).
 - `internal/flights/` divides an aircraft's history into flights; `internal/airlines/` maps airline codes;
   `internal/flightplan/`, `internal/waypoints/`, `internal/navdata/`, `internal/airports/` hold route and place data.
   `internal/regs/` works out a hex from a US, Canadian or Australian registration and back (the countries whose addresses follow a rule).

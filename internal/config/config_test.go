@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func load(t *testing.T, y string) (*Config, error) {
@@ -51,6 +52,22 @@ func TestADSBLolAPIKey(t *testing.T) {
 	}
 	if c, err := load(t, "adsb: {lol_api_key: abc123}"); err != nil || c.ADSB.LolAPIKey != "abc123" {
 		t.Errorf("key not read: %q %v", c.ADSB.LolAPIKey, err)
+	}
+}
+
+func TestWeatherConfig(t *testing.T) {
+	c, err := load(t, "{}")
+	if err != nil || c.Weather.Record || c.Weather.Dir != "data/weather" || c.Weather.MaxMiB != 1024 || c.Weather.Every != 75*time.Minute {
+		t.Fatalf("%+v %v", c.Weather, err)
+	}
+	c, err = load(t, "weather: {record: true, dir: /w, max_mib: 50, every: 30m}")
+	if err != nil || !c.Weather.Record || c.Weather.Dir != "/w" || c.Weather.MaxMiB != 50 || c.Weather.Every != 30*time.Minute {
+		t.Errorf("%+v %v", c.Weather, err)
+	}
+	for _, bad := range []string{"weather: {every: 2h}", "weather: {every: 5m}", "weather: {max_mib: -1}"} {
+		if _, err := load(t, bad); err == nil {
+			t.Errorf("accepted %s", bad)
+		}
 	}
 }
 

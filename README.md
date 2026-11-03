@@ -135,6 +135,8 @@ Then:
 - **Stations.** Which receivers delivered our messages, and how late. [Details](docs/details.md#stations)
 - **Backfill.** Read adsb.lol's daily archives to fill the track from before an aircraft was followed.
   [Details](docs/details.md#backfilling-a-track-from-adsblols-archive) · [When it fails](docs/details.md#when-it-does-not-work)
+- **Recording the radar.** Off by default: keeps the RainViewer radar tiles around followed aircraft, which RainViewer itself drops after two hours.
+  [Details](docs/details.md#recording-the-radar) · [Plan](docs/weather-recording-plan.md)
 - **Storage and purging.** Everything is kept by default (tens of MB a month); `-stats` and `-purge-older-than` manage it.
   [Details](docs/details.md#storage-and-purging)
 

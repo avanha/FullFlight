@@ -26,6 +26,7 @@ import (
 	"github.com/avanha/fullflight/internal/server"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/version"
+	"github.com/avanha/fullflight/internal/weather"
 )
 
 func main() {
@@ -197,6 +198,11 @@ func main() {
 			Fetch:    &history.Fetcher{UserAgent: version.UserAgent(), Log: log}}
 		go func() { <-ctx.Done(); api.Backfill.Cancel() }()
 		log.Info("backfill enabled", "cache", cfg.Backfill.CacheDir, "limit_gib", cfg.Backfill.CacheMaxGiB)
+	}
+	if cfg.Weather.Record {
+		rec := &weather.Recorder{Store: st, Dir: cfg.Weather.Dir, UserAgent: version.UserAgent(), MaxBytes: int64(cfg.Weather.MaxMiB) << 20, Log: log}
+		go rec.Run(ctx, cfg.Weather.Every)
+		log.Info("recording radar along followed flights", "dir", cfg.Weather.Dir, "every", cfg.Weather.Every, "limit_mib", cfg.Weather.MaxMiB)
 	}
 	srv := &http.Server{
 		Addr:              cfg.Listen,
