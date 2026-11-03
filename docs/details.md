@@ -377,7 +377,7 @@ it was measured flying just before or just after. (QF8's Pacific crossing on 1 N
 was doing 490 kt.) A stop on the ground averages far slower than the flying, so two legs, such as UPS81 through Anchorage, are not
 joined.
 
-If the rules cannot tell, choose the flight and press **Join with the flight before** under the Flights selector; the pieces then
+If the rules cannot tell, choose the flight and press **Join with previous flight** under the Flights selector; the pieces then
 show as one flight (starting where the earlier piece started), and **Split the joined flights** undoes it. A join is kept
 (`PUT /api/flights/{hex}/join` with `{"start": unix seconds, "join": true|false}`) against when the later piece started, and goes
 with it if that flight changes.
