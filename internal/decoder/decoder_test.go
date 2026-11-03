@@ -351,6 +351,13 @@ func TestSummariesAndPositions(t *testing.T) {
 		t.Errorf("text = %q", r.Text)
 	}
 
+	// An aircraft on the ground at Sydney fills its predicted route with "not available" (180S 180W): no waypoints, not a route
+	// that ends at the date line. Its own position is still read.
+	r, _ = Decode(Message{Label: "B6", Text: "/MELCAYA.ADS.VH-OQH030D07E7DE6B5BFEC00D1DFC1F0E540003800010FFC000B80D800004000020003FFF8000040000200000649B"})
+	if len(r.Route) != 0 || r.Pos == nil || r.Pos.Lat > -33.9 || strings.Contains(r.Summary, "next") {
+		t.Errorf("a route of 180S 180W is no route: %+v %+v %q", r.Route, r.Pos, r.Summary)
+	}
+
 	_, r = load(t, "adsc_periodic")
 	if len(r.Route) != 3 || r.Route[0].Lat < 26.99 || r.Route[0].ETASec == nil || *r.Route[0].ETASec != 1088 {
 		t.Fatalf("route = %+v", r.Route)

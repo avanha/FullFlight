@@ -633,6 +633,9 @@ newest ADS-C route is shown).
 - Clicking the dot, the waypoint or the plane that stands on a report all select it. The plane is drawn at the newest trustworthy
   fix from ADS-B *or* a datalink report, and is the report itself when that is newer.
 
+An aircraft with no route to give (on the ground, or after landing) fills the waypoints with "not available", which reads as 180S 180W; a
+waypoint off the Earth like that is left out, so such a report has no predicted route.
+
 ADS-C gives waypoints as coordinates only. Where those match a waypoint learned from CPDLC reports, or one in the navigation
 database, the list adds the name (`ADS-C report ... · next OLGAN, then KAPPU`) and the tooltip says which. Run
 `fullflight -redecode` to give already-stored messages the names.

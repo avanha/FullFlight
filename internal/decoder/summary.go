@@ -56,6 +56,10 @@ type Waypoint struct {
 	Kind string
 }
 
+// onEarth tells a real point from the "not available" an aircraft fills a waypoint with when it has no such waypoint (-180 latitude and
+// longitude, an altitude of -131072 ft and an ETA of 16383 s are what a VH-OQH on the ground at Sydney sent for the whole route).
+func onEarth(lat, lon float64) bool { return lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180 }
+
 func num(m map[string]any, k string) *float64 {
 	if v, ok := m[k].(float64); ok {
 		return &v
@@ -81,13 +85,13 @@ func adscPosition(tree map[string]any) (*Pos, []Waypoint) {
 			}
 			if name == "predicted_route" {
 				for _, k := range []struct{ key, kind string }{{"next_wpt", "next"}, {"next_next_wpt", "next+1"}} {
-					if w, _ := body[k.key].(map[string]any); w != nil && num(w, "lat") != nil && num(w, "lon") != nil {
+					if w, _ := body[k.key].(map[string]any); w != nil && num(w, "lat") != nil && num(w, "lon") != nil && onEarth(*num(w, "lat"), *num(w, "lon")) {
 						route = append(route, Waypoint{Lat: *num(w, "lat"), Lon: *num(w, "lon"), AltFt: num(w, "alt"), ETASec: num(w, "eta_sec"), Kind: k.kind})
 					}
 				}
 				continue
 			}
-			if name == "fixed_projection" && num(body, "lat") != nil && num(body, "lon") != nil {
+			if name == "fixed_projection" && num(body, "lat") != nil && num(body, "lon") != nil && onEarth(*num(body, "lat"), *num(body, "lon")) {
 				fixedProj = &Waypoint{Lat: *num(body, "lat"), Lon: *num(body, "lon"), AltFt: num(body, "alt"), ETASec: num(body, "eta_sec"), Kind: "fixed"}
 				continue
 			}
