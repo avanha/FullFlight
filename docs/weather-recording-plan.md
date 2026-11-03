@@ -23,23 +23,23 @@ as they are now; once the moment passes, it is gone.
 
 ## Design
 
-Three parts, cheapest first. Each is useful alone.
+Two parts. Each is useful alone. Neither decodes the tiles into numbers: the person looking at a flight reads the weather
+off the map, so a stored tile only has to be drawn again. (Storing a radar dBZ or cloud-top value per position was
+considered and left out: it can be worked out from a stored tile when wanted.)
 
-### 1. Per-position weather samples (small, and what supports the correlation)
+What the tiles hold, for when one is drawn or filtered:
 
-For each stored position, keep a few bytes: the radar class (none, light, moderate, heavy, extreme) and the IR cloud-top
-class at that point and time, from the recorded tiles. A new table (for example `wxsample(hex, t, radar, ir)`) holds them,
-and the flight's explain and message views can show them.
+- Radar: RainViewer now ignores the colour scheme in the URL and always serves Universal Blue (checked 2026-11-03: schemes 6,
+  2 and 1 returned identical bytes). Colour means reflectivity, not temperature: light blue about 15 dBZ, blue 20 to 30,
+  yellow 35, orange 40, red 45 to 50, pink 55 to 60, white 65 and over. RainViewer publishes the table
+  (`https://www.rainviewer.com/files/rainviewer_api_colors_table.csv`), and every pixel in the tiles tried matched it exactly.
+- IR: fully opaque, warm areas grey and cold cloud tops coloured.
 
-- Needs the palettes decoded: RainViewer colour scheme 6 (the page uses it) and the GIBS clean-infrared colour map. Neither
-  has been looked at yet. The first task is to write them down and test on real tiles.
-- Cost is negligible next to the tiles.
-
-### 2. Radar recorder (must be live)
+### 1. Radar recorder (must be live)
 
 - **Which tiles:** the tiles the aircraft's track passes through during the window, plus the ring of neighbours (about
-  3 tiles wide), at zoom 6. The page's native radar zoom is 7; zoom 6 has a quarter of the tiles and is enough to see
-  a storm cell near the track. Revisit if the cells look too coarse.
+  3 tiles wide), at zoom 7, the most RainViewer serves (the page's native radar zoom). Store the finest detail and scale
+  down at display time if needed; the reverse is impossible. IR is stored at zoom 6, the most GIBS has for these layers.
 - **When:** a burst every 60 to 90 minutes (never less often than every 2 hours, the whole history window). Each burst reads
   the index once, then fetches the frames at 20-minute spacing (every other 10-minute frame), for the tiles near the part of
   the track covered since the last burst. We know where the aircraft was, so there is no need to guess its route.
@@ -48,23 +48,24 @@ and the flight's explain and message views can show them.
 - **Estimated size:** a long flight is about 50 tiles per frame; at 20 minutes that is about 42 frames in 14 hours, so on the
   order of 3 to 4 MB of radar per long flight. This rests on a guessed average tile size of 2 KB, to be replaced with a measured one.
 
-### 3. IR: fetch on demand, keep a filtered copy
+### 2. IR: fetch on demand, keep a filtered copy
 
 - **Inside 90 days:** no recording. When someone asks to see a flight's IR, the page (or server) requests the GIBS tiles for
   the time wanted, the same URLs the live layer builds today with a past time.
 - **To outlast the archive:** a one-off job after a flight lands (or, say, 24 hours later) fetches the tiles near its track
   at 30-minute spacing and stores them filtered. That is a handful of requests per flight and no continuous polling.
-- **The filter:** keep only the pixels colder than a threshold (the light-blue and colder cloud tops) and make the rest
-  transparent. Re-encode as PNG; Go's standard library is enough. A mostly transparent tile should be a few KB, a guess of
-  5 to 10 times smaller than 27 KB that has not been tested.
-- **Threshold, not gradient.** A gradient filter keeps the edges of a storm and loses its cold core, which is the part
-  that matters. The cut-off needs choosing against the colour map once it has been read.
+- **The filter:** keep only the coloured pixels and make the grey ones transparent. In a sample of three Himawari tiles
+  about 91% of pixels were grey (shades 91 to 197) and the rest coloured, which is the cold cloud top. No temperatures
+  are needed, so no colour map. The tiles are fully opaque and resampled (about 4,500 distinct colours in three tiles), so
+  "grey" means red, green and blue equal (or within a small tolerance, to be tested). Re-encode as PNG; Go's standard
+  library is enough. A mostly transparent tile should be a few KB, a guess of 5 to 10 times smaller than 27 KB that has
+  not been tested.
 - **Estimated size:** about 35 MB per long flight unfiltered at 30-minute spacing; the filter should make it a few MB.
 
 ## Where it is stored
 
 - Tiles as files in a directory (like the backfill cache), named by source, frame time, zoom, x and y; SQLite holds the
-  index (`wxframe`: source, frame time, which tiles, bytes, when fetched) and the samples.
+  index (`wxframe`: source, frame time, which tiles, bytes, when fetched).
 - A size cap in GiB with oldest-first eviction, set in `config.yaml`, as `backfill.cache_max_gib` does. Frames for a flight
   that has notes on its aircraft are kept, as the purge command does for other data.
 - Off by default; `weather.record: true` turns it on.
@@ -80,22 +81,19 @@ and the flight's explain and message views can show them.
 
 - A "Weather at the time" control on a selected message or position: the radar and IR frame nearest that time, with its
   age, drawn in the same layers the live weather uses.
-- On the explain page, the weather class at the position beside each note that matters (a turn, a descent).
 - Where nothing was recorded (before this was turned on, or in a gap) say so, never show the nearest frame as if it fitted.
 
 ## Open questions
 
 Detecting deviations is not part of this: the user notices a deviation and investigates it, with the weather to look at.
 
-1. Zoom 6 or 7 for stored radar tiles.
-2. The two colour maps, and the IR cut-off.
+1. ~~Zoom 6 or 7 for stored radar tiles~~: settled, zoom 7 (decided 2026-11-03).
+2. How close to grey a pixel can be and still count as grey (the IR filter's tolerance), tested on real tiles.
 3. Whether to draw the stored tiles from our server (`/api/weather/...`) or let the browser ask upstream for IR inside 90 days.
 4. Terms: RainViewer's public API terms about storing tiles need reading before anything is kept. Not checked.
 
 ## Order of work
 
-1. Read the two palettes and test classifying real tiles (no new fetching beyond a few tiles).
-2. Radar recorder and its table, behind the setting, with tests against saved tiles in `testdata/`.
-3. Per-position samples from recorded radar; show them in the explain page.
-4. IR on demand, then the post-landing filtered copy.
-5. The "Weather at the time" control in the page and `scripts/uitest*.js` coverage.
+1. Radar recorder and its index table, behind the setting, with tests against saved tiles in `testdata/`.
+2. The "Weather at the time" control in the page for radar, with `scripts/uitest*.js` coverage.
+3. IR on demand, then the grey filter and the post-landing filtered copy.
