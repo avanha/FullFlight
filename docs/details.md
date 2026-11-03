@@ -595,7 +595,8 @@ name gets coordinates from the most trustworthy source that has them:
 3. **An estimate** (dashed): a passed fix interpolated along the aircraft's own track at the reported time; the next fix projected
    from the report's position, speed and track by its ETA. The fix after next has no time, so without 1 or 2 it is not placed.
 
-Solid diamonds are exact, dashed ones estimates; hover for how each was placed.
+Solid diamonds are exact, dashed ones estimates; hover for how each was placed. A report's fixes are drawn only while that
+report is the selected message.
 
 An FMS position report (`POSN…`) names its fixes the same way (`SANDY` passed, `PIKIL` next with its ETA, then a half-degree position)
 and they are looked up the same way, in the navigation database near the aircraft, so UA178's PIKIL is plotted at 56N 15W and not at

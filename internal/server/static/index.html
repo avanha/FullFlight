@@ -792,20 +792,12 @@ function wptIcon(exact) {
 }
 const ROLE_TEXT = {passed: w => `passed${w.t ? ' ' + fmtTime(w.t) : ''}${w.alt_ft ? ' at ' + num(w.alt_ft) + ' ft' : ''}`,
                    next: w => `next fix${w.t ? ', ETA ' + fmtTime(w.t) : ''}`, then: () => 'fix after next'};
-// One marker per name: an exact position beats an estimate, and among equals the newest report wins.
-function drawWaypoints(msgs) {
-  const best = new Map();
-  for (const m of msgs) {
-    if (m.suspect) continue;
-    const mt = new Date(m.pos_t || m.t).getTime();
-    for (const wp of m.waypoints || []) {
-      const cur = best.get(wp.name);
-      if (!cur || (wp.exact && !cur.wp.exact) || (wp.exact === cur.wp.exact && mt >= cur.mt)) best.set(wp.name, {wp, mt, m});
-    }
-  }
-  for (const {wp, m} of best.values()) {
+// The fixes a report named, drawn only while that report is the selected message (as its predictions are).
+function drawWaypoints(m) {
+  wptGroup.clearLayers();
+  if (!m || m.suspect) return;
+  for (const wp of m.waypoints || []) {
     L.marker(ll(wp.lat, wp.lon), {icon: wptIcon(wp.exact), zIndexOffset: 500}).addTo(wptGroup)
-      .on('click', () => pickMessage(m.id))
       .bindTooltip(tip(`${wp.name} \u2014 ${(ROLE_TEXT[wp.role] || (() => wp.role))(wp)}`,
         wp.exact ? wp.how : '\u26a0 ' + wp.how, `${m.kind} report of ${fmtAgo(m.pos_t || m.t)}`));
   }
@@ -1768,7 +1760,6 @@ async function showTrack(w, focus) {
     mk.on('click', () => pickMessage(m.id));   // clicking a dot selects its message in the list
     markers.set(m.id, mk);
   }
-  drawWaypoints(msgs);
   drawFlightFlags(pts, msgs, chosen);
   drawAtisMarks(pts, msgs);
 
@@ -1880,6 +1871,7 @@ function applyHighlight(pan) {
   map.eachLayer(l => { if (l.closeTooltip) l.closeTooltip(); });   // no stray popups from earlier clicks
   highlight.clearLayers();
   drawPredictions();                                               // the selected report's predictions, replacing the last one's
+  drawWaypoints(lastMsgs.find(x => x.id === selectedMsg));         // and the fixes it named
   rows.forEach((el, id) => el.classList.toggle('sel', id === selectedMsg));
   const m = lastMsgs.find(x => x.id === selectedMsg);
   if (!m) { atisFitFor = null; return; }

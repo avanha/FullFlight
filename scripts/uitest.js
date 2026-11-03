@@ -603,28 +603,30 @@ highlightGroup = null;
   // ===== 8m. waypoints named in CPDLC reports ====================================================
   const wp = (name, exact, role = 'next', extra = {}) => ({name, role, lat: 5 + name.length, lon: 120, exact, source: exact ? 'database' : 'projected', how: exact ? 'from nav db (2013 src)' : 'estimated: 61 nm ahead on track 122° at 520 kt, by its ETA', t: '2026-10-30T18:55:00Z', ...extra});
   const cm = (id, hh, wps, extra = {}) => ({id, t: `2026-10-30T${hh}:00Z`, pos_t: `2026-10-30T${hh}:00Z`, kind: 'cpdlc', summary: 's', raw: 'r', label: 'BA', rx_count: 1, lat: 6, lon: 119, waypoints: wps, ...extra});
+  const isWpt = m => m.o.icon && /wpt-wrap/.test(m.o.icon.className);
+  // the fixes a report named are drawn only while that report is the selected message
   r = await draw([], [
-      cm(50, '17:00', [wp('EXACTX', true), wp('NEWEST', false, 'next', {lat: 1})]),   // older report
-      cm(51, '18:00', [wp('EXACTX', false, 'next', {lat: 2}), wp('NEWEST', false, 'next', {lat: 3})]),   // newer: an estimate of EXACTX, a newer estimate of NEWEST
+      cm(50, '17:00', [wp('EXACTX', true), wp('NEWEST', false, 'next', {lat: 1})]),
       cm(52, '19:00', [wp('BAD', false)], {suspect: 'x'}),                              // a suspect report's waypoints are ignored
+      cm(53, '18:00', [wp('PASSEDX', true, 'passed', {alt_ft: 34300})]),
     ], false);
-  const wpts = r.markers.filter(m => m.o.icon && /wpt-wrap/.test(m.o.icon.className));
-  assert.strictEqual(wpts.length, 2, 'one marker per name, none from the suspect report: ' + wpts.length);
+  assert.strictEqual(r.markers.filter(isWpt).length, 0, 'none while no report is selected');
+  const picked = id => { calls.markers.length = 0; t.pickMessage(id); return calls.markers.filter(isWpt); };
+  const wpts = picked(50);
+  assert.strictEqual(wpts.length, 2, 'the two fixes of the selected report: ' + wpts.length);
+  assert.strictEqual(t.wptGroup.items.length, 2);
   const byName = n => wpts.find(m => lines(m.tooltip)[0].startsWith(n));
-  assert.strictEqual(byName('EXACTX').ll[0], 5 + 6, 'an exact position beats a newer estimate');   // lat 5+len('EXACTX')
+  assert.strictEqual(byName('EXACTX').ll[0], 5 + 6, 'at its position');   // lat 5+len('EXACTX')
   assert.ok(/class="wpt"/.test(byName('EXACTX').o.icon.html) && /class="wpt est"/.test(byName('NEWEST').o.icon.html), 'exact is solid, an estimate dashed');
-  assert.strictEqual(byName('NEWEST').ll[0], 3, 'of two estimates, the newest report');
   assert.strictEqual(JSON.stringify(lines(byName('NEWEST').tooltip).slice(0, 2)), JSON.stringify(['NEWEST — next fix, ETA 18:55:00Z', '⚠ estimated: 61 nm ahead on track 122° at 520 kt, by its ETA']));
   assert.ok(lines(byName('EXACTX').tooltip)[1].startsWith('from nav db'));
   assert.strictEqual(lines(byName('EXACTX').tooltip)[0], 'EXACTX — next fix, ETA 18:55:00Z');
-  const passed = (await draw([], [cm(53, '18:00', [wp('PASSEDX', true, 'passed', {alt_ft: 34300})])], false)).markers.find(m => m.o.icon && /wpt-wrap/.test(m.o.icon.className));
+  const passed = picked(53)[0];
+  assert.strictEqual(t.wptGroup.items.length, 1, 'selecting another report replaces them');
   assert.ok(lines(passed.tooltip)[0].includes('passed 18:55:00Z at 34,300 ft'), lines(passed.tooltip)[0]);
-  // clicking a waypoint selects the report that named it
-  t.renderMessages([cm(54, '18:00', [wp('CLICKME', true)])]);
-  const cl = (await draw([], [cm(54, '18:00', [wp('CLICKME', true)])], false)).markers.find(m => m.o.icon && /wpt-wrap/.test(m.o.icon.className));
-  cl.handlers.click();
-  assert.strictEqual(t.selectedMsg2, 54);
-  assert.strictEqual((await draw([], [cm(55, '18:00', [])], false)).markers.filter(m => m.o.icon && /wpt-wrap/.test(m.o.icon.className)).length, 0, 'none when no waypoints');
+  assert.strictEqual(picked(52).length, 0, 'a suspect report draws none');
+  assert.strictEqual(t.wptGroup.items.length, 0);
+  assert.strictEqual((await draw([], [cm(55, '18:00', [])], false)).markers.filter(isWpt).length, 0, 'none when no waypoints');
 
   // ===== 8n. projection: where it probably is now, with limits ========================================
   const NOW = Date.UTC(2026, 9, 30, 19, 0, 0);
