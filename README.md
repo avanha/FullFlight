@@ -15,6 +15,8 @@ like AI slop, because it is.  My plan is to edit and rewrite it, to improve its 
 * adsb.lol provides data under the [Open Data Commons Open Database License](https://opendatacommons.org/licenses/odbl/1-0/)
 * adsb.fi provides data for personal, non-commercial use only.  Check their full [terms](https://github.com/adsbfi/opendata/blob/main/README.md#terms).
 * airframes.io provides a free, limited API tier. See https://app.airframes.io/pricing
+* RainViewer provides its radar API free for personal and educational use, on condition that it is credited. See its [terms](https://www.rainviewer.com/api.html).
+* NASA GIBS provides the satellite infrared imagery (from JMA's Himawari and NOAA's GOES) under NASA's policy of full and open sharing of data. See [NASA's data and information guidance](https://www.earthdata.nasa.gov/engage/open-data-services-software/data-information-policy).
 * FullFlight is free open source released under the MIT license.
 
 [![FullFlight tracking an A359 over the Andaman Sea](docs/screenshot.png)](https://avanha.github.io/FullFlight/)
