@@ -592,6 +592,12 @@ name gets coordinates from the most trustworthy source that has them:
 
 Solid diamonds are exact, dashed ones estimates; hover for how each was placed.
 
+An FMS position report (`POSN…`) names its fixes the same way (`SANDY` passed, `PIKIL` next with its ETA, then a half-degree position)
+and they are looked up the same way, in the navigation database near the aircraft, so UA178's PIKIL is plotted at 56N 15W and not at
+the Western Australian PIKIL. The report has no speed or track to project a missing fix by, so one the database lacks is not placed,
+and its times are not used to learn coordinates from ADS-C, since FMS times are not trusted. Stored reports show their fixes after
+`fullflight -redecode`.
+
 ### Wind barbs
 
 A report that gives the wind's direction and speed (a 787 ACMF report, an ADS-C meteorological group, REP081, an FMS position, a

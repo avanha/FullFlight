@@ -261,6 +261,36 @@ func parseFMS(body string, r *Result) {
 			r.Fields[k] = v
 		}
 	}
+	// The waypoints it names, as a CPDLC report's are, so the map can place them by name: the one passed (with its time), the next
+	// (with its ETA) and the one after. The times of day are as sent; the map judges them against where the aircraft was.
+	for _, f := range []struct {
+		role       string
+		name, time int
+	}{{"passed", 1, 2}, {"next", 4, 5}, {"then", 6, -1}} {
+		if get(f.name) == "" {
+			continue
+		}
+		ref := FixRef{Name: get(f.name), Role: f.role}
+		if f.time >= 0 {
+			ref.Secs = timeOfDay(get(f.time))
+		}
+		r.Fixes = append(r.Fixes, ref)
+	}
+}
+
+// timeOfDay reads "153019" as seconds into the day, or nil if it is not a time.
+func timeOfDay(s string) *float64 {
+	if len(s) != 6 {
+		return nil
+	}
+	h, e1 := strconv.Atoi(s[:2])
+	m, e2 := strconv.Atoi(s[2:4])
+	sec, e3 := strconv.Atoi(s[4:])
+	if e1 != nil || e2 != nil || e3 != nil || h > 23 || m > 59 || sec > 59 {
+		return nil
+	}
+	v := float64(h*3600 + m*60 + sec)
+	return &v
 }
 
 // fmsWeather reads the temperature ("M51" = -51 C, "P05" = +5 C) and wind ("264080" = from 264

@@ -122,6 +122,39 @@ func TestConsistentDatabasePositionIsUsed(t *testing.T) {
 	}
 }
 
+// An FMS position report names its next fix with no speed or track to project it by: UA178 off Ireland, flying to PIKIL, a name the
+// 2013 database holds twice (once off Iceland, once in Western Australia). The one in reach is plotted, exactly; a name it cannot
+// place (the half-degree position after it) is left out.
+func TestFMSReportFixIsLookedUpInTheDatabase(t *testing.T) {
+	st := open(t)
+	lat, lon := 53.267, -5.955
+	pt := time.Date(2026, 11, 2, 15, 35, 2, 0, time.UTC)
+	fl, _ := json.Marshal(store.FixList{List: []store.FixEntry{
+		{Name: "SANDY", Role: "passed", T: pt.Add(-5 * time.Minute).Unix()}, {Name: "PIKIL", Role: "next", T: pt.Add(39 * time.Minute).Unix()}, {Name: "H5720", Role: "then"}}})
+	m := store.Message{ID: 1, Hex: "A2551D", T: pt, Label: "3P", Text: "x", Kind: "fms_position", Lat: &lat, Lon: &lon, PosT: &pt, Fixes: string(fl)}
+	if _, err := st.AddMessage(m); err != nil {
+		t.Fatal(err)
+	}
+	nav := navdata.New()
+	nav.Add("PIKIL", navdata.Point{Lat: -32.1, Lon: 117.714, Kind: "fix"})
+	nav.Add("PIKIL", navdata.Point{Lat: 56.0, Lon: -15.0, Kind: "fix"})
+	ws := (&Resolver{Store: st, Nav: nav}).Resolve(m)
+	p := find(ws, "PIKIL")
+	if p == nil || !p.Exact || p.Source != "database" || p.Lat != 56.0 || p.Lon != -15.0 || p.Role != "next" {
+		t.Errorf("PIKIL = %+v", p)
+	}
+	if find(ws, "H5720") != nil {
+		t.Errorf("H5720 has nowhere to be: %+v", ws)
+	}
+	// nothing is learned from the report's times, even where an ADS-C report has a waypoint due at that minute
+	r, _ := json.Marshal([]map[string]any{{"Lat": 56.0, "Lon": -15.0, "ETASec": 39 * 60}, {"Lat": 1, "Lon": 1}})
+	apt := pt.Add(time.Second)
+	st.AddMessage(store.Message{ID: 2, Hex: "A2551D", T: apt, Label: "B6", Text: "adsc", Kind: "adsc", Lat: &lat, Lon: &lon, PosT: &apt, Route: string(r)})
+	if n, err := Learn(st, "A2551D", pt.Add(-time.Hour)); err != nil || n != 0 {
+		t.Errorf("learned %d, %v", n, err)
+	}
+}
+
 func TestDatabaseDuplicatesChooseTheNearOne(t *testing.T) {
 	st := open(t)
 	m := cpdlc(t, st, 1, -5.46, 141.742, store.FixEntry{Name: "DUP", Role: "then"})

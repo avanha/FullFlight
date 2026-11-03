@@ -496,6 +496,30 @@ func TestDeltaH1(t *testing.T) {
 	}
 }
 
+// UA178 over the Irish Sea: the report names the fix it passed, the one it is flying to (with its ETA) and the one after, so the
+// map can look them up.
+func TestFMSPositionNamesItsWaypoints(t *testing.T) {
+	r, _ := Decode(Message{Label: "3P", Text: "POSN53160W005573,SANDY,153019,340,PIKIL,161413,H5720,M52,02862,1206FAKE"})
+	if r.Kind != KindFMS || len(r.Fixes) != 3 {
+		t.Fatalf("%v %+v", r.Kind, r.Fixes)
+	}
+	want := []struct {
+		name, role string
+		secs       float64
+	}{{"SANDY", "passed", 15*3600 + 30*60 + 19}, {"PIKIL", "next", 16*3600 + 14*60 + 13}, {"H5720", "then", -1}}
+	for i, w := range want {
+		f := r.Fixes[i]
+		if f.Name != w.name || f.Role != w.role || (w.secs < 0) != (f.Secs == nil) || (f.Secs != nil && *f.Secs != w.secs) {
+			t.Errorf("fix %d = %+v (%v), want %+v", i, f, f.Secs, w)
+		}
+	}
+	// a time that is not one is not carried
+	r, _ = Decode(Message{Label: "H1", Text: "POSS33510E151100,ABCDE,990203,380,FGHIJ,0103,KLMNO,M55,270090,1234"})
+	if len(r.Fixes) != 3 || r.Fixes[0].Secs != nil || r.Fixes[1].Secs != nil {
+		t.Errorf("impossible times: %+v", r.Fixes)
+	}
+}
+
 func TestFMSPositionSouthAndEast(t *testing.T) {
 	r, _ := Decode(Message{Label: "H1", Text: "POSS33510E151100,ABCDE,010203,380,FGHIJ,010304,KLMNO,M55,270090,1234"})
 	if r.Kind != KindFMS || r.Pos == nil {

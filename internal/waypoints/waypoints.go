@@ -326,7 +326,7 @@ func Learn(st *store.Store, hexAddr string, since time.Time) (int, error) {
 	n := 0
 	for _, m := range ms {
 		fl, ok := parseFixes(m)
-		if !ok {
+		if !ok || m.Kind == "fms_position" { // (an FMS report's times are not trusted to say which ADS-C waypoint a name is)
 			continue
 		}
 		reachable := func(p latLon) bool {
