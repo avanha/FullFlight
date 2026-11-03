@@ -336,8 +336,8 @@ also sit 16 pixels to the side.
 
 ### D-ATIS requests
 
-A D-ATIS request, or a Qantas request for METARs (`Weather request (METAR)`, which is treated the same way), carries no position, so it is marked on the track with a violet diamond where the aircraft probably was, between
-the fixes either side of it (the legend entry "D-ATIS and METAR requests" switches them off). Click a diamond, or choose the message in the
+A D-ATIS request, or a Qantas request for METARs or TAFs (`Weather request (METAR)`, which are treated the same way), carries no position, so it is marked on the track with a violet diamond where the aircraft probably was, between
+the fixes either side of it (the legend entry "D-ATIS, METAR and TAF requests" switches them off). Click a diamond, or choose the message in the
 list, to select it: the airports it asked about then get a violet ring and a draggable label, and the map zooms out to take them
 in if they are out of view (once for each message picked, not at every refresh). The airports are shown only for the selected
 message.

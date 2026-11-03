@@ -265,7 +265,7 @@ highlightGroup = null;
   const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
   // the legend lists all five sources
   assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS', 'ACMF', 'AOC', 'POS', 'POSRPT', 'POSA1', 'SB', 'Airline', 'AeroDataBox']);
-  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Satellite (IR)|Waypoints|Predictions|Planned route|Clearances (oceanic, departure)|Estimated path|Projection|Wind barbs|D-ATIS and METAR requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
+  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Satellite (IR)|Waypoints|Predictions|Planned route|Clearances (oceanic, departure)|Estimated path|Projection|Wind barbs|D-ATIS, METAR and TAF requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
   // each source gets its own colour and style
   for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {
     const r = await lineOf([], [at2(0, 41, -105, kind), at2(10, 41.1, -104, kind), at2(20, 41.2, -103, kind)]);
@@ -1128,8 +1128,8 @@ highlightGroup = null;
     const tt = lines(dots[0].tooltip);
     assert.ok(tt[0] === 'D-ATIS arrival request: RJBB' && tt.includes('position estimated between the fixes either side') && tt.includes('click to show the airports'), tt.join(' | '));
     // it is on the legend, as its own layer
-    const entry = Object.keys(calls.legendExtra).find(k => /D-ATIS and METAR requests/.test(k));
-    assert.ok(entry && calls.legendExtra[entry] === groups.find(g => g === calls.legendExtra[entry]), 'D-ATIS and METAR requests have a legend entry');
+    const entry = Object.keys(calls.legendExtra).find(k => /D-ATIS, METAR and TAF requests/.test(k));
+    assert.ok(entry && calls.legendExtra[entry] === groups.find(g => g === calls.legendExtra[entry]), 'D-ATIS, METAR and TAF requests have a legend entry');
 
     // clicking the diamond selects the message and shows its airports: a ring, and a label held up and to the right
     calls.circles.length = 0; calls.markers.length = 0; calls.lines.length = 0;
@@ -1184,6 +1184,10 @@ highlightGroup = null;
     assert.strictEqual(rings().length, 1);
     assert.strictEqual(labelOf({markers: calls.markers}).o.icon.html.textContent, 'METAR YSSY');
     assert.strictEqual(lines(rings()[0].tooltip)[0], 'METAR: YSSY');
+
+    const taf = {...metar, id: 405, t: '2026-10-30T11:03:20Z', summary: 'Weather request (TAF) for YSSY', airports: [{...YSSY, wx: 'TAF'}]};
+    const r4 = await draw(FPTS, [...AM, taf], true);
+    assert.ok(dotsOf(r4).some(d => lines(d.tooltip)[0] === 'TAF request: YSSY'), 'and so is a TAF request');
 
     // no airports, no diamonds
     const none = await draw(FPTS, FMSGS, true);

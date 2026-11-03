@@ -834,7 +834,7 @@ type partJSON struct {
 	Label string    `json:"label"`
 }
 
-// atisAirport is where a D-ATIS message, or a METAR request, points on the map.
+// atisAirport is where a D-ATIS message, or a METAR or TAF request, points on the map.
 type atisAirport struct {
 	Code string  `json:"code"`
 	IATA string  `json:"iata,omitempty"`
@@ -842,13 +842,13 @@ type atisAirport struct {
 	Lat  float64 `json:"lat"`
 	Lon  float64 `json:"lon"`
 	Type string  `json:"type,omitempty"` // arrival or departure
-	Wx   string  `json:"wx,omitempty"`   // "METAR" for a METAR request; empty for D-ATIS
+	Wx   string  `json:"wx,omitempty"`   // "METAR" or "TAF" for a request for one; empty for D-ATIS
 }
 
 // A D-ATIS request ("D-ATIS arrival request for CYVR", or "D-ATIS request for YSSY, YMML" from Qantas) or the
-// broadcast sent back ("D-ATIS arrival information P for PHNL: 060°/8 kt ..."), or Qantas asking for METARs
+// broadcast sent back ("D-ATIS arrival information P for PHNL: 060°/8 kt ..."), or Qantas asking for METARs or TAFs
 // ("Weather request (METAR) for YPPH, YSSY"), which the map treats the same way.
-var atisSummary = regexp.MustCompile(`^(?:D-ATIS (?:(arrival|departure) )?(?:request|information(?: [A-Z])?)|Weather request \((METAR)\)) for ([A-Z0-9]{4}(?:, [A-Z0-9]{4})*)`)
+var atisSummary = regexp.MustCompile(`^(?:D-ATIS (?:(arrival|departure) )?(?:request|information(?: [A-Z])?)|Weather request \((METAR|TAF)\)) for ([A-Z0-9]{4}(?:, [A-Z0-9]{4})*)`)
 
 // atisAirportsOf finds the airports a D-ATIS message or METAR request names (from its summary), those we know where to put.
 func atisAirportsOf(m store.Message) []atisAirport {

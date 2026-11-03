@@ -1449,8 +1449,8 @@ func TestMessagesDATISAirport(t *testing.T) {
 	if len(ms[3].Airports) != 2 || ms[3].Airports[1].Code != "YMML" || len(ms[4].Airports) != 1 || ms[4].Airports[0].Code != "PHNL" {
 		t.Errorf("two airports, and a reply: %+v %+v", ms[3].Airports, ms[4].Airports)
 	}
-	// a METAR request is marked the same way and says what it is; a forecast request is not marked
-	if len(ms[5].Airports) != 2 || ms[5].Airports[0].Code != "YPPH" || ms[5].Airports[1].Code != "YSSY" || ms[5].Airports[0].Wx != "METAR" || ms[3].Airports[0].Wx != "" || len(ms[6].Airports) != 0 {
+	// METAR and TAF requests are marked the same way and say what they are
+	if len(ms[5].Airports) != 2 || ms[5].Airports[0].Code != "YPPH" || ms[5].Airports[1].Code != "YSSY" || ms[5].Airports[0].Wx != "METAR" || ms[3].Airports[0].Wx != "" || len(ms[6].Airports) != 1 || ms[6].Airports[0].Code != "YSSY" || ms[6].Airports[0].Wx != "TAF" {
 		t.Errorf("a METAR request: %+v, a TAF request: %+v", ms[5].Airports, ms[6].Airports)
 	}
 }

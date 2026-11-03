@@ -439,7 +439,7 @@ L.control.layers(null, {
   '<span style="color:#777;font-weight:bold">&middot;&middot;&middot;</span> Estimated path': bridgeGroup,
   '<span style="color:#666;font-weight:bold">&middot;&middot;&middot;</span> Projection': projGroup,
   '<span style="font-weight:bold">&#8627;</span> Wind barbs': windGroup,
-  '<span style="color:#7c3aed;font-weight:bold">&#9670;</span> D-ATIS and METAR requests': atisGroup,
+  '<span style="color:#7c3aed;font-weight:bold">&#9670;</span> D-ATIS, METAR and TAF requests': atisGroup,
 }, {collapsed: false, position: 'bottomleft'}).addTo(map);
 // ---- longitude frame --------------------------------------------------------------------
 // The map's longitude is continuous (181 is the same place as -179, drawn one world over), so near
@@ -1574,8 +1574,8 @@ function drawFlightFlags(pts, msgs, chosen) {
   }
 }
 
-// ---- D-ATIS and METAR requests -----------------------------------------------------------
-// A D-ATIS request (or a METAR request, which is treated the same) carries no position, so it is marked on the track where the aircraft probably was (between the fixes either
+// ---- D-ATIS, METAR and TAF requests -----------------------------------------------------------
+// A D-ATIS request (or a METAR or TAF request, which are treated the same) carries no position, so it is marked on the track where the aircraft probably was (between the fixes either
 // side of it); clicking the diamond selects the message, and selecting it shows the airports it asked about.
 function atisSpot(m, pts, msgs) {
   if (m.lat != null) return {lat: m.lat, lon: m.lon, est: false};
@@ -1584,7 +1584,7 @@ function atisSpot(m, pts, msgs) {
 }
 
 const atisNames = m => m.airports.map(a => a.code).join(', ');
-const atisWhat = m => m.airports[0].wx || 'D-ATIS';   // a METAR request is marked like a D-ATIS one
+const atisWhat = m => m.airports[0].wx || 'D-ATIS';   // a METAR or TAF request is marked like a D-ATIS one
 
 function drawAtisMarks(pts, msgs) {
   for (const m of msgs) {
