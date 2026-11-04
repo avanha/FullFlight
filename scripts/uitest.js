@@ -104,7 +104,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {satAtGroup, satAtUpdate, SAT, recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {clearGrey, satAtGroup, satAtUpdate, SAT, recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -1527,6 +1527,19 @@ highlightGroup = null;
     watch.status = 'paused'; await t.refresh();
     assert.strictEqual(pauseBtn().textContent, '\u25b6 Resume');
     watch.status = saved.status; if (saved.hex === undefined) delete watch.hex; else watch.hex = saved.hex; await t.refresh();
+  }
+
+  // ===== 8s2b. the infrared is drawn without its grey ===========================================
+  {
+    // pixels as red, green, blue, alpha: a grey of any shade, a near grey from resampling, light blue, yellow, red, and one already clear
+    const px = Uint8ClampedArray.from([91, 91, 91, 255, 197, 197, 197, 255, 120, 123, 126, 255, 130, 211, 238, 255, 250, 230, 40, 255, 220, 30, 30, 255, 5, 5, 5, 0]);
+    assert.strictEqual(t.clearGrey(px), 3, 'the greys are cleared, the near grey with them, the one already clear not counted');
+    const alphas = [0, 1, 2, 3, 4, 5, 6].map(i => px[i * 4 + 3]);
+    assert.deepStrictEqual(alphas, [0, 0, 0, 255, 255, 255, 0], 'and only the coloured cold cloud tops are left');
+    assert.deepStrictEqual([...px.slice(12, 16)], [130, 211, 238, 255], 'their colours untouched');
+    const faint = Uint8ClampedArray.from([100, 100, 110, 255, 100, 100, 140, 255]);
+    t.clearGrey(faint, 6);
+    assert.deepStrictEqual([faint[3], faint[7]], [255, 255], 'a blue tinge beyond the tolerance is cold cloud, not grey');
   }
 
   // ===== 8s3. recorded radar: the frame nearest the selected message, stepped with the arrows ==========

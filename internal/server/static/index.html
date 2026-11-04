@@ -347,13 +347,25 @@ radarLayer.on('remove', () => {
 // larger): Himawari from 60E to the date line, GOES-West from there to 105W, GOES-East from there to 6E. A tile belongs to
 // the range its centre is in.
 //
+// The infrared is drawn without its grey: warm cloud, land and sea are the grey ramp (red, green and blue equal) and only cold
+// cloud tops are coloured, so the grey is made transparent and the map under it is not darkened. Returns how many were cleared.
+// (GIBS answers with Access-Control-Allow-Origin: *, so the picture can be read back from a canvas.)
+function clearGrey(rgba, tolerance = SAT_GREY_TOLERANCE) {
+  let n = 0;
+  for (let i = 0; i < rgba.length; i += 4) {
+    const r = rgba[i], g = rgba[i + 1], b = rgba[i + 2];
+    if (Math.max(r, g, b) - Math.min(r, g, b) <= tolerance && rgba[i + 3] !== 0) { rgba[i + 3] = 0; n++; }
+  }
+  return n;
+}
+const SAT_GREY_TOLERANCE = 6;   // the tiles are resampled, so a grey is not always exactly equal; 0 and 14 clear nearly the same
 // GIBS frames have holes: a tile can be missing from one frame and present in the one before. So a tile that is not there
 // is asked for again from the frame before, and the one before that, before it is given up on.
 const RegionTiles = L.TileLayer.extend({
   frameMs: null,   // the newest frame; set when it has been found, then redraw()
   createTile(coords, done) {
-    const tile = document.createElement('img');
-    tile.alt = '';
+    const tile = document.createElement('canvas');   // drawn from the picture with its grey cleared
+    tile.width = tile.height = 256;
     const lon = ((((coords.x + .5) / 2 ** coords.z) * 360 - 180 + 540) % 360) - 180;
     const [a, b] = this.options.lonRange;
     const mine = a <= b ? lon >= a && lon < b : lon >= a || lon < b;
@@ -362,10 +374,21 @@ const RegionTiles = L.TileLayer.extend({
       return tile;
     }
     const tryFrame = k => {
-      if (k > SAT.olderFrames) { tile.removeAttribute('src'); tile.style.visibility = 'hidden'; done(null, tile); return; }
-      tile.onload = () => done(null, tile);
-      tile.onerror = () => tryFrame(k + 1);
-      tile.src = this.options.urlFor(coords, this.frameMs - k * SAT.stepMin * 60000);
+      if (k > SAT.olderFrames) { tile.style.visibility = 'hidden'; done(null, tile); return; }
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const ctx = tile.getContext('2d', {willReadFrequently: true});
+        ctx.drawImage(img, 0, 0, tile.width, tile.height);
+        try {
+          const px = ctx.getImageData(0, 0, tile.width, tile.height);
+          clearGrey(px.data);
+          ctx.putImageData(px, 0, 0);
+        } catch (e) { /* the picture could not be read back: it stays as it came, grey and all */ }
+        done(null, tile);
+      };
+      img.onerror = () => tryFrame(k + 1);
+      img.src = this.options.urlFor(coords, this.frameMs - k * SAT.stepMin * 60000);
     };
     tryFrame(0);
     return tile;

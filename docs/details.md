@@ -808,7 +808,7 @@ you zoom in further.
 
 Over most of the oceans there is no ground radar, but storms still show in the infrared: the colder the cloud top, the taller the
 cloud. "Satellite (IR)" in the legend (also remembered) lays NASA [GIBS](https://earthdata.nasa.gov/gibs)'s band 13 "clean
-infrared" imagery over the map at 55% opacity, with cold, high cloud tops coloured from blue to red on the grey cloud. It comes
+infrared" imagery over the map at 55% opacity. In GIBS's tiles only cold, high cloud tops are coloured (blue to red); everything else, warm cloud, land and sea, is a grey ramp. The page makes the grey transparent (a pixel whose red, green and blue are within 6 of each other), so only the cloud tops are drawn and the map is not darkened; in the tiles tried that cleared 86 to 92 percent of the pixels. GIBS allows its pictures to be read from another site, which is what lets the page do this; a picture that cannot be read back is drawn as it came. It comes
 from the three geostationary satellites that cover the Pacific and the Americas: Himawari (60E to the date line), GOES-West (to
 105W) and GOES-East (to 6E). Each draws only the longitudes it sees well, since imagery near a satellite's edge is stretched into
 streaks. **Europe, Africa and the western Indian Ocean are not covered.**
