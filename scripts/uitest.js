@@ -104,7 +104,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {satAtGroup, satAtUpdate, SAT, recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -268,7 +268,7 @@ highlightGroup = null;
   const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
   // the legend lists all five sources
   assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS', 'ACMF', 'AOC', 'POS', 'POSRPT', 'POSA1', 'SB', 'Airline', 'AeroDataBox']);
-  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Recorded radar (at the selected time)|Satellite (IR)|Waypoints|Predictions|Planned route|Clearances (oceanic, departure)|Estimated path|Projection|Wind barbs|D-ATIS, METAR and TAF requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
+  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Recorded radar (at the selected time)|Satellite (IR)|Satellite IR (at the selected time)|Waypoints|Predictions|Planned route|Clearances (oceanic, departure)|Estimated path|Projection|Wind barbs|D-ATIS, METAR and TAF requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
   // each source gets its own colour and style
   for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {
     const r = await lineOf([], [at2(0, 41, -105, kind), at2(10, 41.1, -104, kind), at2(20, 41.2, -103, kind)]);
@@ -1529,28 +1529,28 @@ highlightGroup = null;
     // a message at 16:25 is nearest the 16:20 frame, which is five minutes before it
     fetchLog.length = 0;
     t.recFollow({id: 900, t: at(16, 25)}); await settle();
-    assert.strictEqual(text(), 'Recorded radar \u00b7 16:20Z (5 min before the selected message)');
+    assert.strictEqual(text(), 'Recorded radar \u00b7 10-30 16:20Z (5 min before the selected message)');
     assert.ok(fetchLog.includes(`/api/weather/radar/${frame(16, 20).id}/tiles`), 'the frame\'s recorded tiles are asked for: ' + fetchLog);
     assert.deepStrictEqual([...t.recKeys].sort(), ['100/60', '101/60'], 'and only those are drawn');
     // the arrows step through the frames
     document.querySelector('#recnext').onclick(); await settle();
-    assert.strictEqual(text(), 'Recorded radar \u00b7 16:40Z');
+    assert.strictEqual(text(), 'Recorded radar \u00b7 10-30 16:40Z');
     assert.strictEqual(document.querySelector('#recnext').disabled, true, 'nothing after the newest');
     document.querySelector('#recprev').onclick(); document.querySelector('#recprev').onclick(); await settle();
-    assert.strictEqual(text(), 'Recorded radar \u00b7 16:00Z');
+    assert.strictEqual(text(), 'Recorded radar \u00b7 10-30 16:00Z');
     assert.strictEqual(document.querySelector('#recprev').disabled, true, 'nothing before the oldest');
     // a refresh that selects the same message leaves the step alone; another message follows its own time
     t.recFollow({id: 900, t: at(16, 25)}); await settle();
-    assert.strictEqual(text(), 'Recorded radar \u00b7 16:00Z', 'the same selection does not undo a step');
+    assert.strictEqual(text(), 'Recorded radar \u00b7 10-30 16:00Z', 'the same selection does not undo a step');
     t.recFollow({id: 901, t: at(16, 41)}); await settle();
-    assert.strictEqual(text(), 'Recorded radar \u00b7 16:40Z (1 min before the selected message)');
+    assert.strictEqual(text(), 'Recorded radar \u00b7 10-30 16:40Z (1 min before the selected message)');
     // a time with no recording near it says so, and shows no radar
     t.recFollow({id: 902, t: at(19, 0)}); await settle();
-    assert.strictEqual(text(), 'No radar recorded near 19:00Z (recorded 16:00Z to 16:40Z)');
+    assert.strictEqual(text(), 'No radar recorded near 10-30 19:00Z (recorded 10-30 16:00Z to 10-30 16:40Z)');
     assert.strictEqual(t.recKeys.size, 0, 'the nearest frame is not shown as though it fitted');
     assert.strictEqual(document.querySelector('#recprev').disabled, false, 'but the arrows lead to it');
     document.querySelector('#recprev').onclick(); await settle();
-    assert.strictEqual(text(), 'Recorded radar \u00b7 16:20Z');
+    assert.strictEqual(text(), 'Recorded radar \u00b7 10-30 16:20Z');
     // nothing recorded, with the recorder on and off, and a list that cannot be fetched
     radarList = {recording: true, zoom: 7, frames: []}; await t.recLoad();
     assert.strictEqual(text(), 'No radar recorded yet');
@@ -1560,6 +1560,36 @@ highlightGroup = null;
     assert.strictEqual(text(), 'Recorded radar unavailable');
     t.recLayer.onMap = false; await t.recUpdate();
     assert.strictEqual(badge.hidden, true);
+    // ----- the infrared for the same time, straight from GIBS's archive -----
+    const satText = () => document.querySelector('#satattext').textContent, satBadge = document.querySelector('#satatbadge');
+    const frameOf = (hh, mm) => Date.UTC(2026, 9, 30, hh, mm);
+    t.satAtGroup.onMap = false; t.satAtUpdate();
+    assert.strictEqual(satBadge.hidden, true, 'no badge while the layer is off');
+    t.satAtGroup.onMap = true;
+    t.recFollow({id: 910, t: at(16, 25)});
+    assert.strictEqual(satBadge.hidden, false);
+    assert.strictEqual(satText(), 'Satellite IR \u00b7 10-30 16:20Z (5 min before the selected message)', 'the ten-minute frame at or before the time');
+    assert.ok(t.SAT.birds.every(b => b.atTiles.frameMs === frameOf(16, 20)), 'every satellite is set to that frame');
+    document.querySelector('#satatnext').onclick();
+    assert.strictEqual(satText(), 'Satellite IR \u00b7 10-30 16:30Z', 'the arrow steps ten minutes');
+    assert.ok(t.SAT.birds.every(b => b.atTiles.frameMs === frameOf(16, 30)));
+    document.querySelector('#satatprev').onclick(); document.querySelector('#satatprev').onclick();
+    assert.strictEqual(satText(), 'Satellite IR \u00b7 10-30 16:10Z');
+    // the radar follows the same time
+    radarList = {recording: true, zoom: 7, frames: [frame(16, 0), frame(16, 20), frame(16, 40)]};
+    t.recLayer.onMap = true; await t.recLoad(); await settle();
+    document.querySelector('#satatnext').onclick(); await settle();
+    assert.match(document.querySelector('#rectext').textContent, /10-30 16:(20|00)Z/, 'the radar moved with the satellite: ' + document.querySelector('#rectext').textContent);
+    // older than the archive: said, and nothing drawn
+    t.recFollow({id: 911, t: '2026-01-05T12:00:00Z'});
+    assert.strictEqual(satText(), 'No infrared for 01-05 12:00Z: GIBS keeps about 90 days');
+    assert.ok(t.SAT.birds.every(b => b.atTiles.frameMs === null), 'no frame is drawn');
+    // the newest frames are not there yet: a time now is held back
+    t.recFollow({id: 912, t: new Date().toISOString()});
+    assert.ok(t.SAT.birds[0].atTiles.frameMs <= Date.now() - 20 * 60000, 'not asked for a frame that does not exist yet');
+    assert.strictEqual(document.querySelector('#satatnext').disabled, true, 'nothing after the newest');
+    t.satAtGroup.onMap = false; t.recLayer.onMap = false; t.satAtUpdate();
+    assert.strictEqual(satBadge.hidden, true);
   }
 
   // ===== 8t. notes: an icon on each watch, a side panel behind it ====================================

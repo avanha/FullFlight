@@ -137,9 +137,9 @@
   #wxbadges { position: fixed; top: 40px; right: 8px; z-index: 1000; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; pointer-events: none; }
   .wxbadge { padding: 2px 8px; border-radius: 4px; font: 12px system-ui, sans-serif; background: rgba(255,255,255,.9); border: 1px solid #aaa; color: #345; }
   .wxbadge[hidden] { display: none; }
-  #recbadge { pointer-events: auto; }
-  #recbadge button { border: 1px solid #aaa; background: #fff; border-radius: 3px; cursor: pointer; padding: 0 5px; font-size: 11px; color: #345; }
-  #recbadge button:disabled { opacity: .35; cursor: default; }
+  #recbadge, #satatbadge { pointer-events: auto; }
+  #recbadge button, #satatbadge button { border: 1px solid #aaa; background: #fff; border-radius: 3px; cursor: pointer; padding: 0 5px; font-size: 11px; color: #345; }
+  #recbadge button:disabled, #satatbadge button:disabled { opacity: .35; cursor: default; }
   #clock { position: fixed; top: 8px; right: 8px; z-index: 1000; padding: 3px 8px; border-radius: 4px;
            background: rgba(255,255,255,.9); border: 1px solid #aaa; font: 13px ui-monospace, monospace; }
   @media (max-width: 700px) {
@@ -229,6 +229,7 @@
 <div id="wxbadges">
   <div class="wxbadge" id="radarbadge" hidden title="The newest frame of the radar composite on the map. It is refreshed every 5 minutes."></div>
   <div class="wxbadge" id="recbadge" hidden title="Radar this server recorded near the followed aircraft, for the time of the selected message (or the newest position). The arrows step through the recorded frames."><button id="recprev" title="The recorded frame before this one">&#9664;</button> <span id="rectext"></span> <button id="recnext" title="The recorded frame after this one">&#9654;</button></div>
+  <div class="wxbadge" id="satatbadge" hidden title="The infrared satellite frame for the time of the selected message (or the newest position), from NASA GIBS's archive of about 90 days. The arrows step ten minutes."><button id="satatprev" title="Ten minutes earlier">&#9664;</button> <span id="satattext"></span> <button id="satatnext" title="Ten minutes later">&#9654;</button></div>
   <div class="wxbadge" id="satbadge" hidden title="The newest infrared satellite frames on the map, from the satellites that see each part of the world. Refreshed every 10 minutes."></div>
 </div>
 <div id="notespanel" hidden>
@@ -464,7 +465,9 @@ function recTarget() {
   const f = latestFix(lastTrack.pts, lastTrack.msgs);
   return f ? {ms: f.t, what: 'the newest position'} : {ms: Date.now(), what: 'now'};
 }
-const recTime = ms => fmtTime(ms).slice(0, 5) + 'Z';
+// A time as the badges write it: the date too when it is not today's (UTC), so a frame from days ago is not taken for today's.
+const stamp = ms => `${new Date(ms).toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10) ? '' : new Date(ms).toISOString().slice(5, 10) + ' '}${fmtTime(ms).slice(0, 5)}Z`;
+const recTime = stamp;
 const recAgo = ms => { const m = Math.round(Math.abs(ms) / 60000); return m === 0 ? 'the same time' : `${m} min ${ms < 0 ? 'before' : 'after'}`; };
 async function recUpdate() {
   const badge = $('#recbadge'), on = map.hasLayer(recLayer);
@@ -517,10 +520,10 @@ function recFollow(m) {
   const ms = new Date(m.pos_t || m.t).getTime();
   if (m.id === recSelSeen) return;
   recSelSeen = m.id; recSelMs = recAt = ms;
-  if (map.hasLayer(recLayer)) recUpdate();
+  viewTimeChanged();
 }
-document.querySelector('#recprev').onclick = () => { if (recIdx > 0) { recAt = recFrames[recIdx - 1].ms; recUpdate(); } };
-document.querySelector('#recnext').onclick = () => { if (recIdx >= 0 && recIdx < recFrames.length - 1) { recAt = recFrames[recIdx + 1].ms; recUpdate(); } };
+document.querySelector('#recprev').onclick = () => { if (recIdx > 0) { recAt = recFrames[recIdx - 1].ms; viewTimeChanged(); } };
+document.querySelector('#recnext').onclick = () => { if (recIdx >= 0 && recIdx < recFrames.length - 1) { recAt = recFrames[recIdx + 1].ms; viewTimeChanged(); } };
 recLayer.on('add', () => {
   recLoad();
   recTimer = setInterval(recLoad, REC.refreshMs);
@@ -533,10 +536,56 @@ recLayer.on('remove', () => {
   try { localStorage.setItem('recradar', '0'); } catch (e) { /* not saved: fine */ }
 });
 
+// ---- infrared at the selected time ------------------------------------------------------------------
+// GIBS keeps its infrared frames for about 90 days (checked 2026-11-03: a frame of 2026-08-06 was there and one of 2026-08-03
+// was not), so the weather at the time of a message can be drawn from there directly, with nothing recorded here. It follows
+// the same time as the recorded radar: the arrows on either badge move both.
+SAT.archiveDays = 88;   // a little inside what was found, in case the edge moves
+for (const b of SAT.birds) {
+  b.atTiles = new RegionTiles(BLANK_TILE, {opacity: .55, maxNativeZoom: 6, maxZoom: 18, zIndex: 4, attribution: SAT.attribution, lonRange: b.lonRange,
+    urlFor: (coords, ms) => tileUrl(b, ms, `${coords.z}/${coords.y}/${coords.x}`)});
+  b.atTiles.frameMs = null;
+}
+const satAtGroup = L.layerGroup(SAT.birds.map(b => b.atTiles));
+let satAtMs = null;
+function satAtUpdate() {
+  const badge = $('#satatbadge'), on = map.hasLayer(satAtGroup);
+  badge.hidden = !on;
+  if (!on) return;
+  const step = SAT.stepMin * 60000, want = recTarget(), now = Date.now();
+  // frames are every ten minutes, and the newest few are not there yet
+  const ms = Math.floor(Math.min(want.ms, now - SAT.startBackMin * 60000) / step) * step;
+  const text = $('#satattext');
+  if (ms < now - SAT.archiveDays * 86400000) {
+    SAT.birds.forEach(b => { b.atTiles.frameMs = null; b.atTiles.redraw(); });
+    satAtMs = null;
+    text.textContent = `No infrared for ${stamp(want.ms)}: GIBS keeps about 90 days`;
+  } else {
+    if (ms !== satAtMs) { satAtMs = ms; SAT.birds.forEach(b => { b.atTiles.frameMs = ms; b.atTiles.redraw(); }); }
+    text.textContent = `Satellite IR \u00b7 ${stamp(ms)}${want.what === 'this frame' ? '' : ` (${recAgo(ms - want.ms)} ${want.what})`}`;
+  }
+  document.querySelector('#satatnext').disabled = ms + step > now - SAT.startBackMin * 60000;
+}
+// The selection, or a step, moved the time that the radar and the satellite are drawn for.
+function viewTimeChanged() { if (map.hasLayer(recLayer)) recUpdate(); satAtUpdate(); }
+document.querySelector('#satatprev').onclick = () => { if (satAtMs != null) { recAt = satAtMs - SAT.stepMin * 60000; viewTimeChanged(); } };
+document.querySelector('#satatnext').onclick = () => { if (satAtMs != null) { recAt = satAtMs + SAT.stepMin * 60000; viewTimeChanged(); } };
+satAtGroup.on('add', () => {
+  satAtMs = null; satAtUpdate();
+  try { localStorage.setItem('satat', '1'); } catch (e) { /* not saved: fine */ }
+});
+satAtGroup.on('remove', () => {
+  satAtMs = null;
+  SAT.birds.forEach(b => { b.atTiles.frameMs = null; });
+  $('#satatbadge').hidden = true;
+  try { localStorage.setItem('satat', '0'); } catch (e) { /* not saved: fine */ }
+});
+
 L.control.layers(null, {
   '<span style="font-weight:bold">&#9638;</span> Weather radar': radarLayer,
   '<span style="font-weight:bold">&#9638;</span> Recorded radar (at the selected time)': recLayer,
   '<span style="font-weight:bold">&#9729;</span> Satellite (IR)': satGroup,
+  '<span style="font-weight:bold">&#9729;</span> Satellite IR (at the selected time)': satAtGroup,
   '<span style="font-weight:bold">&#9671;</span> Waypoints': wptGroup,
   '<span style="color:#e8590c;font-weight:bold">&#8211; &#8211;</span> Predictions': predGroup,
   '<span style="color:#5c6b8a;font-weight:bold">&#8211; &#8211;</span> Planned route': planGroup,
@@ -2419,6 +2468,7 @@ setInterval(tick, 1000);
 
 try { if (localStorage.getItem('radar') === '1') radarLayer.addTo(map); } catch (e) { /* default: off */ }
 try { if (localStorage.getItem('recradar') === '1') recLayer.addTo(map); } catch (e) { /* default: off */ }
+try { if (localStorage.getItem('satat') === '1') satAtGroup.addTo(map); } catch (e) { /* default: off */ }
 try { if (localStorage.getItem('sat') === '1') satGroup.addTo(map); } catch (e) { /* default: off */ }
 refresh();
 // Every 30 s: update the list and redraw the selected aircraft, leaving the map view,

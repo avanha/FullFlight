@@ -809,6 +809,18 @@ before that. A label under the clock says which frames are showing and how old t
 cold high cirrus can look like a storm and heavy rain from low cloud can be missed. Faint lines between tiles are in the
 imagery, not a gap.
 
+### Satellite IR at the selected time
+
+"Satellite IR (at the selected time)" in the legend draws the frame for the time of the selected message (or of the newest
+position when none is selected) instead of the newest. Nothing is recorded for it: GIBS keeps its infrared frames for about 90
+days (a frame of 2026-08-06 was there on 2026-11-03 and one of 2026-08-03 was not), so the page asks GIBS for the old frame
+directly, as the live layer does for the new one, with the same satellites, hole filling and 55% opacity. The frame is the
+ten-minute one at or before the time, and never one of the newest half hour, which is not yet there. A badge says which frame,
+with the date when it is not today's, and how many minutes it is from the time wanted; its arrows step ten minutes. The radar
+layer follows the same time, so stepping either moves both. For a time older than the archive (88 days, a little inside what was
+found) it says so and draws nothing. Frames older than that are lost unless they were kept, which is what the plan's filtered
+copy would do ([the plan](weather-recording-plan.md)).
+
 ## Estimated path and ADS-B points
 
 Where the aircraft went quiet and was next heard from, a dotted grey line joins the two fixes: ADS-C handing over to ADS-B, or a

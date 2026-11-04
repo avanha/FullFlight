@@ -124,7 +124,8 @@ Then:
   inferred when an aircraft drops out of coverage near an airport.
   [Projection](docs/details.md#projection) · [Staleness](docs/details.md#how-the-plane-shows-how-stale-its-fix-is) ·
   [Landing](docs/details.md#landing)
-- **Weather.** RainViewer radar and NASA GIBS infrared satellite overlays. [Details](docs/details.md#weather-radar)
+- **Weather.** RainViewer radar and NASA GIBS infrared satellite overlays, live or for the time of the selected message (infrared from GIBS's
+  90-day archive). [Radar](docs/details.md#weather-radar) · [Infrared at a time](docs/details.md#satellite-ir-at-the-selected-time)
 - **Search.** Fixes and airports by name or code. [Fixes](docs/details.md#fix-search) · [Airports](docs/details.md#airport-search)
 - **Map tiles** can be kept on the server (off by default), so several browsers cost OpenStreetMap one request per tile.
   [Details](docs/details.md#map-tiles)
