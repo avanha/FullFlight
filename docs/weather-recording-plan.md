@@ -40,7 +40,7 @@ What the tiles hold, for when one is drawn or filtered:
 - **Which tiles:** the tiles the aircraft's track passes through during the window, plus the ring of neighbours (about
   3 tiles wide), at zoom 7, the most RainViewer serves (the page's native radar zoom). Store the finest detail and scale
   down at display time if needed; the reverse is impossible. IR is stored at zoom 6, the most GIBS has for these layers.
-- **When:** a burst every 60 to 90 minutes (never less often than every 2 hours, the whole history window). Each burst reads
+- **When:** a visit every 30 minutes by default (`weather.every`; never less often than every 2 hours, the whole history window, and well under it so a failed visit loses nothing). Each burst reads
   the index once, then fetches the frames at 20-minute spacing (every other 10-minute frame), for the tiles near the part of
   the track covered since the last burst. We know where the aircraft was, so there is no need to guess its route.
 - **Which aircraft:** those with an active watch, plus those watched until the next burst, so a landing does not lose the end of its flight.

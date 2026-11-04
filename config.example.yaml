@@ -36,4 +36,5 @@ weather:                       # optional: keep the radar around followed flight
   record: false                # off: nothing is fetched. RainViewer keeps only the last two hours, so this must run to record
   dir: data/weather            # where the tiles are kept
   max_mib: 1024                # the oldest frames are deleted to stay within this
-  every: 75m                   # between visits to RainViewer (10m to 100m); each takes the frames 20 minutes apart
+  every: 30m                   # how often to visit RainViewer (10m to 100m; it lists only 2 hours, so a missed visit loses radar for good)
+  step: 20m                    # time between the frames kept (10m, 20m, 30m ... 1h); RainViewer makes one every 10m

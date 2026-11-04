@@ -57,14 +57,14 @@ func TestADSBLolAPIKey(t *testing.T) {
 
 func TestWeatherConfig(t *testing.T) {
 	c, err := load(t, "{}")
-	if err != nil || c.Weather.Record || c.Weather.Dir != "data/weather" || c.Weather.MaxMiB != 1024 || c.Weather.Every != 75*time.Minute {
+	if err != nil || c.Weather.Record || c.Weather.Dir != "data/weather" || c.Weather.MaxMiB != 1024 || c.Weather.Every != 30*time.Minute || c.Weather.Step != 20*time.Minute {
 		t.Fatalf("%+v %v", c.Weather, err)
 	}
-	c, err = load(t, "weather: {record: true, dir: /w, max_mib: 50, every: 30m}")
-	if err != nil || !c.Weather.Record || c.Weather.Dir != "/w" || c.Weather.MaxMiB != 50 || c.Weather.Every != 30*time.Minute {
+	c, err = load(t, "weather: {record: true, dir: /w, max_mib: 50, every: 45m, step: 30m}")
+	if err != nil || !c.Weather.Record || c.Weather.Dir != "/w" || c.Weather.MaxMiB != 50 || c.Weather.Every != 45*time.Minute || c.Weather.Step != 30*time.Minute {
 		t.Errorf("%+v %v", c.Weather, err)
 	}
-	for _, bad := range []string{"weather: {every: 2h}", "weather: {every: 5m}", "weather: {max_mib: -1}"} {
+	for _, bad := range []string{"weather: {every: 2h}", "weather: {every: 5m}", "weather: {max_mib: -1}", "weather: {step: 15m}", "weather: {step: 5m}", "weather: {step: 2h}"} {
 		if _, err := load(t, bad); err == nil {
 			t.Errorf("accepted %s", bad)
 		}

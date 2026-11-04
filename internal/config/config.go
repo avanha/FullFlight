@@ -55,7 +55,8 @@ type Config struct {
 		Record bool          `yaml:"record"`
 		Dir    string        `yaml:"dir"`     // default data/weather
 		MaxMiB int           `yaml:"max_mib"` // oldest frames are deleted beyond this; default 1024
-		Every  time.Duration `yaml:"every"`   // between visits to RainViewer; default 75m, and under 2h, how far back it lists
+		Every  time.Duration `yaml:"every"`   // how often RainViewer is visited; default 30m, and under 2h, how far back it lists
+		Step   time.Duration `yaml:"step"`    // between the frames kept, a multiple of the 10m RainViewer makes them at; default 20m
 	} `yaml:"weather"`
 
 	Poll struct {
@@ -99,7 +100,10 @@ func Load(path string) (*Config, error) {
 		c.Weather.MaxMiB = 1024
 	}
 	if c.Weather.Every == 0 {
-		c.Weather.Every = 75 * time.Minute
+		c.Weather.Every = 30 * time.Minute
+	}
+	if c.Weather.Step == 0 {
+		c.Weather.Step = 20 * time.Minute
 	}
 	if len(c.ADSB.Sources) == 0 {
 		c.ADSB.Sources = []string{"adsb.lol", "adsb.fi"}
@@ -123,6 +127,9 @@ func (c *Config) validate() error {
 	}
 	if c.Weather.Every < 10*time.Minute || c.Weather.Every > 100*time.Minute {
 		return fmt.Errorf("weather.every must be between 10m and 100m: RainViewer lists only the last two hours, so it has to be visited more often than that")
+	}
+	if c.Weather.Step < 10*time.Minute || c.Weather.Step > time.Hour || c.Weather.Step%(10*time.Minute) != 0 {
+		return fmt.Errorf("weather.step must be 10m, 20m, 30m and so on up to 1h: RainViewer makes a frame every ten minutes")
 	}
 	host, _, err := net.SplitHostPort(c.Listen)
 	if err != nil {

@@ -291,12 +291,18 @@ API: `GET /api/airframes`, and `GET`/`POST /api/airframes/{hex}/notes`, `PUT`/`D
 ## Recording the radar
 
 Off by default (`weather.record` in the config). RainViewer lists only the last two hours of radar frames, ten minutes apart, so
-the weather an aircraft flew through is gone unless it is kept as it happens. The recorder visits RainViewer about every 75
-minutes (`weather.every`, 10 to 100 minutes), reads its frame list, keeps the frames 20 minutes apart (those on :00, :20 and :40),
-and for each downloads the zoom-7 tiles (the finest RainViewer serves) within two tiles of where each followed aircraft was
-during the ten minutes either side of the frame. The path comes from the stored positions, interpolated across a silence of up
-to an hour and never beyond; an aircraft on the ground has none. A tile already held is not fetched again, and one RainViewer
-does not have is skipped.
+the weather an aircraft flew through is gone unless it is kept as it happens. Two settings are easily confused:
+
+- `weather.every` (default 30 minutes, 10 to 100) is how often the app **visits** RainViewer to read its list of frames. It
+  must stay well under two hours: a visit that fails, with the next two hours or more after the last good one, loses that
+  radar for good. Visiting more often costs only one small request for the list, since each tile is downloaded once.
+- `weather.step` (default 20 minutes, a multiple of ten up to an hour) is the time between the **frames kept**: with 20
+  minutes, those on :00, :20 and :40.
+
+For each kept frame it downloads the zoom-7 tiles (the finest RainViewer serves) within two tiles of where each followed
+aircraft was during the minutes that frame stands for (half a step either side). The path comes from the stored positions,
+interpolated across a silence of up to an hour and never beyond; an aircraft on the ground has none. A tile already held is
+not fetched again, and one RainViewer does not have is skipped.
 
 Tiles are files under `weather.dir` (`radar/<frame time>/<z>/<x>/<y>.png`); the `wx_tile` table says what is there. The oldest
 frames are deleted to stay under `weather.max_mib`. The tiles are the picture the map's radar layer shows (RainViewer now serves
