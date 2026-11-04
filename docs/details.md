@@ -928,6 +928,10 @@ the list of watches scrolls on its own) and **Messages** below (with the flight 
 scrolling list). Fold one and the other takes the height; the header of a folded Targets shows the selected target, and each
 header counts what is in it. Your choice is remembered, and choosing a message on the map opens Messages if it is folded.
 
+**Folding the legend.** A **Legend ▾** bar above the two legend boxes at the bottom left folds them away (the bar then reads
+**Legend ▸**) and brings them back. It only hides the checkboxes: layers that are ticked stay on and the track keeps drawing. The
+choice is remembered, and the legend starts shown.
+
 Choosing a watch centres the map (zoom 7) on that aircraft's newest trustworthy fix, from ADS-B or a datalink message, whichever
 is later.
 

@@ -137,6 +137,10 @@
   #wxbadges { position: fixed; top: 40px; right: 8px; z-index: 1000; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; pointer-events: none; }
   .wxbadge { padding: 2px 8px; border-radius: 4px; font: 12px system-ui, sans-serif; background: rgba(255,255,255,.9); border: 1px solid #aaa; color: #345; }
   .wxbadge[hidden] { display: none; }
+  /* a bar above the legend boxes that folds them away; the layers stay as they are */
+  .legendbar { background: #fff; border-radius: 5px; box-shadow: 0 1px 5px rgba(0,0,0,.4); }
+  .legendbar button { border: none; background: none; cursor: pointer; padding: 3px 10px; font: 12px/1.4 system-ui, sans-serif; color: #345; }
+  body.legendhidden .leaflet-control-layers { display: none; }
   #recbadge, #satatbadge { pointer-events: auto; }
   #recbadge button, #satatbadge button { border: 1px solid #aaa; background: #fff; border-radius: 3px; cursor: pointer; padding: 0 5px; font-size: 11px; color: #345; }
   #recbadge button:disabled, #satatbadge button:disabled { opacity: .35; cursor: default; }
@@ -618,6 +622,32 @@ L.control.layers(null, {
   '<span style="font-weight:bold">&#8627;</span> Wind barbs': windGroup,
   '<span style="color:#7c3aed;font-weight:bold">&#9670;</span> D-ATIS, METAR and TAF requests': atisGroup,
 }, {collapsed: false, position: 'bottomleft'}).addTo(map);
+// A bar above the legend boxes folds them away, and the choice is remembered. It is added last, which puts it on top of the stack.
+let legendHidden = false;
+try { legendHidden = localStorage.getItem('legendHidden') === '1'; } catch (e) { /* default: shown */ }
+const legendBar = L.control({position: 'bottomleft'});
+legendBar.onAdd = () => {
+  const bar = document.createElement('div');
+  bar.className = 'legendbar';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  const show = () => {
+    document.body.classList.toggle('legendhidden', legendHidden);
+    btn.textContent = `${legendHidden ? '\u25b8' : '\u25be'} Legend`;
+    btn.title = legendHidden ? 'Show the legend' : 'Hide the legend (the layers stay as they are)';
+    if (btn.setAttribute) btn.setAttribute('aria-expanded', String(!legendHidden));
+  };
+  btn.onclick = () => {
+    legendHidden = !legendHidden;
+    try { localStorage.setItem('legendHidden', legendHidden ? '1' : '0'); } catch (e) { /* not saved: fine */ }
+    show();
+  };
+  show();
+  bar.append(btn);
+  if (L.DomEvent) L.DomEvent.disableClickPropagation(bar);   // a click on the bar is not a click on the map
+  return bar;
+};
+legendBar.addTo(map);
 // ---- longitude frame --------------------------------------------------------------------
 // The map's longitude is continuous (181 is the same place as -179, drawn one world over), so near
 // the date line everything must be drawn in ONE frame or a track from 179 to -179 is a line right

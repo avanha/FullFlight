@@ -39,7 +39,7 @@ const document = {
   createTextNode: t => ({text: t}),
 };
 // --- a recording Leaflet ---
-const calls = { mounted: [], legendExtra: null, exec: [], copied: [], timers: [], lines: [], legend: null, addLayer: 0, fitBounds: 0, setView: [], panTo: [], markers: [], circles: [], polylines: 0, tooltipsOpened: 0, highlightAdds: [] };
+const calls = { bars: [], mounted: [], legendExtra: null, exec: [], copied: [], timers: [], lines: [], legend: null, addLayer: 0, fitBounds: 0, setView: [], panTo: [], markers: [], circles: [], polylines: 0, tooltipsOpened: 0, highlightAdds: [] };
 const allLayers = [];
 class Layer { on(ev, fn) { (this.handlers ||= {})[ev] = fn; return this; }
   constructor(){ this.items = []; this.open = false; allLayers.push(this); } addTo(t) { this.target = t; this.onMap = (t === mapObj); t.items && t.items.push(this); if (t === highlightGroup) calls.highlightAdds.push(this); return this; }
@@ -57,7 +57,7 @@ const L = {
   TileLayer: { extend: () => function () { return { addTo() { return this; }, on() { return this; }, setUrl() { return this; }, redraw() { return this; } }; } },
   layerGroup() { const g = new Layer(); g.clearLayers = () => { g.items = []; }; g.removeLayer = l => { g.items = g.items.filter(x => x !== l); }; groups.push(g); return g; },
   polyline(ll, o) { calls.polylines++; const l = new Layer(); l.ll = ll; l.o = o; calls.lines.push(l); return l; },
-  control: { layers: (base, overlays) => ({ addTo() { if (!calls.legend) calls.legend = overlays; else calls.legendExtra = overlays; return this; } }) },
+  control: Object.assign(opts => ({ addTo() { calls.bars.push(this.onAdd()); return this; } }), { layers: (base, overlays) => ({ addTo() { if (!calls.legend) calls.legend = overlays; else calls.legendExtra = overlays; return this; } })  }),
   circleMarker(ll, o) { const l = new Layer(); l.ll = ll; l.o = o; calls.circles.push(l); return l; },
   marker(ll, o) { const l = new Layer(); l.ll = ll; l.o = o; calls.markers.push(l); return l; },
   Tooltip: { mergeOptions(o) { calls.tooltipDefaults = o; } },
@@ -1527,6 +1527,22 @@ highlightGroup = null;
     watch.status = 'paused'; await t.refresh();
     assert.strictEqual(pauseBtn().textContent, '\u25b6 Resume');
     watch.status = saved.status; if (saved.hex === undefined) delete watch.hex; else watch.hex = saved.hex; await t.refresh();
+  }
+
+  // ===== 8s2a. a bar that folds the legend away ====================================================
+  {
+    assert.strictEqual(calls.bars.length, 1, 'one bar above the legend boxes');
+    const btn = calls.bars[0].children[0], bodyHidden = () => document.body.classList.contains('legendhidden');
+    assert.strictEqual(bodyHidden(), false, 'the legend starts shown');
+    assert.strictEqual(btn.textContent, '\u25be Legend');
+    assert.strictEqual(btn.title, 'Hide the legend (the layers stay as they are)');
+    btn.onclick();
+    assert.strictEqual(bodyHidden(), true, 'folded');
+    assert.strictEqual(btn.textContent, '\u25b8 Legend'); assert.strictEqual(btn.title, 'Show the legend');
+    assert.strictEqual(storage.legendHidden, '1', 'and remembered');
+    btn.onclick();
+    assert.strictEqual(bodyHidden(), false, 'shown again');
+    assert.strictEqual(storage.legendHidden, '0');
   }
 
   // ===== 8s2b. the infrared is drawn without its grey ===========================================
