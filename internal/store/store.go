@@ -376,6 +376,19 @@ func (s *Store) AddWatch(e watchlist.Entry) (watchlist.Entry, error) {
 	if err != sql.ErrNoRows {
 		return e, err
 	}
+	// Watching a tail or an address again, once its watch has run out, carries on that watch: one row per aircraft, not a
+	// new one beside the old. (Only an open watch does: adding an entry that is itself finished is just a record.)
+	if e.Status != watchlist.StatusDone && e.Status != watchlist.StatusExpired {
+		id, err := s.finishedWatchOfSameAircraft(e)
+		if err == nil {
+			if _, err := s.db.Exec(`UPDATE watch SET status='tracking', start_ts=?, end_ts=?, airborne=0, landed_ts=0 WHERE id=?`, ts(e.Start), ts(e.End), id); err != nil {
+				return e, err
+			}
+			return scanWatch(s.db.QueryRow(watchSelect+` WHERE id=?`, id))
+		} else if err != sql.ErrNoRows {
+			return e, err
+		}
+	}
 	res, err := s.db.Exec(`INSERT INTO watch (kind, ident, date, start_ts, end_ts, status, hex, tail, callsign, dest)
 		VALUES (?,?,?,?,?,?,?,?,?,?)`,
 		e.Kind, e.Ident, e.Date, ts(e.Start), ts(e.End), e.Status, e.Hex, e.Tail, e.Callsign, e.Dest)
@@ -390,6 +403,20 @@ func (s *Store) AddWatch(e watchlist.Entry) (watchlist.Entry, error) {
 // watch: a registration and an ICAO address name one airframe, so watching both would poll it twice and
 // list it twice. The hex is the key. A tail whose hex we do not know yet matches only itself.
 func (s *Store) sameAircraftWatch(e watchlist.Entry) (int64, error) {
+	return s.watchOfSameAircraft(e, `'waiting','tracking','paused'`)
+}
+
+// finishedWatchOfSameAircraft is the newest watch that has run out (done or expired) on the same aircraft as e, a tail or hex
+// watch. One by the same registration counts even when no address is known for it.
+func (s *Store) finishedWatchOfSameAircraft(e watchlist.Entry) (int64, error) {
+	id, err := s.watchOfSameAircraft(e, `'done','expired'`)
+	if err == sql.ErrNoRows && (e.Kind == watchlist.KindTail || e.Kind == watchlist.KindHex) {
+		err = s.db.QueryRow(`SELECT id FROM watch WHERE kind=? AND ident=? AND status IN ('done','expired') ORDER BY id DESC LIMIT 1`, e.Kind, e.Ident).Scan(&id)
+	}
+	return id, err
+}
+
+func (s *Store) watchOfSameAircraft(e watchlist.Entry, statuses string) (int64, error) {
 	if e.Kind != watchlist.KindTail && e.Kind != watchlist.KindHex {
 		return 0, sql.ErrNoRows
 	}
@@ -403,7 +430,7 @@ func (s *Store) sameAircraftWatch(e watchlist.Entry) (int64, error) {
 		return 0, sql.ErrNoRows
 	}
 	var id int64
-	err := s.db.QueryRow(`SELECT id FROM watch WHERE kind IN ('tail','hex') AND status IN ('waiting','tracking','paused')
+	err := s.db.QueryRow(`SELECT id FROM watch WHERE kind IN ('tail','hex') AND status IN (`+statuses+`)
 		AND (hex=? OR (kind='hex' AND ident=?) OR (kind='tail' AND ident IN (SELECT tail FROM airframe WHERE hex=?)))
 		ORDER BY id DESC LIMIT 1`, hex, hex, hex).Scan(&id)
 	return id, err

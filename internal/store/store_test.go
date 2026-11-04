@@ -822,12 +822,12 @@ func TestTailAndHexAreOneWatch(t *testing.T) {
 	if o.ID == h.ID || f.ID == h.ID || o.ID == f.ID {
 		t.Errorf("distinct watches merged: %d %d %d", h.ID, o.ID, f.ID)
 	}
-	// a finished watch does not absorb a new one
+	// a finished watch is carried on by a new one for the same aircraft, not left beside it
 	h.Status = watchlist.StatusDone
 	s2.UpdateWatch(h)
 	again, _ := s2.AddWatch(tail)
-	if again.ID == h.ID {
-		t.Error("reused a finished watch")
+	if again.ID != h.ID || again.Status != watchlist.StatusTracking {
+		t.Errorf("a finished watch was not reopened: %+v", again)
 	}
 }
 
@@ -1275,3 +1275,51 @@ func TestStationStatsAndLateness(t *testing.T) {
 }
 
 func f64(v float64) *float64 { return &v }
+
+func TestWatchingATailAgainReopensItsFinishedWatch(t *testing.T) {
+	s := open(t)
+	s.RecordAirframe(Airframe{Hex: "780AB8", Tail: "B-LRM"})
+	first, _ := watchlist.Parse("B-LRM", now.Add(-48*time.Hour), time.Time{})
+	a, _ := s.AddWatch(first)
+	a.Hex, a.Status, a.Airborne, a.LandedAt = "780AB8", watchlist.StatusDone, true, now.Add(-time.Hour)
+	if err := s.UpdateWatch(a); err != nil {
+		t.Fatal(err)
+	}
+	// by registration, by address, and by registration with the address along
+	for _, in := range []string{"B-LRM", "hex:780AB8", "tail:B-LRM"} {
+		e, _ := watchlist.Parse(in, now, time.Time{})
+		got, err := s.AddWatch(e)
+		if err != nil || got.ID != a.ID || got.Status != watchlist.StatusTracking || !got.End.Equal(e.End) || !got.Start.Equal(now) || got.Hex != "780AB8" || got.Airborne || !got.LandedAt.IsZero() {
+			t.Errorf("%s: %+v %v", in, got, err)
+		}
+		got.Status = watchlist.StatusDone // finished again, for the next
+		s.UpdateWatch(got)
+	}
+	if all, _ := s.ListWatches(false); len(all) != 1 {
+		t.Errorf("one row for the aircraft, got %d: %+v", len(all), all)
+	}
+	// an open watch is still the one a second add finds, and a finished flight watch is not reopened
+	e, _ := watchlist.Parse("B-LRM", now, time.Time{})
+	b, _ := s.AddWatch(e)
+	again, _ := s.AddWatch(e)
+	if again.ID != b.ID {
+		t.Errorf("%d vs %d", again.ID, b.ID)
+	}
+	f, _ := watchlist.Parse("CPA113", now, time.Time{})
+	fa, _ := s.AddWatch(f)
+	fa.Status = watchlist.StatusExpired
+	s.UpdateWatch(fa)
+	fb, _ := s.AddWatch(f)
+	if fb.ID == fa.ID || fb.Status != watchlist.StatusWaiting {
+		t.Errorf("a flight watch that ran out is not reopened: %+v", fb)
+	}
+	// an aircraft with no known address is matched by its registration
+	n, _ := watchlist.Parse("N24993", now.Add(-48*time.Hour), time.Time{})
+	na, _ := s.AddWatch(n)
+	na.Status = watchlist.StatusDone
+	s.UpdateWatch(na)
+	n2, _ := watchlist.Parse("N24993", now, time.Time{})
+	if got, _ := s.AddWatch(n2); got.ID != na.ID || got.Status != watchlist.StatusTracking {
+		t.Errorf("%+v", got)
+	}
+}

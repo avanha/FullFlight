@@ -22,6 +22,11 @@ Type into the web UI (or `POST /api/watches {"input": "...", "until": "<RFC3339>
   (`internal/regs`). Elsewhere the hex comes from what we have already seen, or from airframes.io (at most once an hour per
   registration).
 
+Watching a tail or a hex again once its watch has run out (done or expired) carries on that same watch for another 36 h
+(or until `until`), whether typed in the box, started from the Airframes screen, or the **Watch again** button a finished tail
+or hex watch shows in the list. An aircraft is listed once, not once for every time it was followed. A flight watch cannot be
+carried on: its window has passed.
+
 Add an optional destination as its 4-letter ICAO code (the 3-letter IATA code is accepted too): `UA869 2026-10-31 KSFO`.
 Routes and aircraft popups show airports by ICAO code; the Airports tab, its search and an airport's own popup show the IATA
 code beside it.

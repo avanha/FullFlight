@@ -1483,6 +1483,30 @@ highlightGroup = null;
   watch.kind = 'hex'; await t.refresh(); assert.strictEqual(chipOf().textContent, 'hex');
   watch.kind = 'tail'; watch.ident = 'B-LRM'; await t.refresh();
 
+  // ===== 8s2. a watch that has run out can be watched again ==========================================
+  {
+    const pauseBtn = () => byId['#list'].children[0].querySelector('.pause');
+    const saved = {status: watch.status, kind: watch.kind, hex: watch.hex};
+    const click = async () => { postReply = {status: 201, body: {...watch, status: 'tracking'}}; lastPostBody = null; await pauseBtn().onclick({stopPropagation() {}}); };
+    watch.hex = '780AB8';
+    for (const status of ['done', 'expired']) {
+      watch.status = status; await t.refresh();
+      assert.strictEqual(pauseBtn().hidden, false, `a ${status} tail watch offers a way back`);
+      assert.strictEqual(pauseBtn().textContent, '\u25b6 Watch again');
+      await click();
+      assert.deepStrictEqual(lastPostBody, {input: 'tail:B-LRM', hex: '780AB8'}, 'it asks the server to watch the aircraft again, not to resume');
+    }
+    watch.kind = 'hex'; watch.ident = '780AB8'; await t.refresh(); await click();
+    assert.deepStrictEqual(lastPostBody, {input: 'hex:780AB8', hex: '780AB8'});
+    watch.kind = 'flight'; watch.date = '2026-10-30'; await t.refresh();
+    assert.strictEqual(pauseBtn().hidden, true, 'a flight watch that has run out cannot be carried on');
+    watch.kind = saved.kind; delete watch.date; watch.ident = 'B-LRM'; watch.status = 'tracking'; await t.refresh();
+    assert.strictEqual(pauseBtn().textContent, '\u23f8 Pause', 'an open one still pauses');
+    watch.status = 'paused'; await t.refresh();
+    assert.strictEqual(pauseBtn().textContent, '\u25b6 Resume');
+    watch.status = saved.status; if (saved.hex === undefined) delete watch.hex; else watch.hex = saved.hex; await t.refresh();
+  }
+
   // ===== 8t. notes: an icon on each watch, a side panel behind it ====================================
   const noteBtn = () => byId['#list'].children[0].querySelector('.notebtn');
   const NOTEHEX = watch.hex;

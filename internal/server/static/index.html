@@ -585,15 +585,18 @@ async function refresh() {
     // most plainly once it has landed.
     const pb = li.querySelector('.pause');
     const isOpen = w.status === 'waiting' || w.status === 'tracking', isPaused = w.status === 'paused';
-    pb.hidden = !(isOpen || isPaused);
-    pb.textContent = isPaused ? '\u25b6 Resume' : '\u23f8 Pause';
+    // A tail or hex watch that has run out can be carried on, as the same row (a flight watch cannot: its window has passed).
+    const runOut = (w.status === 'done' || w.status === 'expired') && (w.kind === 'tail' || w.kind === 'hex');
+    pb.hidden = !(isOpen || isPaused || runOut);
+    pb.textContent = runOut ? '\u25b6 Watch again' : isPaused ? '\u25b6 Resume' : '\u23f8 Pause';
     pb.className = 'pause' + (w.landing && isOpen ? ' suggest' : '');
-    pb.title = isPaused ? 'Resume tracking' : w.landing ? `It is on the ground at ${w.landing.code}: pause to stop polling for it. It stays in the list with everything we hold about it.`
+    pb.title = runOut ? 'Follow this aircraft again, for the default 36 hours' : isPaused ? 'Resume tracking' : w.landing ? `It is on the ground at ${w.landing.code}: pause to stop polling for it. It stays in the list with everything we hold about it.`
       : 'Stop polling for it. It stays in the list with everything we hold about it.';
     pb.onclick = async e => {
       e.stopPropagation();
       try {
-        await api('/api/watches/' + w.id, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({paused: !isPaused})});
+        if (runOut) await api('/api/watches', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({input: `${w.kind}:${w.ident}`, hex: w.hex})});
+        else await api('/api/watches/' + w.id, {method: 'PATCH', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({paused: !isPaused})});
         $('#err').textContent = '';
       } catch (err) { $('#err').textContent = err.message; }
       await refresh();
