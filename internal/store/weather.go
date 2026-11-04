@@ -69,3 +69,28 @@ func (s *Store) DeleteWxFrame(source string, frame time.Time) error {
 	_, err := s.db.Exec(`DELETE FROM wx_tile WHERE source=? AND frame_ts=?`, source, ts(frame))
 	return err
 }
+
+// WxFrame is a recorded frame and how many tiles of it are held.
+type WxFrame struct {
+	Time  time.Time
+	Tiles int
+}
+
+// WxFrames lists the frames recorded for a source, oldest first.
+func (s *Store) WxFrames(source string) ([]WxFrame, error) {
+	rows, err := s.db.Query(`SELECT frame_ts, COUNT(*) FROM wx_tile WHERE source=? GROUP BY frame_ts ORDER BY frame_ts`, source)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []WxFrame
+	for rows.Next() {
+		var f int64
+		var n int
+		if err := rows.Scan(&f, &n); err != nil {
+			return nil, err
+		}
+		out = append(out, WxFrame{time.Unix(f, 0).UTC(), n})
+	}
+	return out, rows.Err()
+}

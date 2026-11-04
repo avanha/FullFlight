@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -19,6 +21,7 @@ import (
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/tilecache"
 	"github.com/avanha/fullflight/internal/watchlist"
+	"github.com/avanha/fullflight/internal/weather"
 )
 
 func setup(t *testing.T, pw string) *httptest.Server {
@@ -2078,5 +2081,88 @@ func TestMapTilesComeFromTheCacheOrOSM(t *testing.T) {
 	}
 	if asked != 1 {
 		t.Errorf("an impossible tile reached OSM: %d", asked)
+	}
+}
+
+func TestRecordedRadarIsListedAndServed(t *testing.T) {
+	dir := t.TempDir()
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	frame := time.Date(2026, 11, 4, 7, 20, 0, 0, time.UTC)
+	png := "\x89PNG\r\n\x1a\n-radar-"
+	for _, tl := range []weather.Tile{{Z: 7, X: 100, Y: 60}, {Z: 7, X: 101, Y: 60}} {
+		p := weather.TilePath(dir, frame, tl)
+		os.MkdirAll(filepath.Dir(p), 0o700)
+		os.WriteFile(p, []byte(png), 0o600)
+		st.AddWxTile(store.WxTile{Source: weather.SourceRadar, Frame: frame, Z: tl.Z, X: tl.X, Y: tl.Y, Bytes: int64(len(png)), Fetched: frame})
+	}
+	ts := httptest.NewServer((&Server{Store: st, WeatherDir: dir, WeatherRecording: true}).Handler())
+	defer ts.Close()
+	var list struct {
+		Recording bool `json:"recording"`
+		Zoom      int
+		Frames    []struct {
+			ID    int64
+			Time  time.Time
+			Tiles int
+		}
+	}
+	getJSON(t, ts.URL+"/api/weather/radar", &list)
+	if !list.Recording || list.Zoom != 7 || len(list.Frames) != 1 || list.Frames[0].ID != frame.Unix() || list.Frames[0].Tiles != 2 || !list.Frames[0].Time.Equal(frame) {
+		t.Fatalf("%+v", list)
+	}
+	var tiles struct {
+		Z     int
+		Tiles [][2]int
+	}
+	getJSON(t, fmt.Sprintf("%s/api/weather/radar/%d/tiles", ts.URL, frame.Unix()), &tiles)
+	if tiles.Z != 7 || len(tiles.Tiles) != 2 || tiles.Tiles[0] != [2]int{100, 60} {
+		t.Errorf("%+v", tiles)
+	}
+	resp, err := http.Get(fmt.Sprintf("%s/api/weather/radar/%d/7/100/60.png", ts.URL, frame.Unix()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || string(b) != png || resp.Header.Get("Content-Type") != "image/png" || !strings.Contains(resp.Header.Get("Cache-Control"), "immutable") {
+		t.Errorf("%d %q %v", resp.StatusCode, b, resp.Header)
+	}
+	// what was not recorded, and what cannot be a tile or a frame, is not there
+	for _, path := range []string{
+		fmt.Sprintf("/api/weather/radar/%d/7/5/5.png", frame.Unix()),    // a tile that was not recorded
+		fmt.Sprintf("/api/weather/radar/%d/7/200/60.png", frame.Unix()), // none there either
+		fmt.Sprintf("/api/weather/radar/%d/6/50/30.png", frame.Unix()),  // not the recorded zoom
+		fmt.Sprintf("/api/weather/radar/%d/7/-1/60.png", frame.Unix()),
+		fmt.Sprintf("/api/weather/radar/%d/7/999/60.png", frame.Unix()),
+		"/api/weather/radar/12345/7/100/60.png", // another frame
+		"/api/weather/radar/abc/7/100/60.png",
+		"/api/weather/radar/12345/tiles",
+	} {
+		if resp, err := http.Get(ts.URL + path); err != nil || resp.StatusCode != 404 {
+			t.Errorf("%s: %v %v", path, resp, err)
+		}
+	}
+	// recording off and no directory: an empty list, and nothing served
+	off := httptest.NewServer((&Server{Store: st}).Handler())
+	defer off.Close()
+	getJSON(t, off.URL+"/api/weather/radar", &list)
+	if list.Recording || len(list.Frames) != 0 {
+		t.Errorf("%+v", list)
+	}
+	if resp, _ := http.Get(fmt.Sprintf("%s/api/weather/radar/%d/7/100/60.png", off.URL, frame.Unix())); resp.StatusCode != 404 {
+		t.Errorf("served with no directory: %d", resp.StatusCode)
+	}
+}
+
+func getJSON(t *testing.T, url string, v any) {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		t.Fatalf("%s: %v", url, err)
 	}
 }

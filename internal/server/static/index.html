@@ -137,6 +137,9 @@
   #wxbadges { position: fixed; top: 40px; right: 8px; z-index: 1000; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; pointer-events: none; }
   .wxbadge { padding: 2px 8px; border-radius: 4px; font: 12px system-ui, sans-serif; background: rgba(255,255,255,.9); border: 1px solid #aaa; color: #345; }
   .wxbadge[hidden] { display: none; }
+  #recbadge { pointer-events: auto; }
+  #recbadge button { border: 1px solid #aaa; background: #fff; border-radius: 3px; cursor: pointer; padding: 0 5px; font-size: 11px; color: #345; }
+  #recbadge button:disabled { opacity: .35; cursor: default; }
   #clock { position: fixed; top: 8px; right: 8px; z-index: 1000; padding: 3px 8px; border-radius: 4px;
            background: rgba(255,255,255,.9); border: 1px solid #aaa; font: 13px ui-monospace, monospace; }
   @media (max-width: 700px) {
@@ -225,6 +228,7 @@
 <div id="clock" title="Current time, UTC"></div>
 <div id="wxbadges">
   <div class="wxbadge" id="radarbadge" hidden title="The newest frame of the radar composite on the map. It is refreshed every 5 minutes."></div>
+  <div class="wxbadge" id="recbadge" hidden title="Radar this server recorded near the followed aircraft, for the time of the selected message (or the newest position). The arrows step through the recorded frames."><button id="recprev" title="The recorded frame before this one">&#9664;</button> <span id="rectext"></span> <button id="recnext" title="The recorded frame after this one">&#9654;</button></div>
   <div class="wxbadge" id="satbadge" hidden title="The newest infrared satellite frames on the map, from the satellites that see each part of the world. Refreshed every 10 minutes."></div>
 </div>
 <div id="notespanel" hidden>
@@ -429,8 +433,109 @@ satGroup.on('remove', () => {
   try { localStorage.setItem('sat', '0'); } catch (e) { /* not saved: fine */ }
 });
 
+// ---- recorded radar --------------------------------------------------------------------------------
+// The radar the server recorded around the followed aircraft (see "Recording the radar"), drawn for the time of the selected
+// message, or of the newest position when none is selected, and stepped frame by frame with the arrows. It exists only where
+// an aircraft was, so a tile that was not recorded is left blank, never filled from another frame.
+const REC = {listUrl: '/api/weather/radar', refreshMs: 5 * 60000, fitMin: 15, zoom: 7};
+let recFrames = [], recRecording = false, recFailed = false, recIdx = -1, recKeys = new Set(), recFrameShown = null, recAt = null, recSelSeen = null, recSelMs = null, recTimer = null, recSeq = 0;
+const RecordedTiles = L.TileLayer.extend({
+  createTile(coords, done) {
+    if (!this.options.has(coords)) {   // nothing was recorded here in this frame
+      const blank = document.createElement('div');
+      setTimeout(() => done(null, blank), 0);
+      return blank;
+    }
+    return L.TileLayer.prototype.createTile.call(this, coords, done);
+  },
+});
+const recLayer = new RecordedTiles(BLANK_TILE, {opacity: .65, minNativeZoom: REC.zoom, maxNativeZoom: REC.zoom, maxZoom: 18, zIndex: 5,
+  attribution: 'Radar &copy; <a href="https://www.rainviewer.com" target="_blank" rel="noopener">RainViewer</a>',
+  has: c => recKeys.has(`${c.x}/${c.y}`)});
+// The newest frame nearest a time, and whether it is near enough to stand for it.
+function recNearest(frames, ms) {
+  let best = -1;
+  frames.forEach((f, i) => { if (best < 0 || Math.abs(f.ms - ms) < Math.abs(frames[best].ms - ms)) best = i; });
+  return {idx: best, fits: best >= 0 && Math.abs(frames[best].ms - ms) <= REC.fitMin * 60000};
+}
+// The time the radar is wanted for: a step with the arrows, the selected message, or else the newest position.
+function recTarget() {
+  if (recAt != null) return {ms: recAt, what: recAt === recSelMs ? 'the selected message' : 'this frame'};
+  const f = latestFix(lastTrack.pts, lastTrack.msgs);
+  return f ? {ms: f.t, what: 'the newest position'} : {ms: Date.now(), what: 'now'};
+}
+const recTime = ms => fmtTime(ms).slice(0, 5) + 'Z';
+const recAgo = ms => { const m = Math.round(Math.abs(ms) / 60000); return m === 0 ? 'the same time' : `${m} min ${ms < 0 ? 'before' : 'after'}`; };
+async function recUpdate() {
+  const badge = $('#recbadge'), on = map.hasLayer(recLayer);
+  badge.hidden = !on;
+  if (!on) return;
+  const text = $('#rectext');
+  if (recFailed) { text.textContent = 'Recorded radar unavailable'; return; }
+  if (!recFrames.length) { text.textContent = recRecording ? 'No radar recorded yet' : 'No radar recorded (weather.record is off in the config)'; return; }
+  const want = recTarget(), n = recNearest(recFrames, want.ms), f = recFrames[n.idx];
+  $('#recprev').disabled = n.idx <= 0; $('#recnext').disabled = n.idx >= recFrames.length - 1;
+  recIdx = n.idx;
+  if (!n.fits) {   // never show the nearest frame as though it were the time
+    recKeys = new Set(); recFrameShown = null; recLayer.redraw();
+    text.textContent = `No radar recorded near ${recTime(want.ms)} (recorded ${recTime(recFrames[0].ms)} to ${recTime(recFrames.at(-1).ms)})`;
+    return;
+  }
+  text.textContent = `Recorded radar \u00b7 ${recTime(f.ms)}${want.what === 'this frame' ? '' : ` (${recAgo(f.ms - want.ms)} ${want.what})`}`;
+  if (recFrameShown === f.id) return;
+  const seq = ++recSeq;
+  try {
+    const d = await api(`${REC.listUrl}/${f.id}/tiles`);
+    if (seq !== recSeq) return;   // another frame was asked for meanwhile
+    recKeys = new Set(d.tiles.map(([x, y]) => `${x}/${y}`));
+    recFrameShown = f.id;
+    recLayer.setUrl(`${REC.listUrl}/${f.id}/{z}/{x}/{y}.png`);
+    recFitBounds(d.tiles);
+    recLayer.redraw();
+  } catch (e) { text.textContent = 'Recorded radar unavailable'; }
+}
+// Limit the layer to the box the recorded tiles lie in, so zoomed out it does not walk every tile of the world.
+function recFitBounds(tiles) {
+  if (!tiles.length || !recLayer.options || typeof L.latLngBounds !== 'function') return;
+  const n = 2 ** REC.zoom, xs = tiles.map(t => t[0]), ys = tiles.map(t => t[1]);
+  const lat = y => Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n))) * 180 / Math.PI, lon = x => x / n * 360 - 180;
+  recLayer.options.bounds = L.latLngBounds([lat(Math.max(...ys) + 1), lon(Math.min(...xs))], [lat(Math.min(...ys)), lon(Math.max(...xs) + 1)]);
+}
+async function recLoad() {
+  try {
+    const d = await api(REC.listUrl);
+    recRecording = d.recording;
+    recFrames = d.frames.map(f => ({id: f.id, ms: Date.parse(f.time)}));
+    recFailed = false;
+  } catch (e) { recFailed = true; }
+  recFrameShown = null;   // the frame may have been deleted, or its tiles added to
+  await recUpdate();
+}
+// The selection moved to another message: the radar follows it. (A refresh that reselects the same one leaves a step alone.)
+function recFollow(m) {
+  if (!m) { recSelSeen = recSelMs = null; return; }
+  const ms = new Date(m.pos_t || m.t).getTime();
+  if (m.id === recSelSeen) return;
+  recSelSeen = m.id; recSelMs = recAt = ms;
+  if (map.hasLayer(recLayer)) recUpdate();
+}
+document.querySelector('#recprev').onclick = () => { if (recIdx > 0) { recAt = recFrames[recIdx - 1].ms; recUpdate(); } };
+document.querySelector('#recnext').onclick = () => { if (recIdx >= 0 && recIdx < recFrames.length - 1) { recAt = recFrames[recIdx + 1].ms; recUpdate(); } };
+recLayer.on('add', () => {
+  recLoad();
+  recTimer = setInterval(recLoad, REC.refreshMs);
+  try { localStorage.setItem('recradar', '1'); } catch (e) { /* not saved: fine */ }
+});
+recLayer.on('remove', () => {
+  clearInterval(recTimer);
+  recFrameShown = null; recKeys = new Set();
+  $('#recbadge').hidden = true;
+  try { localStorage.setItem('recradar', '0'); } catch (e) { /* not saved: fine */ }
+});
+
 L.control.layers(null, {
   '<span style="font-weight:bold">&#9638;</span> Weather radar': radarLayer,
+  '<span style="font-weight:bold">&#9638;</span> Recorded radar (at the selected time)': recLayer,
   '<span style="font-weight:bold">&#9729;</span> Satellite (IR)': satGroup,
   '<span style="font-weight:bold">&#9671;</span> Waypoints': wptGroup,
   '<span style="color:#e8590c;font-weight:bold">&#8211; &#8211;</span> Predictions': predGroup,
@@ -1877,6 +1982,7 @@ function applyHighlight(pan) {
   drawWaypoints(lastMsgs.find(x => x.id === selectedMsg));         // and the fixes it named
   rows.forEach((el, id) => el.classList.toggle('sel', id === selectedMsg));
   const m = lastMsgs.find(x => x.id === selectedMsg);
+  recFollow(m);
   if (!m) { atisFitFor = null; return; }
   if (m.airports && m.airports.length) drawAtisAirports(m, highlight);   // the airports a D-ATIS message asked about
   else atisFitFor = null;
@@ -2312,6 +2418,7 @@ tick();
 setInterval(tick, 1000);
 
 try { if (localStorage.getItem('radar') === '1') radarLayer.addTo(map); } catch (e) { /* default: off */ }
+try { if (localStorage.getItem('recradar') === '1') recLayer.addTo(map); } catch (e) { /* default: off */ }
 try { if (localStorage.getItem('sat') === '1') satGroup.addTo(map); } catch (e) { /* default: off */ }
 refresh();
 // Every 30 s: update the list and redraw the selected aircraft, leaving the map view,

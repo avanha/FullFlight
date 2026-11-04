@@ -267,8 +267,11 @@ func (r *Recorder) fetchTile(ctx context.Context, host string, f Frame, t Tile) 
 }
 
 // TilePath is where a recorded radar tile's file is.
-func (r *Recorder) TilePath(frame time.Time, t Tile) string {
-	return filepath.Join(r.Dir, SourceRadar, strconv.FormatInt(frame.Unix(), 10), strconv.Itoa(t.Z), strconv.Itoa(t.X), strconv.Itoa(t.Y)+".png")
+func (r *Recorder) TilePath(frame time.Time, t Tile) string { return TilePath(r.Dir, frame, t) }
+
+// TilePath is where a recorded radar tile's file is, in a weather directory.
+func TilePath(dir string, frame time.Time, t Tile) string {
+	return filepath.Join(dir, SourceRadar, strconv.FormatInt(frame.Unix(), 10), strconv.Itoa(t.Z), strconv.Itoa(t.X), strconv.Itoa(t.Y)+".png")
 }
 
 // evict deletes the oldest frames while the tiles weigh more than MaxBytes.

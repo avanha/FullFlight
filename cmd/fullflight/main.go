@@ -200,6 +200,7 @@ func main() {
 		go func() { <-ctx.Done(); api.Backfill.Cancel() }()
 		log.Info("backfill enabled", "cache", cfg.Backfill.CacheDir, "limit_gib", cfg.Backfill.CacheMaxGiB)
 	}
+	api.WeatherDir, api.WeatherRecording = cfg.Weather.Dir, cfg.Weather.Record
 	if cfg.MapTiles.Cache {
 		api.Tiles = &tilecache.Cache{Dir: cfg.MapTiles.Dir, MaxBytes: int64(cfg.MapTiles.MaxMiB) << 20, UserAgent: version.UserAgent(), Referer: version.Repo, Log: log}
 		log.Info("serving OpenStreetMap tiles from a cache", "dir", cfg.MapTiles.Dir, "limit_mib", cfg.MapTiles.MaxMiB)

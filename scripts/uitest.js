@@ -80,12 +80,15 @@ const msgs = [
   {id: 4, t: '2026-10-30T15:30:00Z', kind: 'unknown', summary: 'Undecoded H1', raw: 'r4', label: 'H1', rx_count: 1, undecoded: true},
 ];
 let postReply = null, lastPostBody = null;
+let radarList = {recording: true, zoom: 7, frames: []}, radarListFails = false;   // GET /api/weather/radar
 let putReply = {status: 200, body: {}}, lastPut = null;   // PUT /api/flights/{hex}/route
 const fetchLog = [];
 global.fetch = async (url, opts) => {
   fetchLog.push(url);
   if (opts && opts.method === 'PUT') { lastPut = {url, body: JSON.parse(opts.body)}; return { status: putReply.status, ok: putReply.status < 400, json: async () => putReply.body }; }
   if (opts && opts.method === 'POST') { lastPostBody = JSON.parse(opts.body); return { status: postReply.status, ok: postReply.status < 400, json: async () => postReply.body }; }
+  if (url === '/api/weather/radar') { if (radarListFails) throw new Error('offline'); return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(radarList)) }; }
+  if (/^\/api\/weather\/radar\/\d+\/tiles$/.test(url)) return { status: 200, ok: true, json: async () => ({z: 7, tiles: [[100, 60], [101, 60]]}) };
   const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : url.startsWith('/api/flights') ? flightData.filter(sg => !/hours=96\b/.test(url) || Date.parse(sg.end) >= Date.now() - 96 * 3600e3) : url.startsWith('/api/plan') ? planData : url.startsWith('/api/airports') ? airportData : null;
   return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(body)) };   // a fresh copy each time, like a real response
 };
@@ -101,7 +104,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -265,7 +268,7 @@ highlightGroup = null;
   const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
   // the legend lists all five sources
   assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS', 'ACMF', 'AOC', 'POS', 'POSRPT', 'POSA1', 'SB', 'Airline', 'AeroDataBox']);
-  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Satellite (IR)|Waypoints|Predictions|Planned route|Clearances (oceanic, departure)|Estimated path|Projection|Wind barbs|D-ATIS, METAR and TAF requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
+  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Recorded radar (at the selected time)|Satellite (IR)|Waypoints|Predictions|Planned route|Clearances (oceanic, departure)|Estimated path|Projection|Wind barbs|D-ATIS, METAR and TAF requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
   // each source gets its own colour and style
   for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {
     const r = await lineOf([], [at2(0, 41, -105, kind), at2(10, 41.1, -104, kind), at2(20, 41.2, -103, kind)]);
@@ -1510,6 +1513,53 @@ highlightGroup = null;
     watch.status = 'paused'; await t.refresh();
     assert.strictEqual(pauseBtn().textContent, '\u25b6 Resume');
     watch.status = saved.status; if (saved.hex === undefined) delete watch.hex; else watch.hex = saved.hex; await t.refresh();
+  }
+
+  // ===== 8s3. recorded radar: the frame nearest the selected message, stepped with the arrows ==========
+  {
+    const at = (hh, mm) => new Date(Date.UTC(2026, 9, 30, hh, mm)).toISOString();
+    const frame = (hh, mm) => ({id: Date.UTC(2026, 9, 30, hh, mm) / 1000, time: at(hh, mm), tiles: 2});
+    radarList = {recording: true, zoom: 7, frames: [frame(16, 0), frame(16, 20), frame(16, 40)]};
+    const text = () => document.querySelector('#rectext').textContent, badge = document.querySelector('#recbadge');
+    t.recLayer.onMap = false; await t.recUpdate();
+    assert.strictEqual(badge.hidden, true, 'no badge while the layer is off');
+    t.recLayer.onMap = true;
+    await t.recLoad(); await settle();
+    assert.strictEqual(badge.hidden, false);
+    // a message at 16:25 is nearest the 16:20 frame, which is five minutes before it
+    fetchLog.length = 0;
+    t.recFollow({id: 900, t: at(16, 25)}); await settle();
+    assert.strictEqual(text(), 'Recorded radar \u00b7 16:20Z (5 min before the selected message)');
+    assert.ok(fetchLog.includes(`/api/weather/radar/${frame(16, 20).id}/tiles`), 'the frame\'s recorded tiles are asked for: ' + fetchLog);
+    assert.deepStrictEqual([...t.recKeys].sort(), ['100/60', '101/60'], 'and only those are drawn');
+    // the arrows step through the frames
+    document.querySelector('#recnext').onclick(); await settle();
+    assert.strictEqual(text(), 'Recorded radar \u00b7 16:40Z');
+    assert.strictEqual(document.querySelector('#recnext').disabled, true, 'nothing after the newest');
+    document.querySelector('#recprev').onclick(); document.querySelector('#recprev').onclick(); await settle();
+    assert.strictEqual(text(), 'Recorded radar \u00b7 16:00Z');
+    assert.strictEqual(document.querySelector('#recprev').disabled, true, 'nothing before the oldest');
+    // a refresh that selects the same message leaves the step alone; another message follows its own time
+    t.recFollow({id: 900, t: at(16, 25)}); await settle();
+    assert.strictEqual(text(), 'Recorded radar \u00b7 16:00Z', 'the same selection does not undo a step');
+    t.recFollow({id: 901, t: at(16, 41)}); await settle();
+    assert.strictEqual(text(), 'Recorded radar \u00b7 16:40Z (1 min before the selected message)');
+    // a time with no recording near it says so, and shows no radar
+    t.recFollow({id: 902, t: at(19, 0)}); await settle();
+    assert.strictEqual(text(), 'No radar recorded near 19:00Z (recorded 16:00Z to 16:40Z)');
+    assert.strictEqual(t.recKeys.size, 0, 'the nearest frame is not shown as though it fitted');
+    assert.strictEqual(document.querySelector('#recprev').disabled, false, 'but the arrows lead to it');
+    document.querySelector('#recprev').onclick(); await settle();
+    assert.strictEqual(text(), 'Recorded radar \u00b7 16:20Z');
+    // nothing recorded, with the recorder on and off, and a list that cannot be fetched
+    radarList = {recording: true, zoom: 7, frames: []}; await t.recLoad();
+    assert.strictEqual(text(), 'No radar recorded yet');
+    radarList = {recording: false, zoom: 7, frames: []}; await t.recLoad();
+    assert.match(text(), /weather\.record is off/);
+    radarListFails = true; await t.recLoad(); radarListFails = false;
+    assert.strictEqual(text(), 'Recorded radar unavailable');
+    t.recLayer.onMap = false; await t.recUpdate();
+    assert.strictEqual(badge.hidden, true);
   }
 
   // ===== 8t. notes: an icon on each watch, a side panel behind it ====================================

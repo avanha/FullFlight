@@ -311,8 +311,13 @@ to 50, pink 55 to 60, white 65 and over, so the colour is rain intensity, not te
 
 It is polite: one request at a time with a pause between, our User-Agent, and a refusal (429 or a server error) ends the visit
 and holds off for an hour, remembered across a restart. The index must name a RainViewer host over https. If the app is not
-running for more than two hours the radar for that time is lost. Nothing draws the recorded tiles yet; see
-[the plan](weather-recording-plan.md) for what comes next (showing them, and keeping a filtered copy of the infrared imagery).
+running for more than two hours the radar for that time is lost. The map's legend has a **Recorded radar (at the selected time)** layer that draws them. It shows the frame nearest the
+selected message (or the newest position when none is selected), with a badge saying which frame it is and how many minutes
+from that time; the arrows on the badge step through the recorded frames. It draws only the tiles that were recorded, which is
+the area around the followed aircraft, and leaves the rest blank. When no frame was recorded within 15 minutes of the time
+wanted it says so, and shows nothing, rather than a frame from another time. The server serves the frames
+(`GET /api/weather/radar`, a frame's `.../{frame}/tiles` and `.../{frame}/{z}/{x}/{y}.png`) from the weather directory, whether
+or not recording is on now. See [the plan](weather-recording-plan.md) for what comes next (a filtered copy of the infrared imagery).
 
 ## Storage and purging
 

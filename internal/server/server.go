@@ -43,6 +43,9 @@ type Server struct {
 	StationList StationSource    // airframes.io's list of receiving stations; nil if there is none
 	Tiles       *tilecache.Cache // serves OpenStreetMap tiles from disk; nil sends the browser to OSM itself
 
+	WeatherDir       string // where recorded radar tiles are kept; empty serves none
+	WeatherRecording bool   // the recorder is on
+
 	flightMu    sync.Mutex
 	flightCache map[string]cachedFlights // hex -> its recent flights, worked out once for everything that shows them
 }
@@ -52,6 +55,9 @@ func (s *Server) Handler() http.Handler {
 	sub, _ := fs.Sub(static, "static")
 	mux.Handle("GET /", http.FileServer(http.FS(sub)))
 	mux.HandleFunc("GET /tiles/osm/{z}/{x}/{y}", s.osmTile)
+	mux.HandleFunc("GET /api/weather/radar", s.radarFrames)
+	mux.HandleFunc("GET /api/weather/radar/{frame}/tiles", s.radarFrameTiles)
+	mux.HandleFunc("GET /api/weather/radar/{frame}/{z}/{x}/{y}", s.radarTile)
 	mux.HandleFunc("GET /api/watches", s.listWatches)
 	mux.HandleFunc("POST /api/watches", s.addWatch)
 	mux.HandleFunc("DELETE /api/watches/{id}", s.deleteWatch)
