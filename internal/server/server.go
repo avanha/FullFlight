@@ -111,6 +111,7 @@ func fail(w http.ResponseWriter, code int, msg string) {
 }
 
 type watchJSON struct {
+	Result   string       `json:"result,omitempty"` // only in the answer to adding one: added, existing or reopened
 	ID       int64        `json:"id"`
 	Kind     string       `json:"kind"`
 	Ident    string       `json:"ident"`
@@ -438,12 +439,14 @@ func (s *Server) addWatch(w http.ResponseWriter, r *http.Request) {
 		}
 		e.Dest = a.ICAO
 	}
-	e, err = s.Store.AddWatch(e)
+	e, result, err := s.Store.AddWatchResult(e)
 	if err != nil {
 		fail(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 201, s.withAircraft(toJSON(e)))
+	j := s.withAircraft(toJSON(e))
+	j.Result = result
+	writeJSON(w, 201, j)
 }
 
 // patchWatch pauses or resumes a watch: {"paused": true} stops polling for it while keeping it, and everything

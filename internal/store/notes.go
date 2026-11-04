@@ -204,7 +204,12 @@ func (s *Store) KnownAirframes() ([]KnownAirframe, error) {
 		}
 		return rs.Err()
 	}
-	if err := each(`SELECT hex, COUNT(*) FROM watch WHERE hex != '' AND status IN ('waiting','tracking') GROUP BY hex`,
+	// A tail watch whose address is not yet latched (the next ADS-B poll does it) is the airframe that registration was seen on.
+	// A paused one is not watched: nothing is polled for it, and Watch on the airframes page resumes it.
+	if err := each(`SELECT hex, COUNT(*) FROM (
+			SELECT hex FROM watch WHERE hex != '' AND status IN ('waiting','tracking')
+			UNION ALL SELECT a.hex FROM watch w JOIN airframe a ON a.tail = w.ident WHERE w.kind = 'tail' AND w.hex = '' AND w.status IN ('waiting','tracking'))
+		GROUP BY hex`,
 		func(h string, _ int) { get(h).Watched = true }); err != nil {
 		return nil, err
 	}

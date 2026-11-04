@@ -24,7 +24,8 @@ Type into the web UI (or `POST /api/watches {"input": "...", "until": "<RFC3339>
 
 Watching a tail or a hex again once its watch has run out (done or expired) carries on that same watch for another 36 h
 (or until `until`), whether typed in the box, started from the Airframes screen, or the **Watch again** button a finished tail
-or hex watch shows in the list. An aircraft is listed once, not once for every time it was followed. A flight watch cannot be
+or hex watch shows in the list. An aircraft is listed once, not once for every time it was followed. Adding one that is already being watched says
+"Already watching" under the box, and one that was carried on says "Watching again" (the answer to `POST /api/watches` has a `result` of `added`, `existing` or `reopened`). A flight watch cannot be
 carried on: its window has passed.
 
 Add an optional destination as its 4-letter ICAO code (the 3-letter IATA code is accepted too): `UA869 2026-10-31 KSFO`.

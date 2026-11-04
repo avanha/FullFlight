@@ -1323,3 +1323,57 @@ func TestWatchingATailAgainReopensItsFinishedWatch(t *testing.T) {
 		t.Errorf("%+v", got)
 	}
 }
+
+func TestAnAirframeIsWatchedBeforeItsAddressIsLatched(t *testing.T) {
+	s := open(t)
+	s.RecordAirframe(Airframe{Hex: "780AB8", Tail: "B-LRM"})
+	s.RecordAirframe(Airframe{Hex: "780AA4", Tail: "B-LRD"})
+	s.RecordAirframe(Airframe{Hex: "7C4927", Tail: "VH-OQH"})
+	watched := func() map[string]bool {
+		as, err := s.KnownAirframes()
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := map[string]bool{}
+		for _, a := range as {
+			out[a.Hex] = a.Watched
+		}
+		return out
+	}
+	// a tail typed in the box has no address until the poller finds the aircraft
+	e, _ := watchlist.Parse("B-LRM", now, time.Time{})
+	lrm, _ := s.AddWatch(e)
+	if lrm.Hex != "" || !watched()["780AB8"] {
+		t.Errorf("a new tail watch with no address yet: %+v, watched %v", lrm, watched())
+	}
+	// paused does not (nothing is polled; Watch resumes it), finished does not, and neither does a different aircraft
+	d, _ := watchlist.Parse("hex:780AA4", now, time.Time{})
+	lrd, _ := s.AddWatch(d)
+	lrd.Status = watchlist.StatusPaused
+	s.UpdateWatch(lrd)
+	if watched()["780AA4"] {
+		t.Error("a paused watch counts as watched")
+	}
+	lrm.Status = watchlist.StatusDone
+	s.UpdateWatch(lrm)
+	if w := watched(); w["780AB8"] || w["7C4927"] {
+		t.Errorf("finished or unwatched shown as watched: %v", w)
+	}
+}
+
+func TestAddWatchSaysWhatItDid(t *testing.T) {
+	s := open(t)
+	e, _ := watchlist.Parse("B-LRM", now, time.Time{})
+	a, how, err := s.AddWatchResult(e)
+	if err != nil || how != WatchAdded {
+		t.Fatalf("%q %v", how, err)
+	}
+	if b, how, _ := s.AddWatchResult(e); how != WatchExisting || b.ID != a.ID {
+		t.Errorf("again: %q", how)
+	}
+	a.Status = watchlist.StatusDone
+	s.UpdateWatch(a)
+	if b, how, _ := s.AddWatchResult(e); how != WatchReopened || b.ID != a.ID {
+		t.Errorf("after it ran out: %q", how)
+	}
+}

@@ -1468,6 +1468,11 @@ highlightGroup = null;
   assert.strictEqual(sub.note, 'Watching CK624 as a registration. For a callsign, enter flight:CK624.', 'the way out is stated');
   sub = await submit('AEE123', {status: 201, body: {id: 8, kind: 'hex', ident: 'AEE123', status: 'tracking', start: '2026-10-30T17:00:00Z', end: '2026-11-01T05:00:00Z'}});
   assert.strictEqual(sub.note, 'Watching AEE123 as an ICAO hex address. For a callsign, enter flight:AEE123.');
+  // adding what is already watched, or what had run out, says so
+  sub = await submit('B-LRM', {status: 201, body: {id: 1, kind: 'tail', ident: 'B-LRM', status: 'tracking', result: 'existing', start: '2026-10-30T17:00:00Z', end: '2026-11-01T05:00:00Z'}});
+  assert.strictEqual(sub.note, 'Already watching B-LRM.');
+  sub = await submit('B-LRM', {status: 201, body: {id: 1, kind: 'tail', ident: 'B-LRM', status: 'tracking', result: 'reopened', start: '2026-10-30T17:00:00Z', end: '2026-11-01T05:00:00Z'}});
+  assert.strictEqual(sub.note, 'Watching B-LRM again.');
   sub = await submit('UA869 2026-11-05', {status: 201, body: {id: 9, kind: 'flight', ident: 'UA869', date: '2026-11-05', status: 'waiting', start: '2026-10-30T17:00:00Z', end: '2026-11-01T05:00:00Z'}});
   assert.strictEqual(sub.note, 'Watching UA869 on 2026-11-05 as a flight number.');
   // a refusal shows the reason and no note

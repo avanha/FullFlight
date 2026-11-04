@@ -1992,6 +1992,8 @@ function renderMessages(msgs) {
 
 // Say how a new watch was read, and how to say otherwise.
 function readAs(w, typed) {
+  if (w.result === 'existing') return `Already watching ${w.ident}.`;   // nothing new was added
+  if (w.result === 'reopened') return `Watching ${w.ident} again.`;
   const explicit = /^\s*[a-z]+:/i.test(typed);
   const hint = explicit ? '' : kind => ` For ${kind}, enter ${kind === 'a registration' ? 'tail' : kind === 'a callsign' ? 'flight' : 'hex'}:${w.ident}.`;
   if (w.kind === 'flight') return w.date ? `Watching ${w.ident} on ${w.date} as a flight number.` : `Watching ${w.ident} as a callsign.${explicit ? '' : hint('a registration')}`;

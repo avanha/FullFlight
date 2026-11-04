@@ -358,6 +358,23 @@ func ts(t time.Time) int64 { return t.Unix() }
 // watching the same flight again starts a new one. A tail and a hex that are the same aircraft count as the same
 // watch (see sameAircraftWatch).
 func (s *Store) AddWatch(e watchlist.Entry) (watchlist.Entry, error) {
+	e, _, err := s.AddWatchResult(e)
+	return e, err
+}
+
+// What AddWatchResult did.
+const (
+	WatchAdded    = "added"    // a new watch
+	WatchExisting = "existing" // the aircraft or flight was already being watched
+	WatchReopened = "reopened" // a watch that had run out carries on
+)
+
+// AddWatchResult is AddWatch, saying which of the three it did.
+func (s *Store) AddWatchResult(e watchlist.Entry) (watchlist.Entry, string, error) {
+	got := func(id int64, how string) (watchlist.Entry, string, error) {
+		w, err := scanWatch(s.db.QueryRow(watchSelect+` WHERE id=?`, id))
+		return w, how, err
+	}
 	var id int64
 	err := s.db.QueryRow(`SELECT id FROM watch WHERE kind=? AND ident=? AND date=? AND status IN ('waiting','tracking','paused')
 		ORDER BY id DESC LIMIT 1`, e.Kind, e.Ident, e.Date).Scan(&id)
@@ -369,12 +386,12 @@ func (s *Store) AddWatch(e watchlist.Entry) (watchlist.Entry, error) {
 		if _, err := s.db.Exec(`UPDATE watch SET dest = CASE WHEN ? != '' THEN ? ELSE dest END, end_ts = MAX(end_ts, ?),
 			status = CASE WHEN status='paused' THEN (CASE WHEN hex != '' THEN 'tracking' ELSE 'waiting' END) ELSE status END WHERE id=?`,
 			e.Dest, e.Dest, ts(e.End), id); err != nil {
-			return e, err
+			return e, "", err
 		}
-		return scanWatch(s.db.QueryRow(watchSelect+` WHERE id=?`, id))
+		return got(id, WatchExisting)
 	}
 	if err != sql.ErrNoRows {
-		return e, err
+		return e, "", err
 	}
 	// Watching a tail or an address again, once its watch has run out, carries on that watch: one row per aircraft, not a
 	// new one beside the old. (Only an open watch does: adding an entry that is itself finished is just a record.)
@@ -382,21 +399,21 @@ func (s *Store) AddWatch(e watchlist.Entry) (watchlist.Entry, error) {
 		id, err := s.finishedWatchOfSameAircraft(e)
 		if err == nil {
 			if _, err := s.db.Exec(`UPDATE watch SET status='tracking', start_ts=?, end_ts=?, airborne=0, landed_ts=0 WHERE id=?`, ts(e.Start), ts(e.End), id); err != nil {
-				return e, err
+				return e, "", err
 			}
-			return scanWatch(s.db.QueryRow(watchSelect+` WHERE id=?`, id))
+			return got(id, WatchReopened)
 		} else if err != sql.ErrNoRows {
-			return e, err
+			return e, "", err
 		}
 	}
 	res, err := s.db.Exec(`INSERT INTO watch (kind, ident, date, start_ts, end_ts, status, hex, tail, callsign, dest)
 		VALUES (?,?,?,?,?,?,?,?,?,?)`,
 		e.Kind, e.Ident, e.Date, ts(e.Start), ts(e.End), e.Status, e.Hex, e.Tail, e.Callsign, e.Dest)
 	if err != nil {
-		return e, err
+		return e, "", err
 	}
 	id, _ = res.LastInsertId()
-	return scanWatch(s.db.QueryRow(watchSelect+` WHERE id=?`, id))
+	return got(id, WatchAdded)
 }
 
 // sameAircraftWatch finds an open tail or hex watch on the same aircraft as e, which is a tail or hex

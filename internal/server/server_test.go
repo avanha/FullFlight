@@ -2004,3 +2004,23 @@ func TestStationsRefreshProblems(t *testing.T) {
 		t.Error("a failed fetch was noted as done")
 	}
 }
+
+func TestAddingAWatchSaysWhatHappened(t *testing.T) {
+	ts := setup(t, "")
+	add := func() map[string]any {
+		resp, err := http.Post(ts.URL+"/api/watches", "application/json", strings.NewReader(`{"input":"B-LRM"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var out map[string]any
+		json.NewDecoder(resp.Body).Decode(&out)
+		return out
+	}
+	if r := add(); r["result"] != "added" {
+		t.Errorf("first: %v", r)
+	}
+	if r := add(); r["result"] != "existing" {
+		t.Errorf("second: %v", r)
+	}
+}
