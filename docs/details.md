@@ -317,8 +317,8 @@ It is polite: one request at a time with a pause between, our User-Agent, and a 
 and holds off for an hour, remembered across a restart. The index must name a RainViewer host over https. If the app is not
 running for more than two hours the radar for that time is lost. The map's legend has a **Recorded radar (at the selected time)** layer that draws them. It shows the frame nearest the
 selected message (or the newest position when none is selected), with a badge saying which frame it is and how many minutes
-from that time; the arrows on the badge step through the recorded frames. It draws only the tiles that were recorded, which is
-the area around the followed aircraft, and leaves the rest blank. When no frame was recorded within 15 minutes of the time
+from that time; the arrows on the badge step through the recorded frames, and clicking one of the small ADS-B dots on the track (the ones that show a tooltip) draws the radar for that dot's time and rings the dot, so an ADS-B-only flight can be walked along its track. It draws only the tiles that were recorded, which is
+the area around the followed aircraft, and leaves the rest blank (where there was no position for more than an hour, none was recorded: nothing says where the aircraft was). When no frame was recorded within 15 minutes of the time
 wanted it says so, and shows nothing, rather than a frame from another time. The server serves the frames
 (`GET /api/weather/radar`, a frame's `.../{frame}/tiles` and `.../{frame}/{z}/{x}/{y}.png`) from the weather directory, whether
 or not recording is on now. See [the plan](weather-recording-plan.md) for what comes next (a filtered copy of the infrared imagery).
@@ -826,7 +826,7 @@ position when none is selected) instead of the newest. Nothing is recorded for i
 days (a frame of 2026-08-06 was there on 2026-11-03 and one of 2026-08-03 was not), so the page asks GIBS for the old frame
 directly, as the live layer does for the new one, with the same satellites, hole filling and 55% opacity. The frame is the
 ten-minute one at or before the time, and never one of the newest half hour, which is not yet there. A badge says which frame,
-with the date when it is not today's, and how many minutes it is from the time wanted; its arrows step ten minutes. The radar
+with the date when it is not today's, and how many minutes it is from the time wanted; its arrows step ten minutes, and clicking an ADS-B dot sets the time to that dot's. The radar
 layer follows the same time, so stepping either moves both. For a time older than the archive (88 days, a little inside what was
 found) it says so and draws nothing. Frames older than that are lost unless they were kept, which is what the plan's filtered
 copy would do ([the plan](weather-recording-plan.md)).

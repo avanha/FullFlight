@@ -466,7 +466,7 @@ satGroup.on('remove', () => {
 // message, or of the newest position when none is selected, and stepped frame by frame with the arrows. It exists only where
 // an aircraft was, so a tile that was not recorded is left blank, never filled from another frame.
 const REC = {listUrl: '/api/weather/radar', refreshMs: 5 * 60000, fitMin: 15, zoom: 7};
-let recFrames = [], recRecording = false, recFailed = false, recIdx = -1, recKeys = new Set(), recFrameShown = null, recAt = null, recSelSeen = null, recSelMs = null, recTimer = null, recSeq = 0;
+let recFrames = [], recRecording = false, recFailed = false, recIdx = -1, recKeys = new Set(), recFrameShown = null, recAt = null, recAtWhat = null, recSelSeen = null, recSelMs = null, recTimer = null, recSeq = 0;
 const RecordedTiles = L.TileLayer.extend({
   createTile(coords, done) {
     if (!this.options.has(coords)) {   // nothing was recorded here in this frame
@@ -488,7 +488,7 @@ function recNearest(frames, ms) {
 }
 // The time the radar is wanted for: a step with the arrows, the selected message, or else the newest position.
 function recTarget() {
-  if (recAt != null) return {ms: recAt, what: recAt === recSelMs ? 'the selected message' : 'this frame'};
+  if (recAt != null) return {ms: recAt, what: recAt === recSelMs ? 'the selected message' : recAtWhat || 'this frame'};
   const f = latestFix(lastTrack.pts, lastTrack.msgs);
   return f ? {ms: f.t, what: 'the newest position'} : {ms: Date.now(), what: 'now'};
 }
@@ -546,17 +546,19 @@ function recFollow(m) {
   if (!m) { recSelSeen = recSelMs = null; return; }
   const ms = new Date(m.pos_t || m.t).getTime();
   if (m.id === recSelSeen) return;
-  recSelSeen = m.id; recSelMs = recAt = ms;
+  recSelSeen = m.id; recSelMs = recAt = ms; recAtWhat = null;
+  cursorGroup.clearLayers();
   viewTimeChanged();
 }
-document.querySelector('#recprev').onclick = () => { if (recIdx > 0) { recAt = recFrames[recIdx - 1].ms; viewTimeChanged(); } };
-document.querySelector('#recnext').onclick = () => { if (recIdx >= 0 && recIdx < recFrames.length - 1) { recAt = recFrames[recIdx + 1].ms; viewTimeChanged(); } };
+document.querySelector('#recprev').onclick = () => { if (recIdx > 0) { recAt = recFrames[recIdx - 1].ms; recAtWhat = null; cursorGroup.clearLayers(); viewTimeChanged(); } };
+document.querySelector('#recnext').onclick = () => { if (recIdx >= 0 && recIdx < recFrames.length - 1) { recAt = recFrames[recIdx + 1].ms; recAtWhat = null; cursorGroup.clearLayers(); viewTimeChanged(); } };
 recLayer.on('add', () => {
   recLoad();
   recTimer = setInterval(recLoad, REC.refreshMs);
   try { localStorage.setItem('recradar', '1'); } catch (e) { /* not saved: fine */ }
 });
 recLayer.on('remove', () => {
+  if (!map.hasLayer(satAtGroup)) cursorGroup.clearLayers();
   clearInterval(recTimer);
   recFrameShown = null; recKeys = new Set();
   $('#recbadge').hidden = true;
@@ -593,15 +595,27 @@ function satAtUpdate() {
   }
   document.querySelector('#satatnext').disabled = ms + step > now - SAT.startBackMin * 60000;
 }
+// A position on the track was clicked (an ADS-B dot): the radar and the satellite are drawn for its time, and a ring marks where
+// the aircraft was then, so it is plain which moment the weather belongs to.
+const cursorGroup = L.layerGroup().addTo(map);
+function setViewTime(ms, what, at) {
+  recAt = ms; recAtWhat = what;
+  cursorGroup.clearLayers();
+  if (at && (map.hasLayer(recLayer) || map.hasLayer(satAtGroup))) {
+    L.circleMarker(ll(at.lat, at.lon), {radius: 9, color: '#0a58ca', weight: 2, fillColor: '#ffd43b', fillOpacity: .35, interactive: false}).addTo(cursorGroup);
+  }
+  viewTimeChanged();
+}
 // The selection, or a step, moved the time that the radar and the satellite are drawn for.
 function viewTimeChanged() { if (map.hasLayer(recLayer)) recUpdate(); satAtUpdate(); }
-document.querySelector('#satatprev').onclick = () => { if (satAtMs != null) { recAt = satAtMs - SAT.stepMin * 60000; viewTimeChanged(); } };
-document.querySelector('#satatnext').onclick = () => { if (satAtMs != null) { recAt = satAtMs + SAT.stepMin * 60000; viewTimeChanged(); } };
+document.querySelector('#satatprev').onclick = () => { if (satAtMs != null) { recAt = satAtMs - SAT.stepMin * 60000; recAtWhat = null; cursorGroup.clearLayers(); viewTimeChanged(); } };
+document.querySelector('#satatnext').onclick = () => { if (satAtMs != null) { recAt = satAtMs + SAT.stepMin * 60000; recAtWhat = null; cursorGroup.clearLayers(); viewTimeChanged(); } };
 satAtGroup.on('add', () => {
   satAtMs = null; satAtUpdate();
   try { localStorage.setItem('satat', '1'); } catch (e) { /* not saved: fine */ }
 });
 satAtGroup.on('remove', () => {
+  if (!map.hasLayer(recLayer)) cursorGroup.clearLayers();
   satAtMs = null;
   SAT.birds.forEach(b => { b.atTiles.frameMs = null; });
   $('#satatbadge').hidden = true;
@@ -1960,7 +1974,7 @@ async function showTrack(w, focus) {
     for (const p of thinPoints(group)) {
       const faded = isOlder(Date.parse(p.t));
       L.circleMarker(ll(p.lat, p.lon), {radius: 3, weight: 1, color: SOURCES[key].color, fillColor: '#fff', opacity: faded ? .4 : 1, fillOpacity: faded ? .4 : .9})
-        .addTo(SOURCES[key].group).bindTooltip(pointTip(p));
+        .addTo(SOURCES[key].group).bindTooltip(pointTip(p)).on('click', () => setViewTime(Date.parse(p.t), 'the clicked position', p));
     }
   }
 

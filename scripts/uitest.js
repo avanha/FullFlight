@@ -54,7 +54,7 @@ const mapObj = { on(ev, fn) { mapHandlers[ev] = fn; return this; }, off() { retu
   getBounds: () => ({ pad: () => ({ contains: ll => !(ll[0] > 50) }) }) };   // "in view" unless lat > 50
 const L = {
   map: () => mapObj, tileLayer: () => ({ addTo() { return this; }, on() { return this; }, setUrl() { return this; } }),
-  TileLayer: { extend: () => function () { return { addTo() { return this; }, on() { return this; }, setUrl() { return this; }, redraw() { return this; } }; } },
+  TileLayer: { extend: () => function () { return { addTo() { return this; }, on(ev, fn) { (this.handlers ||= {})[ev] = fn; return this; }, setUrl() { return this; }, redraw() { return this; } }; } },
   layerGroup() { const g = new Layer(); g.clearLayers = () => { g.items = []; }; g.removeLayer = l => { g.items = g.items.filter(x => x !== l); }; groups.push(g); return g; },
   polyline(ll, o) { calls.polylines++; const l = new Layer(); l.ll = ll; l.o = o; calls.lines.push(l); return l; },
   control: Object.assign(opts => ({ addTo() { calls.bars.push(this.onAdd()); return this; } }), { layers: (base, overlays) => ({ addTo() { if (!calls.legend) calls.legend = overlays; else calls.legendExtra = overlays; return this; } })  }),
@@ -93,7 +93,7 @@ global.fetch = async (url, opts) => {
   return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(body)) };   // a fresh copy each time, like a real response
 };
 let intervals = [];
-const ctx = { document, L, fetch, console, Date, Number, Math, Set, Map, setInterval: (f, ms) => intervals.push([f, ms]), FormData: class { constructor(form) { this.v = (form && form.values) || {}; } get(k) { return this.v[k] ?? ''; } },
+const ctx = { document, L, fetch, console, Date, Number, Math, Set, Map, setInterval: (f, ms) => intervals.push([f, ms]), clearInterval: () => {}, FormData: class { constructor(form) { this.v = (form && form.values) || {}; } get(k) { return this.v[k] ?? ''; } },
   setTimeout: f => { calls.timers.push(f); }, clearTimeout: () => {}, window: {isSecureContext: true},
   mountNotes: (container, hex, opts) => { calls.mounted.push({container, hex, opts}); },
   localStorage: {getItem: k => (k in storage ? storage[k] : null), setItem: (k, v) => { storage[k] = String(v); }},
@@ -104,7 +104,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {clearGrey, satAtGroup, satAtUpdate, SAT, recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {cursorGroup, clearGrey, satAtGroup, satAtUpdate, SAT, recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -1545,6 +1545,42 @@ highlightGroup = null;
     assert.strictEqual(storage.legendHidden, '0');
   }
 
+  // ===== 8s2c. clicking an ADS-B dot sets the time the radar and the satellite are drawn for ==========
+  {
+    const frame = (hh, mm) => ({id: Date.UTC(2026, 9, 30, hh, mm) / 1000, time: new Date(Date.UTC(2026, 9, 30, hh, mm)).toISOString(), tiles: 2});
+    radarList = {recording: true, zoom: 7, frames: [frame(16, 0), frame(16, 20), frame(16, 40)]};
+    const dots = (await draw([apt(5, 118), apt(25, 120), apt(45, 122)], [], false)).circles.filter(c => c.o && c.o.radius === 3);
+    assert.strictEqual(dots.length, 3, 'the dots are drawn');
+    assert.strictEqual(typeof dots[1].handlers.click, 'function', 'and can be clicked');
+    const text = () => document.querySelector('#rectext').textContent;
+    // with no weather layer on, the click only sets the time: nothing is drawn for it
+    t.recLayer.onMap = false; t.satAtGroup.onMap = false;
+    dots[1].handlers.click();
+    assert.strictEqual(t.recAt, Date.UTC(2026, 9, 30, 16, 25));
+    assert.strictEqual(t.cursorGroup.items.length, 0, 'no ring while there is no weather to match it to');
+    // with one on, the radar follows and a ring marks where the aircraft was
+    t.recLayer.onMap = true;
+    await t.recLoad(); await settle();
+    dots[2].handlers.click(); await settle();
+    assert.strictEqual(text(), 'Recorded radar \u00b7 10-30 16:40Z (5 min before the clicked position)');
+    assert.strictEqual(t.cursorGroup.items.length, 1, 'a ring at the dot');
+    assert.ok(t.cursorGroup.items[0].ll[0] === 10 && (t.cursorGroup.items[0].ll[1] - 122) % 360 === 0, 'at the dot (a longitude may be drawn a world over): ' + t.cursorGroup.items[0].ll);
+    dots[1].handlers.click(); await settle();
+    assert.strictEqual(t.cursorGroup.items.length, 1, 'one ring, moved');
+    assert.ok(t.cursorGroup.items[0].ll[0] === 10 && (t.cursorGroup.items[0].ll[1] - 120) % 360 === 0, 'moved to the other dot: ' + t.cursorGroup.items[0].ll);
+    // selecting a message, or stepping with the arrows, ends it
+    document.querySelector('#recnext').onclick(); await settle();
+    assert.strictEqual(t.cursorGroup.items.length, 0, 'a step leaves the dot');
+    dots[1].handlers.click(); await settle();
+    t.recFollow({id: 960, t: new Date(Date.UTC(2026, 9, 30, 16, 45)).toISOString()}); await settle();
+    assert.strictEqual(t.cursorGroup.items.length, 0, 'and so does choosing a message');
+    assert.match(text(), /the selected message/);
+    // switching the weather off takes the ring with it
+    dots[1].handlers.click(); await settle();
+    t.recLayer.onMap = false; t.recLayer.handlers.remove();
+    assert.strictEqual(t.cursorGroup.items.length, 0);
+  }
+
   // ===== 8s2b. the infrared is drawn without its grey ===========================================
   {
     // pixels as red, green, blue, alpha: a grey of any shade, a near grey from resampling, light blue, yellow, red, and one already clear
@@ -1567,10 +1603,10 @@ highlightGroup = null;
     t.recLayer.onMap = false; await t.recUpdate();
     assert.strictEqual(badge.hidden, true, 'no badge while the layer is off');
     t.recLayer.onMap = true;
+    fetchLog.length = 0;
     await t.recLoad(); await settle();
     assert.strictEqual(badge.hidden, false);
     // a message at 16:25 is nearest the 16:20 frame, which is five minutes before it
-    fetchLog.length = 0;
     t.recFollow({id: 900, t: at(16, 25)}); await settle();
     assert.strictEqual(text(), 'Recorded radar \u00b7 10-30 16:20Z (5 min before the selected message)');
     assert.ok(fetchLog.includes(`/api/weather/radar/${frame(16, 20).id}/tiles`), 'the frame\'s recorded tiles are asked for: ' + fetchLog);
