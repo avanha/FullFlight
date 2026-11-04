@@ -1210,10 +1210,19 @@ function drawGhost(m, pan) {
 // The plan an aircraft sent for the flight being shown: the newest one that arrived within half a day
 // before the flight began and before it ended (plans go out at the gate), or, with no flight chosen, in
 // the last two days. Plans arrive oldest first.
+// A plan names its flight (UAL599). One filed for another flight number is not this flight's, however near its time: an aircraft's
+// next flight is often filed while it is still on the last, and a flight with no message of its own would otherwise be drawn
+// along the neighbour's route. The numbers are compared (UA1887 and UAL1887 are the same flight); a plan or a flight with no
+// number to compare is taken as fitting.
+const flightNumber = s => { const m = /(\d{1,4}[A-Z]?)$/.exec(String(s || '').toUpperCase()); return m ? m[1].replace(/^0+/, '') : ''; };
+const planIsForFlight = (p, chosen) => {
+  const a = chosen && flightNumber(chosen.flight), b = flightNumber(p.callsign);
+  return !a || !b || a === b;
+};
 function choosePlan(plans, chosen, nowMs = Date.now()) {
   const lo = chosen ? chosen.startMs - 12 * 3600000 : nowMs - 48 * 3600000;
   const hi = chosen ? chosen.endMs + FLIGHT_TOL : nowMs + 5 * 60000;
-  const ok = (plans || []).filter(p => { const t = Date.parse(p.t); return !isClearance(p) && t >= lo && t <= hi && p.points && p.points.length >= 2; });
+  const ok = (plans || []).filter(p => { const t = Date.parse(p.t); return !isClearance(p) && t >= lo && t <= hi && p.points && p.points.length >= 2 && planIsForFlight(p, chosen); });
   return ok.length ? ok[ok.length - 1] : null;
 }
 

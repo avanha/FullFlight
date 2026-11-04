@@ -695,6 +695,20 @@ highlightGroup = null;
     assert.strictEqual(t.choosePlan(plans, {startMs: NOW - 70 * 3600000, endMs: NOW - 50 * 3600000}, NOW).id, 1);
     assert.strictEqual(t.choosePlan(plans.slice(0, 1), null, NOW), null, 'a plan from two and a half days ago is not this flight');
     assert.strictEqual(t.choosePlan([], null, NOW), null);
+    // a plan filed for another flight number is not this flight's (UA1887 was drawn along UA599's route, filed eight hours before it began)
+    {
+      const pt = [{lat: 38.9, lon: -77.4, name: 'KIAD', kind: 'airport'}, {lat: 39.9, lon: -104.7, name: 'KDEN', kind: 'airport'}];
+      const other = {id: 9, t: new Date(NOW - 8.5 * 3600000).toISOString(), callsign: 'UAL599', from: 'KIAD', to: 'KDEN', points: pt};
+      const flight = (f, start = NOW - 30 * 60000) => ({flight: f, startMs: start, endMs: NOW});
+      assert.strictEqual(t.choosePlan([other], flight('UA1887'), NOW), null, 'another flight number: no plan');
+      assert.strictEqual(t.choosePlan([other], flight('UA599', NOW - 8 * 3600000), NOW).id, 9, 'its own flight');
+      assert.strictEqual(t.choosePlan([other], flight('UAL0599', NOW - 8 * 3600000), NOW).id, 9, 'the ICAO form, with a leading zero');
+      assert.strictEqual(t.choosePlan([other], flight(''), NOW).id, 9, 'a flight with no number takes what fits in time');
+      assert.strictEqual(t.choosePlan([{...other, callsign: ''}], flight('UA1887'), NOW).id, 9, 'a plan with no callsign cannot be told apart');
+      const mine = {...other, id: 10, callsign: 'UAL1887', t: new Date(NOW - 20 * 60000).toISOString()};
+      assert.strictEqual(t.choosePlan([other, mine], flight('UA1887'), NOW).id, 10, 'its own plan, newer');
+      assert.strictEqual(t.choosePlan([mine, other], flight('UA1887'), NOW).id, 10, 'and the neighbour\'s, though it arrived later, is passed over');
+    }
   }
   {
     // drawn as a dashed line with a marker at each point, and cleared when there is no plan

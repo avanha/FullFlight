@@ -785,6 +785,12 @@ was filed); the legend switches it off. The projection follows it: an aircraft w
 it (70 degrees) is projected along the legs, turning where they turn, and stops at the destination; otherwise the straight-line
 projection is used. The plan is as filed, not as flown.
 
+Which plan is the flight's: the newest that arrived from 12 hours before the flight began until it ended (plans go out at the gate),
+and whose callsign is the flight's own number (UAL1887 and UA1887 are the same flight; leading zeros do not count). A plan filed for
+another number is passed over however near its time, since an aircraft's next flight is often filed while it is still on the last:
+UA1887, with no message of its own, was drawn along UAL599's KIAD to KDEN plan from the evening before. A flight with no number, or a
+plan with no callsign, is matched on time alone.
+
 ## Weather radar
 
 "Weather radar" in the map legend (first entry, off until you tick it, and remembered) lays [RainViewer](https://www.rainviewer.com)'s
