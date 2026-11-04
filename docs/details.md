@@ -250,9 +250,13 @@ position wins; a missing callsign, registration or type is filled in from the ot
 another answers. To share the load, the sources take turns at being asked first (`adsb.spread`, on by default). `airplanes.live`,
 which needs its operators' permission, is never in the rotation and is asked only after the others.
 
-The feeds rate-limit, so we go gently: at most about one request a second to each source; an aircraft not heard from for 5
-minutes is polled every 3 minutes instead of every 45 s; a source that answers 401/403 is left alone for an hour, 429 for 30 s or
-its `Retry-After`. Each pause is logged once with the HTTP status.
+The feeds rate-limit, so we go gently: requests to a source are at least 1.25 s apart (adsb.fi allows one a second; the rest is margin for network jitter); an aircraft not heard from for 5
+minutes is polled every 3 minutes instead of every 45 s; a source that answers 401/403 is left alone for an hour. A 429 is 30 s,
+doubled for each 429 in a row (30 s, 1 min, 2 min ... up to an hour) until it answers again, or the `Retry-After` it gives when that is longer
+(honoured in full up to 7 days: adsb.lol's keys have day, week and month allowances and say when each lifts), and an hour at once when
+its message names a daily limit (adsb.lol's `rate limit exceeded: 1d requests window`, which an API key's used-up allowance gives).
+Each pause is logged once with the HTTP status; the others carry the load meanwhile, so a source that is out for a day is asked a
+few dozen times, not thousands. The pause is kept in memory, so a restart asks once more.
 
 If you have an adsb.lol API key (from adsb.lol, for feeders or on request), put it in `config.yaml` as `adsb.lol_api_key` and every
 request to adsb.lol carries it in the `X-API-Key` header, as in the example adsb.lol gives with a key. It answers without a key today. The key goes to adsb.lol only, and is dropped if a request is redirected to another host. A

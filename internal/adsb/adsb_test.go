@@ -236,7 +236,9 @@ func TestRefusedSourceIsPaused(t *testing.T) {
 		retryAfter string
 		pause      time.Duration
 	}{
-		{403, "", time.Hour}, {401, "", time.Hour}, {429, "", 30 * time.Second}, {429, "1200", 20 * time.Minute}, {429, "99999", time.Hour},
+		{403, "", time.Hour}, {401, "", time.Hour}, {429, "", 30 * time.Second}, {429, "1200", 20 * time.Minute},
+		{429, "99999", 99999 * time.Second},   // a day-long window: the whole wait, not an hour of it
+		{429, "99999999", 7 * 24 * time.Hour}, // but not for ever
 	} {
 		var refused, answered int
 		bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -395,5 +397,73 @@ func TestUserAgent(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "FullFlight/") || !strings.Contains(got, "github.com/avanha/FullFlight") {
 		t.Errorf("User-Agent = %q", got)
+	}
+}
+
+func TestRepeated429sBackOffLongerAndADailyLimitWaitsAnHour(t *testing.T) {
+	var asked int
+	status, body := 429, ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked++
+		w.WriteHeader(status)
+		w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	clock := time.Date(2026, 11, 4, 8, 0, 0, 0, time.UTC)
+	c := NewClient(Source{Name: "limited", BaseURL: srv.URL, RegPath: "reg"})
+	c.MinSpacing = time.Millisecond
+	c.Now = func() time.Time { return clock }
+	ask := func() { c.Reg(context.Background(), "JA826J") }
+
+	// each 429 in a row doubles the pause: 30 s, 1 min, 2 min, 4 min ... up to an hour
+	want := []time.Duration{30 * time.Second, time.Minute, 2 * time.Minute, 4 * time.Minute, 8 * time.Minute, 16 * time.Minute, 32 * time.Minute, time.Hour, time.Hour}
+	for i, pause := range want {
+		before := asked
+		ask()
+		if asked != before+1 {
+			t.Fatalf("429 %d: not asked", i+1)
+		}
+		clock = clock.Add(pause - time.Second)
+		ask()
+		if asked != before+1 {
+			t.Fatalf("429 %d: asked again before %v was over", i+1, pause)
+		}
+		clock = clock.Add(2 * time.Second)
+	}
+
+	// an answer ends the run: the next 429 starts at 30 s again
+	status = 200
+	body = `{"ac":[],"msg":"No error"}`
+	ask()
+	status, body = 429, ""
+	before := asked
+	ask()
+	clock = clock.Add(31 * time.Second)
+	ask()
+	if asked != before+2 {
+		t.Errorf("after an answer the 429 pause did not start over: %d requests", asked-before)
+	}
+
+	// a limit over a whole day is not tried again for an hour, at the first 429
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked++
+		w.WriteHeader(429)
+		w.Write([]byte("rate limit exceeded: 1d requests window\n"))
+	}))
+	defer srv2.Close()
+	d := NewClient(Source{Name: "daily", BaseURL: srv2.URL, RegPath: "reg"})
+	d.MinSpacing = time.Millisecond
+	d.Now = func() time.Time { return clock }
+	before = asked
+	d.Reg(context.Background(), "JA826J")
+	clock = clock.Add(59 * time.Minute)
+	d.Reg(context.Background(), "JA826J")
+	if asked != before+1 {
+		t.Errorf("a daily limit was asked about again inside the hour: %d requests", asked-before)
+	}
+	clock = clock.Add(2 * time.Minute)
+	d.Reg(context.Background(), "JA826J")
+	if asked != before+2 {
+		t.Errorf("not asked again after the hour: %d", asked-before)
 	}
 }

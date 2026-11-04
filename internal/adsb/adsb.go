@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -45,7 +46,10 @@ var (
 // A source that refuses us is left alone for a while rather than asked again with every poll.
 const (
 	refusedFor = time.Hour        // HTTP 401 or 403: we are not allowed
-	tooManyFor = 30 * time.Second // HTTP 429: slow down (a longer Retry-After is honoured, up to refusedFor)
+	tooManyFor = 30 * time.Second // HTTP 429: slow down; doubled for each 429 in a row, up to refusedFor
+	// maxRetryAfter is the longest a 429's Retry-After is honoured. adsb.lol's keys have day, week and month allowances and say
+	// when each lifts, and asking again sooner is a further rate-limit hit, which it says can lose the key.
+	maxRetryAfter = 7 * 24 * time.Hour
 )
 
 // Aircraft is one entry of the "ac" array. Only fields we use are mapped.
@@ -118,7 +122,7 @@ type response struct {
 type Client struct {
 	Sources    []Source
 	HTTP       *http.Client
-	MinSpacing time.Duration // between requests to the same source; default 1.1s
+	MinSpacing time.Duration // between requests to the same source; default 1.25s, a little over the second adsb.fi allows
 	UserAgent  string
 	// Spread rotates which source is asked first, one query after another, instead of always starting with the
 	// first in the list: each carries a share of the load, and the others still back it up. Sources marked
@@ -133,6 +137,7 @@ type Client struct {
 	mu      sync.Mutex
 	next    map[string]time.Time
 	blocked map[string]pause // source name -> why and until when
+	strikes map[string]int   // source name -> 429s in a row, which lengthen the pause
 }
 
 type pause struct {
@@ -333,9 +338,13 @@ func (c *Client) get(ctx context.Context, s Source, path string) ([]Aircraft, er
 		case http.StatusUnauthorized, http.StatusForbidden:
 			c.block(s.Name, resp.StatusCode, refusedFor)
 		case http.StatusTooManyRequests:
-			d := tooManyFor
+			d := c.backoff(s.Name)
 			if n, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && n > 0 {
-				d = min(max(time.Duration(n)*time.Second, d), refusedFor)
+				d = min(max(time.Duration(n)*time.Second, d), maxRetryAfter)
+			}
+			// a limit over a whole day (a key's allowance used up) will not lift in half a minute: no point asking again soon
+			if body, _ := io.ReadAll(io.LimitReader(resp.Body, 512)); dailyLimit(string(body)) {
+				d = refusedFor
 			}
 			c.block(s.Name, resp.StatusCode, d)
 		}
@@ -345,14 +354,38 @@ func (c *Client) get(ctx context.Context, s Source, path string) ([]Aircraft, er
 	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
 		return nil, fmt.Errorf("bad JSON: %w", err)
 	}
+	c.mu.Lock()
+	delete(c.strikes, s.Name) // answered: the next 429 starts again at the short pause
+	c.mu.Unlock()
 	return r.AC, nil
+}
+
+// backoff is how long to leave a source alone after a 429: tooManyFor, and twice as long for each one in a row, up to refusedFor.
+func (c *Client) backoff(name string) time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.strikes == nil {
+		c.strikes = map[string]int{}
+	}
+	n := c.strikes[name]
+	c.strikes[name] = n + 1
+	if n >= 7 { // 30 s doubled seven times is past the hour; stop before the shift grows
+		return refusedFor
+	}
+	return min(tooManyFor<<n, refusedFor)
+}
+
+// dailyLimit reports whether a 429's body says the limit is over a day ("rate limit exceeded: 1d requests window").
+func dailyLimit(body string) bool {
+	b := strings.ToLower(body)
+	return strings.Contains(b, "1d requests") || strings.Contains(b, "daily") || strings.Contains(b, "per day")
 }
 
 // wait reserves the next request slot for a source, sleeping if needed.
 func (c *Client) wait(ctx context.Context, name string) error {
 	spacing := c.MinSpacing
 	if spacing == 0 {
-		spacing = 1100 * time.Millisecond
+		spacing = 1250 * time.Millisecond
 	}
 	c.mu.Lock()
 	if c.next == nil {
