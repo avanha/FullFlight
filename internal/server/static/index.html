@@ -73,7 +73,7 @@
   #msgs .msg { overflow-wrap: anywhere; }
   #msgs .msg.sel { background: #fff3bf; }
   #msgs .msg.hasloc { border-left: 3px solid #d60; }
-  .plane { background: none; border: none; }
+  .plane { background: none; border: none; }   /* the aircraft, and the time cursor's (.plane.timecursor) */
   #menubtn { float: right; border: 1px solid transparent; background: none; font-size: 18px; line-height: 1; padding: 2px 6px; cursor: pointer; color: #1d3557; border-radius: 3px; }
   #menubtn:hover, #menubtn.on { background: #f1f4f9; border-color: #ccd; }
   #menu { position: absolute; right: 12px; top: 40px; z-index: 1200; background: #fff; border: 1px solid #ccc; border-radius: 4px; box-shadow: 0 2px 8px rgba(0,0,0,.2); min-width: 180px; }
@@ -138,6 +138,11 @@
   .wxbadge { padding: 2px 8px; border-radius: 4px; font: 12px system-ui, sans-serif; background: rgba(255,255,255,.9); border: 1px solid #aaa; color: #345; }
   .wxbadge[hidden] { display: none; }
   /* a bar above the legend boxes that folds them away; the layers stay as they are */
+  #timebar { position: fixed; bottom: 14px; left: 620px; right: 90px; z-index: 1000; display: flex; align-items: center; gap: 8px; padding: 4px 10px;
+             background: rgba(255,255,255,.92); border: 1px solid #aaa; border-radius: 6px; font: 12px system-ui, sans-serif; color: #345; }
+  #timebar[hidden] { display: none; }
+  #timebar input { flex: 1 1 auto; min-width: 80px; }
+  #timebar button { border: 1px solid #aaa; background: #fff; border-radius: 3px; cursor: pointer; padding: 0 6px; font-size: 11px; color: #345; }
   .legendbar { background: #fff; border-radius: 5px; box-shadow: 0 1px 5px rgba(0,0,0,.4); }
   .legendbar button { border: none; background: none; cursor: pointer; padding: 3px 10px; font: 12px/1.4 system-ui, sans-serif; color: #345; }
   body.legendhidden .leaflet-control-layers { display: none; }
@@ -230,6 +235,7 @@
 </aside>
 <div id="map"></div>
 <div id="clock" title="Current time, UTC"></div>
+<div id="timebar" hidden title="Drag to see where the aircraft was at a time on this flight; the radar and the satellite follow it."><span id="tbstart"></span><input type="range" id="tbrange" aria-label="Time on this flight"><span id="tbend"></span><b id="tbtime"></b><button id="tbreset" type="button" title="Back to now: no time marked, and the live radar and satellite in place of the ones for a time" hidden>Current</button></div>
 <div id="wxbadges">
   <div class="wxbadge" id="radarbadge" hidden title="The newest frame of the radar composite on the map. It is refreshed every 5 minutes."></div>
   <div class="wxbadge" id="recbadge" hidden title="Radar this server recorded near the followed aircraft, for the time of the selected message (or the newest position). The arrows step through the recorded frames."><button id="recprev" title="The recorded frame before this one">&#9664;</button> <span id="rectext"></span> <button id="recnext" title="The recorded frame after this one">&#9654;</button></div>
@@ -547,18 +553,17 @@ function recFollow(m) {
   const ms = new Date(m.pos_t || m.t).getTime();
   if (m.id === recSelSeen) return;
   recSelSeen = m.id; recSelMs = recAt = ms; recAtWhat = null;
-  cursorGroup.clearLayers();
+
   viewTimeChanged();
 }
-document.querySelector('#recprev').onclick = () => { if (recIdx > 0) { recAt = recFrames[recIdx - 1].ms; recAtWhat = null; cursorGroup.clearLayers(); viewTimeChanged(); } };
-document.querySelector('#recnext').onclick = () => { if (recIdx >= 0 && recIdx < recFrames.length - 1) { recAt = recFrames[recIdx + 1].ms; recAtWhat = null; cursorGroup.clearLayers(); viewTimeChanged(); } };
+document.querySelector('#recprev').onclick = () => { if (recIdx > 0) { recAt = recFrames[recIdx - 1].ms; recAtWhat = null; viewTimeChanged(); } };
+document.querySelector('#recnext').onclick = () => { if (recIdx >= 0 && recIdx < recFrames.length - 1) { recAt = recFrames[recIdx + 1].ms; recAtWhat = null; viewTimeChanged(); } };
 recLayer.on('add', () => {
   recLoad();
   recTimer = setInterval(recLoad, REC.refreshMs);
   try { localStorage.setItem('recradar', '1'); } catch (e) { /* not saved: fine */ }
 });
 recLayer.on('remove', () => {
-  if (!map.hasLayer(satAtGroup)) cursorGroup.clearLayers();
   clearInterval(recTimer);
   recFrameShown = null; recKeys = new Set();
   $('#recbadge').hidden = true;
@@ -595,27 +600,90 @@ function satAtUpdate() {
   }
   document.querySelector('#satatnext').disabled = ms + step > now - SAT.startBackMin * 60000;
 }
-// A position on the track was clicked (an ADS-B dot): the radar and the satellite are drawn for its time, and a ring marks where
-// the aircraft was then, so it is plain which moment the weather belongs to.
-const cursorGroup = L.layerGroup().addTo(map);
-function setViewTime(ms, what, at) {
+// A position on the track was clicked (an ADS-B dot): the radar and the satellite are drawn for its time, and the time cursor
+// (the aircraft where it was then) moves there.
+function setViewTime(ms, what) {
   recAt = ms; recAtWhat = what;
-  cursorGroup.clearLayers();
-  if (at && (map.hasLayer(recLayer) || map.hasLayer(satAtGroup))) {
-    L.circleMarker(ll(at.lat, at.lon), {radius: 9, color: '#0a58ca', weight: 2, fillColor: '#ffd43b', fillOpacity: .35, interactive: false}).addTo(cursorGroup);
-  }
   viewTimeChanged();
 }
 // The selection, or a step, moved the time that the radar and the satellite are drawn for.
-function viewTimeChanged() { if (map.hasLayer(recLayer)) recUpdate(); satAtUpdate(); }
-document.querySelector('#satatprev').onclick = () => { if (satAtMs != null) { recAt = satAtMs - SAT.stepMin * 60000; recAtWhat = null; cursorGroup.clearLayers(); viewTimeChanged(); } };
-document.querySelector('#satatnext').onclick = () => { if (satAtMs != null) { recAt = satAtMs + SAT.stepMin * 60000; recAtWhat = null; cursorGroup.clearLayers(); viewTimeChanged(); } };
+function viewTimeChanged() { if (map.hasLayer(recLayer)) recUpdate(); satAtUpdate(); timeCursorSync(); }
+// ---- the time cursor: a slider over the flight, and the aircraft where it was at that time ------------------------
+// Drawn only for one flight (not "all flights"). The slider sets the same time as a message, a dot and the arrows, so the radar and
+// the satellite follow it. Between fixes the aircraft is placed by interpolation, along the dotted estimated path where the track
+// has a silence, and the tooltip says so.
+const cursorGroup = L.layerGroup().addTo(map);
+let cursorData = null;   // the flight's fixes and estimated paths, worked out when the track is drawn (not on every slider move)
+const lerp = (a, b, f) => a + (b - a) * f;
+// Where the aircraft was at t: {lat, lon, trk, alt, gs, estimated, a, b}, between the fixes either side (a and b), or at the end it
+// is nearest when t is outside them. paths are the estimated paths over silences.
+function placeAt(fixes, paths, t) {
+  if (!fixes.length) return null;
+  const end = (f, g) => ({lat: f.lat, lon: f.lon, alt: f.alt, gs: f.gs, trk: g ? bearingTo(f.lat, f.lon, g.lat, g.lon) : null, estimated: false, a: f, b: f});
+  if (t <= fixes[0].t) return end(fixes[0], fixes[1]);
+  if (t >= fixes.at(-1).t) return end(fixes.at(-1), null);
+  let i = 0;
+  while (i + 2 < fixes.length && fixes[i + 1].t <= t) i++;
+  const a = fixes[i], b = fixes[i + 1], f = b.t === a.t ? 0 : (t - a.t) / (b.t - a.t);
+  const e = (paths || []).find(p => p.from.t === a.t && p.to.t === b.t);
+  const line = e ? e.path : [[a.lat, a.lon], [b.lat, b.lon]];
+  const cum = [0];
+  for (let k = 1; k < line.length; k++) cum.push(cum[k - 1] + distNM(line[k - 1][0], line[k - 1][1], line[k][0], line[k][1]));
+  const at = cum.at(-1) * f;
+  let k = 1;
+  while (k < line.length - 1 && cum[k] < at) k++;
+  const seg = cum[k] - cum[k - 1], g = seg > 0 ? (at - cum[k - 1]) / seg : 0, [p, q] = [line[k - 1], line[k]];
+  const lon = p[1] + wrap180(q[1] - p[1]) * g;
+  return {lat: lerp(p[0], q[0], g), lon, trk: bearingTo(p[0], p[1], q[0], q[1]), estimated: f !== 0 && (Boolean(e) || b.t - a.t > pairGapMin(a, b) * 60000),
+    alt: Number.isFinite(a.alt) && Number.isFinite(b.alt) ? lerp(a.alt, b.alt, f) : a.alt ?? b.alt,
+    gs: Number.isFinite(a.gs) && Number.isFinite(b.gs) ? lerp(a.gs, b.gs, f) : a.gs ?? b.gs, a, b: f === 0 ? a : b};
+}
+// Worked out when the track is drawn: the fixes of the flight shown and the estimated paths between them.
+function timeCursorPrepare() {
+  cursorData = null;
+  const ctx = trackCtx;
+  if (!ctx || !ctx.chosen) return;
+  const fixes = unifiedFixes(ctx.pts, ctx.msgs).filter(f => f.t >= ctx.chosen.startMs - FLIGHT_TOL && f.t <= ctx.chosen.endMs + FLIGHT_TOL);
+  if (fixes.length >= 2) cursorData = {fixes, paths: estimatedPaths(ctx.pts, ctx.msgs, ctx.plan)};
+}
+function timeCursorSync() {
+  const bar = document.querySelector('#timebar');
+  cursorGroup.clearLayers();
+  bar.hidden = !cursorData;
+  if (!cursorData) return;
+  const {fixes, paths} = cursorData, lo = fixes[0].t, hi = fixes.at(-1).t, range = document.querySelector('#tbrange');
+  range.min = lo; range.max = hi; range.step = 60000;
+  document.querySelector('#tbstart').textContent = stamp(lo);
+  document.querySelector('#tbend').textContent = stamp(hi);
+  const label = document.querySelector('#tbtime'), reset = document.querySelector('#tbreset');
+  reset.hidden = recAt == null;
+  if (recAt == null) { range.value = hi; label.textContent = ''; return; }   // no time chosen: the newest, and no cursor
+  const t = Math.max(lo, Math.min(hi, recAt));
+  range.value = t;
+  label.textContent = stamp(t);
+  const p = placeAt(fixes, paths, t);
+  const alt = Number.isFinite(p.alt) ? `${num(Math.round(p.alt / 100) * 100)} ft` : '', gs = Number.isFinite(p.gs) ? `${Math.round(p.gs)} kt` : '';
+  L.marker(ll(p.lat, p.lon), {icon: planeIcon(p.trk ?? 0, {fill: '#0a58ca', opacity: .75, className: 'plane timecursor'}), zIndexOffset: 850, interactive: true}).addTo(cursorGroup)
+    .bindTooltip(tip(`${stamp(t)}`, [alt, gs].filter(Boolean).join(' \u00b7 '),
+      p.estimated ? `estimated: no position between ${fmtTime(p.a.t).slice(0, 5)} and ${fmtTime(p.b.t).slice(0, 5)}` : p.a === p.b ? 'at a recorded position' : `between the positions of ${fmtTime(p.a.t).slice(0, 5)} and ${fmtTime(p.b.t).slice(0, 5)}`));
+}
+document.querySelector('#tbrange').oninput = e => { recAt = Number(document.querySelector('#tbrange').value); recAtWhat = 'the slider'; viewTimeChanged(); };
+// Back to now: no time marked, and whichever of the radar and the satellite is on is swapped for its live layer.
+function goCurrent() {
+  recAt = recSelMs = recSelSeen = null; recAtWhat = null;
+  if (map.hasLayer(recLayer)) { map.removeLayer(recLayer); map.addLayer(radarLayer); }
+  if (map.hasLayer(satAtGroup)) { map.removeLayer(satAtGroup); map.addLayer(satGroup); }
+  viewTimeChanged();
+}
+document.querySelector('#tbreset').onclick = goCurrent;
+
+document.querySelector('#satatprev').onclick = () => { if (satAtMs != null) { recAt = satAtMs - SAT.stepMin * 60000; recAtWhat = null; viewTimeChanged(); } };
+document.querySelector('#satatnext').onclick = () => { if (satAtMs != null) { recAt = satAtMs + SAT.stepMin * 60000; recAtWhat = null; viewTimeChanged(); } };
 satAtGroup.on('add', () => {
   satAtMs = null; satAtUpdate();
   try { localStorage.setItem('satat', '1'); } catch (e) { /* not saved: fine */ }
 });
 satAtGroup.on('remove', () => {
-  if (!map.hasLayer(recLayer)) cursorGroup.clearLayers();
   satAtMs = null;
   SAT.birds.forEach(b => { b.atTiles.frameMs = null; });
   $('#satatbadge').hidden = true;
@@ -867,7 +935,7 @@ async function refresh() {
     }
     li.querySelector('.del').onclick = async e => { e.stopPropagation(); await api('/api/watches/' + w.id, {method: 'DELETE'}); refresh(); };
     li.onclick = () => {
-      if (selected !== w.id) { selectedMsg = null; expanded.clear(); highlight.clearLayers(); }
+      if (selected !== w.id) { selectedMsg = null; expanded.clear(); highlight.clearLayers(); goCurrent(); }
       clearAirport(); clearFixes();   // whatever a search tab left on the map
       selected = w.id;
       refresh();
@@ -989,13 +1057,13 @@ function aircraftTip(w, pts, fixMs) {
 // An aeroplane silhouette (Material "airplanemode_active", nose up), turned to the track.
 const PLANE_PATH = 'M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z';
 // ageMs: how old the fix the plane stands on is. An old one fades through AGE_STEPS and shows its age.
-function planeIcon(track, {fill = '#c00', opacity = 1, ageMs = null, landed = false} = {}) {
+function planeIcon(track, {fill = '#c00', opacity = 1, ageMs = null, landed = false, className = 'plane'} = {}) {
   const deg = Number.isFinite(Number(track)) ? Number(track) : 0;
   const step = landed || ageMs == null ? null : ageStep(ageMs);
   if (step) { fill = step.fill; opacity = step.op; }
   if (landed) fill = '#2b8a3e';
   return L.divIcon({
-    className: 'plane', iconSize: [30, 30], iconAnchor: [15, 15],
+    className, iconSize: [30, 30], iconAnchor: [15, 15],
     html: (step && step.ring ? '<span class="agering"></span>' : '') +
           `<svg viewBox="0 0 24 24" width="30" height="30" style="transform: rotate(${deg}deg); opacity: ${Number(opacity)}">` +
           `<path d="${PLANE_PATH}" fill="${fill}" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/></svg>` +
@@ -1375,8 +1443,8 @@ const impossibleMove = (a, b) => { const dt = b.t - a.t, d = distNM(a.lat, a.lon
 function unifiedFixes(pts, msgs) {
   const on = key => { const src = SOURCES[key]; return !src || !src.group || map.hasLayer(src.group); };
   let all = [
-    ...pts.map(p => ({lat: p.lat, lon: p.lon, t: Date.parse(p.t), key: ptKey(p)})),
-    ...msgs.filter(m => m.lat != null && !m.suspect && !m.time_unverified).map(m => ({lat: m.lat, lon: m.lon, t: Date.parse(m.pos_t || m.t), key: m.kind})),
+    ...pts.map(p => ({lat: p.lat, lon: p.lon, t: Date.parse(p.t), key: ptKey(p), alt: p.alt_ft, gs: p.gs})),
+    ...msgs.filter(m => m.lat != null && !m.suspect && !m.time_unverified).map(m => ({lat: m.lat, lon: m.lon, t: Date.parse(m.pos_t || m.t), key: m.kind, alt: m.alt_ft, gs: m.gs})),
   ].filter(f => !Number.isNaN(f.t) && on(f.key)).sort((a, b) => a.t - b.t);
   const adsb = all.filter(f => f.key === 'adsb').map(f => f.t), win = UNIFIED.adsbCoverMin * 60000;
   let j = 0;
@@ -1421,7 +1489,7 @@ function drawTrackLines() {
   trackGroup.clearLayers();
   for (const l of srcLines) l.group.removeLayer(l.line);
   srcLines = [];
-  if (!trackCtx) { bridgeGroup.clearLayers(); return; }
+  if (!trackCtx) { bridgeGroup.clearLayers(); timeCursorPrepare(); timeCursorSync(); return; }
   const {pts, msgs, chosen, plan} = trackCtx;
   const add = (group, line) => { line.addTo(group); if (line.bringToBack) line.bringToBack(); if (group !== trackGroup) srcLines.push({group, line}); };
   if (trackMode === 'unified') {
@@ -1451,6 +1519,8 @@ function drawTrackLines() {
     for (const [kind, fixes] of Object.entries(byKind)) drawTrack(kind, fixes);
   }
   drawEstimatedPaths(estimatedPaths(pts, msgs, plan), plan);
+  timeCursorPrepare();
+  timeCursorSync();
 }
 function setTrackMode(mode) {
   if (mode === trackMode || !(mode in TRACK_MODES)) return;
@@ -1732,6 +1802,7 @@ function chooseFlight(v) {
   flightChoice = v;
   if (v === 'all' || v === 'recent') { try { localStorage.setItem('flightChoice', v); } catch (e) { /* not saved: fine */ } }
   const w = watches.find(x => x.id === selected);
+  goCurrent();   // a time on one flight means nothing on another
   if (w) showTrack(w, v === 'recent' || v === 'all' ? true : 'flight');   // a particular flight: fit the map to it
 }
 
@@ -1974,7 +2045,7 @@ async function showTrack(w, focus) {
     for (const p of thinPoints(group)) {
       const faded = isOlder(Date.parse(p.t));
       L.circleMarker(ll(p.lat, p.lon), {radius: 3, weight: 1, color: SOURCES[key].color, fillColor: '#fff', opacity: faded ? .4 : 1, fillOpacity: faded ? .4 : .9})
-        .addTo(SOURCES[key].group).bindTooltip(pointTip(p)).on('click', () => setViewTime(Date.parse(p.t), 'the clicked position', p));
+        .addTo(SOURCES[key].group).bindTooltip(pointTip(p)).on('click', () => setViewTime(Date.parse(p.t), 'the clicked position'));
     }
   }
 

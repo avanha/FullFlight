@@ -104,7 +104,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {cursorGroup, clearGrey, satAtGroup, satAtUpdate, SAT, recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {radarLayer, satGroup, map, cursorGroup, placeAt, clearGrey, satAtGroup, satAtUpdate, SAT, recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -1545,40 +1545,85 @@ highlightGroup = null;
     assert.strictEqual(storage.legendHidden, '0');
   }
 
-  // ===== 8s2c. clicking an ADS-B dot sets the time the radar and the satellite are drawn for ==========
+  // ===== 8s2c. the time cursor: a slider over the flight, and the aircraft where it was ===============
   {
+    // where the aircraft was between two fixes: straight, along an estimated path, clamped at the ends, across the date line
+    const F = (ms, lat, lon, extra = {}) => ({t: ms, lat, lon, key: 'x', ...extra});
+    const fixes = [F(0, 0, 0, {alt: 30000, gs: 400}), F(600000, 0, 10, {alt: 36000, gs: 500})];
+    let p = t.placeAt(fixes, [], 300000);
+    assert.ok(Math.abs(p.lat) < 1e-9 && Math.abs(p.lon - 5) < 1e-9 && Math.round(p.trk) === 90, 'halfway along a straight leg, heading along it: ' + JSON.stringify(p));
+    assert.ok(p.alt === 33000 && p.gs === 450 && p.estimated === false, 'altitude and speed interpolated; a ten minute gap is not a silence');
+    assert.ok(t.placeAt(fixes, [], -5).lon === 0 && t.placeAt(fixes, [], 9e9).lon === 10, 'never beyond the first or last fix');
+    assert.strictEqual(Math.round(t.placeAt(fixes, [], -5).trk), 90, 'the start points along the track');
+    const bent = [{from: fixes[0], to: fixes[1], path: [[0, 0], [0, 5], [5, 5]]}];
+    p = t.placeAt(fixes, bent, 450000);   // three quarters of the way: halfway up the second leg
+    assert.ok(Math.abs(p.lat - 2.5) < 0.05 && Math.abs(p.lon - 5) < 1e-6 && Math.round(p.trk) === 0 && p.estimated, 'along the estimated path, which bends: ' + JSON.stringify(p));
+    p = t.placeAt([F(0, 10, 179), F(600000, 10, -179)], [], 300000);
+    assert.ok(Math.abs(Math.abs(p.lon) - 180) < 1e-9, 'across the date line the short way: ' + p.lon);
+    assert.strictEqual(t.placeAt([], [], 0), null);
+
+    // the slider and the cursor for one flight; none for all of them
     const frame = (hh, mm) => ({id: Date.UTC(2026, 9, 30, hh, mm) / 1000, time: new Date(Date.UTC(2026, 9, 30, hh, mm)).toISOString(), tiles: 2});
     radarList = {recording: true, zoom: 7, frames: [frame(16, 0), frame(16, 20), frame(16, 40)]};
-    const dots = (await draw([apt(5, 118), apt(25, 120), apt(45, 122)], [], false)).circles.filter(c => c.o && c.o.radius === 3);
-    assert.strictEqual(dots.length, 3, 'the dots are drawn');
-    assert.strictEqual(typeof dots[1].handlers.click, 'function', 'and can be clicked');
-    const text = () => document.querySelector('#rectext').textContent;
-    // with no weather layer on, the click only sets the time: nothing is drawn for it
-    t.recLayer.onMap = false; t.satAtGroup.onMap = false;
-    dots[1].handlers.click();
-    assert.strictEqual(t.recAt, Date.UTC(2026, 9, 30, 16, 25));
-    assert.strictEqual(t.cursorGroup.items.length, 0, 'no ring while there is no weather to match it to');
-    // with one on, the radar follows and a ring marks where the aircraft was
-    t.recLayer.onMap = true;
-    await t.recLoad(); await settle();
-    dots[2].handlers.click(); await settle();
-    assert.strictEqual(text(), 'Recorded radar \u00b7 10-30 16:40Z (5 min before the clicked position)');
-    assert.strictEqual(t.cursorGroup.items.length, 1, 'a ring at the dot');
-    assert.ok(t.cursorGroup.items[0].ll[0] === 10 && (t.cursorGroup.items[0].ll[1] - 122) % 360 === 0, 'at the dot (a longitude may be drawn a world over): ' + t.cursorGroup.items[0].ll);
-    dots[1].handlers.click(); await settle();
-    assert.strictEqual(t.cursorGroup.items.length, 1, 'one ring, moved');
-    assert.ok(t.cursorGroup.items[0].ll[0] === 10 && (t.cursorGroup.items[0].ll[1] - 120) % 360 === 0, 'moved to the other dot: ' + t.cursorGroup.items[0].ll);
-    // selecting a message, or stepping with the arrows, ends it
-    document.querySelector('#recnext').onclick(); await settle();
-    assert.strictEqual(t.cursorGroup.items.length, 0, 'a step leaves the dot');
-    dots[1].handlers.click(); await settle();
-    t.recFollow({id: 960, t: new Date(Date.UTC(2026, 9, 30, 16, 45)).toISOString()}); await settle();
-    assert.strictEqual(t.cursorGroup.items.length, 0, 'and so does choosing a message');
-    assert.match(text(), /the selected message/);
-    // switching the weather off takes the ring with it
-    dots[1].handlers.click(); await settle();
-    t.recLayer.onMap = false; t.recLayer.handlers.remove();
-    assert.strictEqual(t.cursorGroup.items.length, 0);
+    const flight = seg('CX843@2', 'CX843', '2026-10-30T10:00:00Z', '2026-10-30T20:00:00Z');
+    const bar = document.querySelector('#timebar'), range = document.querySelector('#tbrange'), tbTime = document.querySelector('#tbtime'), reset = document.querySelector('#tbreset');
+    const ms = (hh, mm) => Date.UTC(2026, 9, 30, hh, mm);
+    await withFlights([flight], async () => {
+      t.chooseFlight('recent'); await settle();
+      reset.onclick();   // whatever time an earlier section left chosen
+      let dots = (await draw([apt(5, 118), apt(25, 120), apt(0, 128, {t: '2026-10-30T17:35:00Z'})], [], false)).circles.filter(c => c.o && c.o.radius === 3);
+      assert.strictEqual(dots.length, 3, 'the dots are drawn'); assert.strictEqual(typeof dots[1].handlers.click, 'function', 'and can be clicked');
+      assert.strictEqual(bar.hidden, false, 'one flight shown: the slider is there');
+      assert.ok(Number(range.min) === ms(16, 5) && Number(range.max) === ms(17, 35), 'it spans the flight from its first position to its last');
+      assert.strictEqual(Number(range.value), ms(17, 35), 'at the newest until a time is chosen');
+      assert.strictEqual(t.cursorGroup.items.length, 0, 'and no aircraft marked');
+      assert.strictEqual(reset.hidden, true);
+      // a click on a dot puts the aircraft there, and the weather follows
+      t.recLayer.onMap = true; await t.recLoad(); await settle();
+      dots[1].handlers.click(); await settle();
+      assert.strictEqual(t.cursorGroup.items.length, 1, 'the aircraft at the dot');
+      const at = (n, lon) => (t.cursorGroup.items[n].ll[0] === 10 && (t.cursorGroup.items[n].ll[1] - lon) % 360 === 0);
+      assert.ok(at(0, 120), 'at its position: ' + t.cursorGroup.items[0].ll);
+      assert.strictEqual(t.cursorGroup.items[0].o.icon.className, 'plane timecursor', 'drawn apart from the aircraft itself');
+      assert.ok(lines(t.cursorGroup.items[0].tooltip).includes('at a recorded position'), lines(t.cursorGroup.items[0].tooltip).join(' | '));
+      assert.strictEqual(Number(range.value), ms(16, 25)); assert.strictEqual(tbTime.textContent, '10-30 16:25Z'); assert.strictEqual(reset.hidden, false);
+      assert.strictEqual(document.querySelector('#rectext').textContent, 'Recorded radar \u00b7 10-30 16:20Z (5 min before the clicked position)');
+      // dragging the slider moves it between the fixes, and says it is a guess where there was a silence
+      range.value = ms(16, 35); range.oninput(); await settle();
+      assert.strictEqual(t.cursorGroup.items.length, 1, 'one aircraft, moved');
+      assert.ok(t.cursorGroup.items[0].ll[0] === 10 && Math.abs((((t.cursorGroup.items[0].ll[1] - 120) % 360) + 360) % 360 - 8 * 10 / 70) < 0.05, 'a seventh of the way to the next fix: ' + t.cursorGroup.items[0].ll);
+      assert.match(lines(t.cursorGroup.items[0].tooltip).join(' | '), /estimated: no position between 16:25 and 17:35/);
+      assert.strictEqual(document.querySelector('#rectext').textContent, 'Recorded radar \u00b7 10-30 16:40Z (5 min after the slider)', document.querySelector('#rectext').textContent);
+      // selecting a message moves it too; "Current" takes it away
+      t.recFollow({id: 960, t: new Date(ms(16, 15)).toISOString()}); await settle();
+      assert.strictEqual(Number(range.value), ms(16, 15)); assert.strictEqual(t.cursorGroup.items.length, 1);
+      reset.onclick(); await settle();
+      assert.strictEqual(t.cursorGroup.items.length, 0, 'no time chosen: no aircraft'); assert.strictEqual(reset.hidden, true);
+      assert.strictEqual(Number(range.value), ms(17, 35));
+      // Current swaps the layers for a time for the live ones, keeping which are on: both, radar only, none
+      const swap = async (recOn, satOn) => {
+        for (const g of [t.recLayer, t.satAtGroup, t.radarLayer, t.satGroup]) t.map.removeLayer(g);
+        if (recOn) t.map.addLayer(t.recLayer);
+        if (satOn) t.map.addLayer(t.satAtGroup);
+        t.recFollow({id: 960, t: new Date(ms(16, 15)).toISOString()}); await settle();
+        reset.onclick(); await settle();
+        return [t.map.hasLayer(t.recLayer), t.map.hasLayer(t.radarLayer), t.map.hasLayer(t.satAtGroup), t.map.hasLayer(t.satGroup)].map(Number).join('');
+      };
+      assert.strictEqual(await swap(true, true), '0101', 'both on: both become live');
+      assert.strictEqual(await swap(true, false), '0100', 'radar only');
+      assert.strictEqual(await swap(false, true), '0001', 'IR only');
+      assert.strictEqual(await swap(false, false), '0000', 'none stays none');
+      for (const g of [t.radarLayer, t.satGroup]) t.map.removeLayer(g);
+      // all flights: no slider, and no aircraft
+      dots[1].handlers.click(); await settle();
+      t.chooseFlight('all'); await settle(); await draw([apt(5, 118), apt(25, 120), apt(0, 128, {t: '2026-10-30T17:35:00Z'})], [], false);
+      assert.strictEqual(bar.hidden, true, 'not for all flights');
+      assert.strictEqual(t.cursorGroup.items.length, 0);
+      t.chooseFlight('recent'); await settle();
+    });
+    t.recLayer.onMap = false;
+    await draw([], [], false);
+    assert.strictEqual(bar.hidden, true, 'no flight, no slider');
   }
 
   // ===== 8s2b. the infrared is drawn without its grey ===========================================

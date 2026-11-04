@@ -317,7 +317,7 @@ It is polite: one request at a time with a pause between, our User-Agent, and a 
 and holds off for an hour, remembered across a restart. The index must name a RainViewer host over https. If the app is not
 running for more than two hours the radar for that time is lost. The map's legend has a **Recorded radar (at the selected time)** layer that draws them. It shows the frame nearest the
 selected message (or the newest position when none is selected), with a badge saying which frame it is and how many minutes
-from that time; the arrows on the badge step through the recorded frames, and clicking one of the small ADS-B dots on the track (the ones that show a tooltip) draws the radar for that dot's time and rings the dot, so an ADS-B-only flight can be walked along its track. It draws only the tiles that were recorded, which is
+from that time; the arrows on the badge step through the recorded frames, and clicking one of the small ADS-B dots on the track (the ones that show a tooltip) draws the radar for that dot's time, so an ADS-B-only flight can be walked along its track (see the time slider below). It draws only the tiles that were recorded, which is
 the area around the followed aircraft, and leaves the rest blank (where there was no position for more than an hour, none was recorded: nothing says where the aircraft was). When no frame was recorded within 15 minutes of the time
 wanted it says so, and shows nothing, rather than a frame from another time. The server serves the frames
 (`GET /api/weather/radar`, a frame's `.../{frame}/tiles` and `.../{frame}/{z}/{x}/{y}.png`) from the weather directory, whether
@@ -826,7 +826,7 @@ position when none is selected) instead of the newest. Nothing is recorded for i
 days (a frame of 2026-08-06 was there on 2026-11-03 and one of 2026-08-03 was not), so the page asks GIBS for the old frame
 directly, as the live layer does for the new one, with the same satellites, hole filling and 55% opacity. The frame is the
 ten-minute one at or before the time, and never one of the newest half hour, which is not yet there. A badge says which frame,
-with the date when it is not today's, and how many minutes it is from the time wanted; its arrows step ten minutes, and clicking an ADS-B dot sets the time to that dot's. The radar
+with the date when it is not today's, and how many minutes it is from the time wanted; its arrows step ten minutes, and clicking an ADS-B dot sets the time to that dot's (see the time slider below). The radar
 layer follows the same time, so stepping either moves both. For a time older than the archive (88 days, a little inside what was
 found) it says so and draws nothing. Frames older than that are lost unless they were kept, which is what the plan's filtered
 copy would do ([the plan](weather-recording-plan.md)).
@@ -927,6 +927,15 @@ The sidebar's Watches tab is split in two, each part folding away like an accord
 the list of watches scrolls on its own) and **Messages** below (with the flight selector and the projection control above its own
 scrolling list). Fold one and the other takes the height; the header of a folded Targets shows the selected target, and each
 header counts what is in it. Your choice is remembered, and choosing a message on the map opens Messages if it is folded.
+
+**The time slider.** With one flight shown (not "all flights") and at least two positions on it, a slider along the bottom of the map
+spans the flight from its first position to its last. It sets the same time as selecting a message, clicking an ADS-B dot or the
+badge arrows, so the recorded radar and the infrared follow it, and a translucent blue aircraft shows where the aircraft was then:
+at the dot or report itself, between the two positions either side by interpolation (altitude and speed too), or, where the track
+has a silence, along the dotted estimated path, with the tooltip saying it is an estimate. A button beside the slider, **Current**,
+takes the time away again (the aircraft is not marked until a time is chosen) and swaps whichever of the recorded radar and the
+infrared at a time is on for the live radar and the live infrared (none on stays none). Choosing another target or flight does the same. There are no message ticks on it (the messages are on
+the track), and no play button yet.
 
 **Folding the legend.** A **Legend ▾** bar above the two legend boxes at the bottom left folds them away (the bar then reads
 **Legend ▸**) and brings them back. It only hides the checkboxes: layers that are ticked stay on and the track keeps drawing. The
