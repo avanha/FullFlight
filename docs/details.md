@@ -873,6 +873,27 @@ An aircraft seen on the ground is landed from when its stay began (its first pos
 not from its newest fix. Once ADS-B gives it a different callsign than the flight it flew in on, the sidebar and hover say
 `UAL177 not departed, at KDEN since 20:53Z`: it is the next flight, waiting at the gate.
 
+## Map tiles
+
+The map pages ask this server for the street map (`/tiles/osm/{z}/{x}/{y}.png`) and never OpenStreetMap directly. With
+`map_tiles.cache` off (the default) the server answers each request with a redirect to `tile.openstreetmap.org`, so the browser
+fetches the tile from OSM itself, as it always did. With it on, the tile is kept under `map_tiles.dir` and served from there:
+several browsers on one server cost OSM one request per tile. Radar and infrared tiles are not cached; they are immutable and
+the browser already keeps them.
+
+OSM says it does not recommend a caching proxy in front of its tile server, and allows one on conditions, which this meets:
+
+- Every request names FullFlight in its User-Agent (with its web address) and carries the project's address as its Referer: a
+  server has no page of its own to name.
+- A tile is kept as long as OSM's own `Cache-Control` or `Expires` says (seven days when it says nothing, a day to 30 days at
+  the extremes), and once it has expired it is asked about again with `If-None-Match` and `If-Modified-Since`.
+- Nothing is fetched that nobody asked for: no prefetching, no scan of a wider area. A tile that cannot exist (outside the zoom
+  range or the grid) is refused without asking OSM.
+- A tile is fetched once however many browsers ask for it at that moment, and never more than two at a time. A 429, a 403 or
+  a server error from OSM stops the asking for ten minutes; tiles already held (even expired ones) are still served.
+
+The directory is kept under `map_tiles.max_mib` (default 500) by deleting the oldest tiles. Browsers keep a tile for a day.
+
 ## Web page
 
 The sidebar's Watches tab is split in two, each part folding away like an accordion: **Targets** above (the add form stays put,

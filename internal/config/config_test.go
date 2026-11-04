@@ -71,6 +71,20 @@ func TestWeatherConfig(t *testing.T) {
 	}
 }
 
+func TestMapTilesConfig(t *testing.T) {
+	c, err := load(t, "{}")
+	if err != nil || c.MapTiles.Cache || c.MapTiles.Dir != "data/tiles" || c.MapTiles.MaxMiB != 500 {
+		t.Fatalf("%+v %v", c.MapTiles, err)
+	}
+	c, err = load(t, "map_tiles: {cache: true, dir: /t, max_mib: 64}")
+	if err != nil || !c.MapTiles.Cache || c.MapTiles.Dir != "/t" || c.MapTiles.MaxMiB != 64 {
+		t.Errorf("%+v %v", c.MapTiles, err)
+	}
+	if _, err := load(t, "map_tiles: {max_mib: -1}"); err == nil {
+		t.Error("a negative limit")
+	}
+}
+
 func TestBackfillConfig(t *testing.T) {
 	c, err := load(t, "{}")
 	if err != nil || c.Backfill.Enabled || c.Backfill.CacheMaxGiB != 20 {

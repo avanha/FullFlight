@@ -59,6 +59,14 @@ type Config struct {
 		Step   time.Duration `yaml:"step"`    // between the frames kept, a multiple of the 10m RainViewer makes them at; default 20m
 	} `yaml:"weather"`
 
+	// MapTiles is the optional cache of OpenStreetMap's tiles on this machine, so several browsers cost OSM one request per tile.
+	// Off, the browser fetches tiles from OSM itself.
+	MapTiles struct {
+		Cache  bool   `yaml:"cache"`
+		Dir    string `yaml:"dir"`     // default data/tiles
+		MaxMiB int    `yaml:"max_mib"` // the oldest tiles are deleted beyond this; default 500
+	} `yaml:"map_tiles"`
+
 	Poll struct {
 		Waiting  time.Duration `yaml:"waiting"`  // unmatched flight entries; default 3m
 		Tracking time.Duration `yaml:"tracking"` // followed aircraft; default 45s
@@ -93,6 +101,12 @@ func Load(path string) (*Config, error) {
 	if c.Backfill.CacheMaxGiB == 0 {
 		c.Backfill.CacheMaxGiB = 20
 	}
+	if c.MapTiles.Dir == "" {
+		c.MapTiles.Dir = "data/tiles"
+	}
+	if c.MapTiles.MaxMiB == 0 {
+		c.MapTiles.MaxMiB = 500
+	}
 	if c.Weather.Dir == "" {
 		c.Weather.Dir = "data/weather"
 	}
@@ -121,6 +135,9 @@ func (c *Config) validate() error {
 	}
 	if c.Backfill.CacheMaxGiB < 0 {
 		return fmt.Errorf("backfill.cache_max_gib must not be negative")
+	}
+	if c.MapTiles.MaxMiB < 0 {
+		return fmt.Errorf("map_tiles.max_mib must not be negative")
 	}
 	if c.Weather.MaxMiB < 0 {
 		return fmt.Errorf("weather.max_mib must not be negative")

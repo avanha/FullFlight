@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -16,6 +17,7 @@ import (
 	"github.com/avanha/fullflight/internal/history"
 	"github.com/avanha/fullflight/internal/navdata"
 	"github.com/avanha/fullflight/internal/store"
+	"github.com/avanha/fullflight/internal/tilecache"
 	"github.com/avanha/fullflight/internal/watchlist"
 )
 
@@ -2022,5 +2024,59 @@ func TestAddingAWatchSaysWhatHappened(t *testing.T) {
 	}
 	if r := add(); r["result"] != "existing" {
 		t.Errorf("second: %v", r)
+	}
+}
+
+func TestMapTilesComeFromTheCacheOrOSM(t *testing.T) {
+	png := "\x89PNG\r\n\x1a\n-a tile-"
+	var asked int
+	osm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked++
+		w.Write([]byte(png))
+	}))
+	defer osm.Close()
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+
+	// no cache configured: the browser is sent to OSM, as before
+	ts := httptest.NewServer((&Server{Store: st}).Handler())
+	defer ts.Close()
+	resp, err := noRedirect.Get(ts.URL + "/tiles/osm/3/2/5.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusTemporaryRedirect || resp.Header.Get("Location") != "https://tile.openstreetmap.org/3/2/5.png" {
+		t.Errorf("%d %q", resp.StatusCode, resp.Header.Get("Location"))
+	}
+
+	// with one, the tile is fetched once and kept
+	cached := httptest.NewServer((&Server{Store: st, Tiles: &tilecache.Cache{Dir: t.TempDir(), Upstream: osm.URL, UserAgent: "FullFlight/test"}}).Handler())
+	defer cached.Close()
+	for i := 0; i < 2; i++ {
+		resp, err := http.Get(cached.URL + "/tiles/osm/3/2/5.png")
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 || string(b) != png {
+			t.Fatalf("%d %q", resp.StatusCode, b)
+		}
+	}
+	if asked != 1 {
+		t.Errorf("OSM was asked %d times", asked)
+	}
+	// a tile that cannot exist is not asked about, with or without a cache
+	for _, base := range []string{ts.URL, cached.URL} {
+		for _, path := range []string{"/tiles/osm/3/9/0.png", "/tiles/osm/99/0/0.png", "/tiles/osm/a/b/c.png", "/tiles/osm/3/-1/0.png"} {
+			resp, err := noRedirect.Get(base + path)
+			if err != nil || resp.StatusCode != 404 {
+				t.Errorf("%s%s: %v %v", base, path, resp, err)
+			}
+		}
+	}
+	if asked != 1 {
+		t.Errorf("an impossible tile reached OSM: %d", asked)
 	}
 }

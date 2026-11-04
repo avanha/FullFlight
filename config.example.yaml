@@ -32,6 +32,11 @@ backfill:                      # optional: fill in the track from before an airc
   cache_dir: ""                # where the downloaded days are kept, e.g. /Volumes/External/FullFlightCache; must exist
   cache_max_gib: 20            # the oldest days are deleted from the cache to stay within this
 
+map_tiles:                     # optional: keep OpenStreetMap's tiles here, so several browsers cost OSM one request per tile
+  cache: false                 # off: each browser fetches tiles from OSM itself
+  dir: data/tiles              # where they are kept
+  max_mib: 500                 # the oldest are deleted to stay within this
+
 weather:                       # optional: keep the radar around followed flights, to see the weather they flew through
   record: false                # off: nothing is fetched. RainViewer keeps only the last two hours, so this must run to record
   dir: data/weather            # where the tiles are kept

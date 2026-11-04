@@ -25,6 +25,7 @@ import (
 	"github.com/avanha/fullflight/internal/navdata"
 	"github.com/avanha/fullflight/internal/regs"
 	"github.com/avanha/fullflight/internal/store"
+	"github.com/avanha/fullflight/internal/tilecache"
 	"github.com/avanha/fullflight/internal/watchlist"
 	"github.com/avanha/fullflight/internal/waypoints"
 )
@@ -40,6 +41,7 @@ type Server struct {
 	Now         func() time.Time
 	Backfill    *history.Manager // nil when backfill is off in the config
 	StationList StationSource    // airframes.io's list of receiving stations; nil if there is none
+	Tiles       *tilecache.Cache // serves OpenStreetMap tiles from disk; nil sends the browser to OSM itself
 
 	flightMu    sync.Mutex
 	flightCache map[string]cachedFlights // hex -> its recent flights, worked out once for everything that shows them
@@ -49,6 +51,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	sub, _ := fs.Sub(static, "static")
 	mux.Handle("GET /", http.FileServer(http.FS(sub)))
+	mux.HandleFunc("GET /tiles/osm/{z}/{x}/{y}", s.osmTile)
 	mux.HandleFunc("GET /api/watches", s.listWatches)
 	mux.HandleFunc("POST /api/watches", s.addWatch)
 	mux.HandleFunc("DELETE /api/watches/{id}", s.deleteWatch)
@@ -1242,4 +1245,21 @@ func (s *Server) setFlightJoin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, toFlightJSON(segs[i]))
+}
+
+// osmTile serves a map tile of OpenStreetMap's from the cache. With no cache configured the browser is sent to OSM for it, as
+// it was before there was one, so the map pages need not know which it is.
+func (s *Server) osmTile(w http.ResponseWriter, r *http.Request) {
+	z, errZ := strconv.Atoi(r.PathValue("z"))
+	x, errX := strconv.Atoi(r.PathValue("x"))
+	y, errY := strconv.Atoi(strings.TrimSuffix(r.PathValue("y"), ".png"))
+	if errZ != nil || errX != nil || errY != nil || !tilecache.Valid(z, x, y) {
+		http.NotFound(w, r)
+		return
+	}
+	if s.Tiles == nil {
+		http.Redirect(w, r, fmt.Sprintf("%s/%d/%d/%d.png", tilecache.OSM, z, x, y), http.StatusTemporaryRedirect)
+		return
+	}
+	s.Tiles.Serve(w, r, z, x, y)
 }

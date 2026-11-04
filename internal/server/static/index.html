@@ -235,7 +235,7 @@
 <script src="notes.js"></script>
 <script>
 const map = L.map('map').setView([30, -40], 3);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 18, attribution: '&copy; OpenStreetMap'}).addTo(map);
+L.tileLayer('/tiles/osm/{z}/{x}/{y}.png', {maxZoom: 18, attribution: '&copy; OpenStreetMap'}).addTo(map);
 // A hover popup sits a little way from its point instead of touching it, so the point and the track around it stay in view.
 if (L.Tooltip && L.Tooltip.mergeOptions) L.Tooltip.mergeOptions({offset: [16, 0]});
 const layer = L.layerGroup().addTo(map);      // track, message positions, route: redrawn on refresh

@@ -88,7 +88,7 @@ const names = w => rows(w).map(tr => tr.children[0].textContent);
   assert.ok(dot('TBG-CBAND-APAC').o.radius > dot('AM-LSZH-VDL2').o.radius, 'the busier station is the bigger dot');
   assert.match(dot('EB-LZIB').tip, /position approximate/); assert.match(dot('EB-LZIB').tip, /delivery: late, median lag 29h/);
   assert.strictEqual(w.map.fits.length, 1); assert.strictEqual(w.map.fits[0][0].length, 4);
-  assert.deepStrictEqual(w.tileUrls, ['https://tile.openstreetmap.org/{z}/{x}/{y}.png']);
+  assert.deepStrictEqual(w.tileUrls, ['/tiles/osm/{z}/{x}/{y}.png']);
 
   // choosing a dot selects its row; choosing a row goes to its dot
   dot('SK-KLAX-VDLM2').handlers.click();

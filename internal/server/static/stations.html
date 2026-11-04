@@ -157,7 +157,7 @@ let map = null, group = null, dots = new Map();
 function initMap() {
   if (typeof L === 'undefined') return;
   map = L.map('map', {worldCopyJump: true}).setView([30, 10], 2);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom: 12, attribution: '&copy; OpenStreetMap'}).addTo(map);
+  L.tileLayer('/tiles/osm/{z}/{x}/{y}.png', {maxZoom: 12, attribution: '&copy; OpenStreetMap'}).addTo(map);
   group = L.layerGroup().addTo(map);
 }
 const radiusOf = s => Math.min(14, 4 + Math.log10(Math.max(1, s.messages)) * 3);

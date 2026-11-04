@@ -126,6 +126,8 @@ Then:
   [Landing](docs/details.md#landing)
 - **Weather.** RainViewer radar and NASA GIBS infrared satellite overlays. [Details](docs/details.md#weather-radar)
 - **Search.** Fixes and airports by name or code. [Fixes](docs/details.md#fix-search) · [Airports](docs/details.md#airport-search)
+- **Map tiles** can be kept on the server (off by default), so several browsers cost OpenStreetMap one request per tile.
+  [Details](docs/details.md#map-tiles)
 - **The page** folds Targets and Messages like an accordion and remembers your choices.
   [Details](docs/details.md#web-page)
 
