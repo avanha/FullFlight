@@ -444,6 +444,16 @@ ADS-B at the gate, an hour or more later, within 4 nm of the same airport. That 
 joined to the flight after it, even when it has no number of its own (N956AK's AS485 into Seattle and the AS421 that left it).
 Where fixes are sparse, one fix below 3,000 ft and within 3 nm of the airport counts as an approach without an earlier, higher one.
 
+### A number only airframes.io gave
+
+An FMS position report carries no flight number in its text, so an arrival heard only that way (N956AK's AS485 into Seattle) has
+no sighting to name it and is listed as unidentified. airframes.io reads a number from the ACARS header of such messages
+(`AS0485`). When at least two of a flight's messages carry one, all the same, it is shown as the flight's number (`flight_from_af`
+in the API). It is only a label: the flight stays unidentified, and the tag never starts, extends, splits or joins a flight, because
+airframes.io sometimes tags the flight before or after (3% of messages here disagree with their own text). Messages with an
+unverified time, a zero number (`AS0000`), a mismatch note or an arrival over ten minutes after their time are not counted, and two
+different tags leave the flight unnamed. A replay over every stored aircraft named 34 of 47 unnumbered flights and moved no boundary.
+
 ### Seen taking off
 
 A flight whose messages gave no origin, but whose first fix is ADS-B on the ground within 4 nm of an airport and which is then

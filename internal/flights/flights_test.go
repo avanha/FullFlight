@@ -952,3 +952,50 @@ func TestLandingSeenOnlyByMessagesIsNotAdoptedByTheNextFlight(t *testing.T) {
 		t.Errorf("a last fix 20 nm from the airport was not a landing: %s %+v", names(segs), segs)
 	}
 }
+
+// An FMS report carries no flight number in its text; airframes.io reads one from the ACARS header. N956AK's arrival into Seattle was
+// heard only that way (AS0485), so nothing sighted it. Its messages' tag names it, but only as a label: the flight stays unidentified
+// and nothing starts, extends or joins on the tag alone.
+func TestAFTagLabelsAnUnnamedFlight(t *testing.T) {
+	build := func(tags []string, then func(m *store.Message, i int)) []Segment {
+		r := newRig(t)
+		for i, tag := range tags {
+			tm := at(0, 19, 49).Add(time.Duration(i) * 15 * time.Minute)
+			lat, lon := 45.0+float64(i)*0.5, -122.0
+			m := store.Message{T: tm, Kind: "fms_position", Lat: &lat, Lon: &lon, PosT: &tm, AFFlight: tag}
+			if then != nil {
+				then(&m, i)
+			}
+			r.msg(m)
+		}
+		return r.segments()
+	}
+	segs := build([]string{"AS0485", "AS0485", "AS0485"}, nil)
+	if len(segs) != 1 || segs[0].Flight != "AS485" || !segs[0].FlightFromAF || segs[0].Identified {
+		t.Errorf("an unnamed flight whose messages all carry one tag is labelled with it: %s %+v", names(segs), segs)
+	}
+	for name, got := range map[string][]Segment{
+		"two tags":           build([]string{"AS0485", "AS0485", "AS0421"}, nil),
+		"one message":        build([]string{"AS0485"}, nil),
+		"a zero number":      build([]string{"AS0000", "AS0000", "AS0000"}, nil),
+		"an unverified time": build([]string{"AS0485", "AS0485", "AS0485"}, func(m *store.Message, i int) { m.TimeFlag = true }),
+		"a disagreement":     build([]string{"AS0485", "AS0485", "AS0485"}, func(m *store.Message, i int) { m.Mismatch = "flight: airframes.io says AS485, text says AS421" }),
+	} {
+		for _, sg := range got {
+			if sg.FlightFromAF {
+				t.Errorf("%s: no label, got %+v", name, sg)
+			}
+		}
+	}
+
+	// a flight that was sighted keeps its own number whatever the tag says
+	r := newRig(t)
+	for i := 0; i < 3; i++ {
+		tm := at(0, 19, 49).Add(time.Duration(i) * 15 * time.Minute)
+		lat, lon := 45.0+float64(i)*0.5, -122.0
+		r.msg(store.Message{T: tm, Kind: "fms_position", Flight: "AS421", Lat: &lat, Lon: &lon, PosT: &tm, AFFlight: "AS0485"})
+	}
+	if segs := r.segments(); len(segs) != 1 || segs[0].Flight != "AS421" || segs[0].FlightFromAF {
+		t.Errorf("a sighted flight keeps its number: %s %+v", names(segs), segs)
+	}
+}

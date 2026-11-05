@@ -511,6 +511,30 @@ func (s *Store) FlightEvidence(hexAddr string, since, until time.Time) ([]Eviden
 	return out, rows.Err()
 }
 
+// AFFlights returns the flight numbers airframes.io tagged the aircraft's messages with in [from, to], one per message, for naming a
+// flight we found no number for (an FMS report carries none in its text; the number is in the ACARS header). Only messages whose time
+// is sound count (a late one belongs to some other moment), whose tag is not zero (AS0000) and that airframes.io and we do not disagree
+// about.
+func (s *Store) AFFlights(hexAddr string, from, to time.Time) ([]string, error) {
+	rows, err := s.db.Query(`
+		SELECT af_flight FROM message
+		WHERE hex=?1 AND ts BETWEEN ?2 - 3600 AND ?3 + 3600 AND at_ts BETWEEN ?2 AND ?3 AND af_flight != '' AND substr(af_flight, 3) GLOB '*[1-9]*'
+		  AND mismatch = '' AND time_flag = 0 AND ABS(ts - at_ts) <= 600`, hexAddr, ts(from), ts(to))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var f string
+		if err := rows.Scan(&f); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // PositionTimes returns when the aircraft was positioned, from ADS-B and from messages not flagged
 // suspect, oldest first.
 func (s *Store) PositionTimes(hexAddr string, since, until time.Time) ([]time.Time, error) {

@@ -88,9 +88,11 @@ const (
 	onFinalNM         = 3.0
 	approachKt        = 150.0 // for the time left to touchdown from the last fix of an approach
 	departedNM        = 4.0   // how close to an airport the fix on the ground is, for a flight seen taking off from it
-	StaleGap          = time.Hour
-	StaleWithin       = 2 * time.Minute
-	StaleFollowers    = 5
+	// A flight no sighting named is shown under the number airframes.io tagged its messages with, if at least TagMin sound ones all agree.
+	TagMin         = 2
+	StaleGap       = time.Hour
+	StaleWithin    = 2 * time.Minute
+	StaleFollowers = 5
 )
 
 type Segment struct {
@@ -118,6 +120,8 @@ type Segment struct {
 	Joined []int64 `json:"joined,omitempty"` // when the pieces joined to this flight by hand started (unix seconds)
 
 	stopAfter bool // the aircraft stopped on the ground after this flight, and the next piece is another leg: never joined
+
+	FlightFromAF bool `json:"flight_from_af,omitempty"` // Flight is airframes.io's tag on the messages, not a sighting: the flight is still unidentified
 
 	Pending bool `json:"pending,omitempty"` // named by messages, with no position yet: the next flight. Only when asked for (see segments)
 
@@ -493,6 +497,19 @@ func segments(st *store.Store, hexAddr string, since, until time.Time, tr *trace
 		return nil, err
 	}
 	segs = applyJoins(segs, joins, tr)
+	// 10. a flight no sighting named, whose messages airframes.io all tagged with one number, is shown under it. This only labels: it is
+	// not a sighting, so it never starts, extends or joins a flight, and the flight stays unidentified.
+	for i := range segs {
+		if sg := &segs[i]; !sg.Identified {
+			if id, n, ok := taggedFlight(st, hexAddr, sg.Start, sg.End); ok {
+				sg.Flight, sg.Callsign, sg.FlightFromAF = id.iata, id.icao, true
+				if sg.Flight == "" {
+					sg.Flight = id.display
+				}
+				tr.note("label", "tagged", sg.Start, sg.End, "no sighting named it; airframes.io tagged %d of its messages %s and no other number", n, id.display)
+			}
+		}
+	}
 	for i := range segs {
 		segs[i].Messages = st.CountMessages(hexAddr, segs[i].Start, segs[i].End)
 		segs[i].SeenBy, segs[i].SeenAt = seenBy(segs[i], ev)
@@ -502,6 +519,23 @@ func segments(st *store.Store, hexAddr string, since, until time.Time, tr *trace
 		segs[n-1].Latest = true
 	}
 	return segs, nil
+}
+
+// taggedFlight is the one flight number airframes.io tagged the messages in [from, to] with, if there are at least TagMin sound ones
+// and they all agree.
+func taggedFlight(st *store.Store, hexAddr string, from, to time.Time) (id ident, n int, ok bool) {
+	tags, err := st.AFFlights(hexAddr, from, to)
+	if err != nil || len(tags) < TagMin {
+		return ident{}, 0, false
+	}
+	for i, t := range tags {
+		x, good := parse(t)
+		if !good || (i > 0 && !same(id, x)) {
+			return ident{}, 0, false
+		}
+		id = x
+	}
+	return id, len(tags), true
 }
 
 // splitAtStopovers cuts a flight in two where ADS-B saw the aircraft sit on the ground for StopoverMin or more, between
