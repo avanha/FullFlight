@@ -516,7 +516,7 @@ async function recUpdate() {
   badge.hidden = !on;
   if (!on) return;
   const text = $('#rectext');
-  if (recFailed) { text.textContent = 'Recorded radar unavailable'; return; }
+  if (recFailed) { text.textContent = 'Radar unavailable'; return; }
   if (!recFrames.length) { text.textContent = recRecording ? 'No radar recorded yet' : 'No radar recorded (weather.record is off in the config)'; return; }
   const want = recTarget(), n = recNearest(recFrames, want.ms), f = recFrames[n.idx];
   $('#recprev').disabled = n.idx <= 0; $('#recnext').disabled = n.idx >= recFrames.length - 1;
@@ -526,7 +526,7 @@ async function recUpdate() {
     text.textContent = `No radar recorded near ${recTime(want.ms)} (recorded ${recTime(recFrames[0].ms)} to ${recTime(recFrames.at(-1).ms)})`;
     return;
   }
-  text.textContent = `Recorded radar \u00b7 ${recTime(f.ms)}${want.what === 'this frame' ? '' : ` (${recAgo(f.ms - want.ms)} ${want.what})`}`;
+  text.textContent = `Radar \u00b7 ${recTime(f.ms)}${want.what === 'this frame' ? '' : ` (${recAgo(f.ms - want.ms)} ${want.what})`}`;
   if (recFrameShown === f.id) return;
   const seq = ++recSeq;
   try {
@@ -537,7 +537,7 @@ async function recUpdate() {
     recLayer.setUrl(`${REC.listUrl}/${f.id}/{z}/{x}/{y}.png`);
     recFitBounds(d.tiles);
     recLayer.redraw();
-  } catch (e) { text.textContent = 'Recorded radar unavailable'; }
+  } catch (e) { text.textContent = 'Radar unavailable'; }
 }
 // Limit the layer to the box the recorded tiles lie in, so zoomed out it does not walk every tile of the world.
 function recFitBounds(tiles) {
