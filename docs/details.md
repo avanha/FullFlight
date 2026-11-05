@@ -948,9 +948,10 @@ header counts what is in it. Your choice is remembered, and choosing a message o
 spans the flight from its first position to its last. It sets the same time as selecting a message, clicking an ADS-B dot or the
 badge arrows, so the recorded radar and the infrared follow it, and a translucent blue aircraft shows where the aircraft was then:
 at the dot or report itself, between the two positions either side by interpolation (altitude and speed too), or, where the track
-has a silence, along the dotted estimated path, with the tooltip saying it is an estimate. A button beside the slider, **Current**,
-takes the time away again (the aircraft is not marked until a time is chosen) and sets the radar and the satellite
-to **Live**. Choosing another target or flight does the same. Going the other way, the first time chosen after that (the slider, a
+has a silence, along the dotted estimated path, with the tooltip saying it is an estimate. The slider's handle is a small rectangle with the time of day (`16:25Z`; the dates are at the ends of the bar) written in it, and all the way to the right it says **Live**: the aircraft is
+not marked, and the radar and the satellite are set to **Live**. Moving it left chooses a time. (Dragging to the right end again,
+or choosing another target or flight, goes back to Live.) The right end is the newest position, and while live it ticks up as
+positions arrive. The handle does not jump to the pointer when it is pressed: it moves only as the pointer does. (A press on the bare track still moves it there.) The bar and its readouts keep one size. Going the other way, the first time chosen after that (the slider, a
 message, a dot or an arrow) sets both to **Past**. Each of the two rows in the legend, "Weather radar" and "Satellite (IR)", has a
 **Live | Past** switch; it is the viewer's after that, so moving the time does not undo it, and it keeps its setting while the row is
 unticked, for when it is ticked. Only one of the two versions of a row is ever on the map. There are no message ticks on it (the messages are on

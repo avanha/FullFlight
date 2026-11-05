@@ -141,8 +141,17 @@
   #timebar { position: fixed; bottom: 14px; left: 620px; right: 90px; z-index: 1000; display: flex; align-items: center; gap: 8px; padding: 4px 10px;
              background: rgba(255,255,255,.92); border: 1px solid #aaa; border-radius: 6px; font: 12px system-ui, sans-serif; color: #345; }
   #timebar[hidden] { display: none; }
-  #timebar input { flex: 1 1 auto; min-width: 80px; }
-  #timebar button { border: 1px solid #aaa; background: #fff; border-radius: 3px; cursor: pointer; padding: 0 6px; font-size: 11px; color: #345; }
+  /* the readouts at the ends keep their width, so the bar does not change size between live and a chosen time */
+  #timebar #tbstart, #timebar #tbend { min-width: 12ch; font-variant-numeric: tabular-nums; }
+  #timebar #tbend { text-align: right; }
+  /* the handle is a rectangle (--tbw wide) with the chosen time (hh:mmZ) written in it, or "Live" at the right-hand end */
+  #tbtrack { position: relative; flex: 1 1 auto; display: flex; align-items: center; min-width: 100px; --tbw: 52px; }
+  #tbrange { touch-action: none; -webkit-appearance: none; appearance: none; width: 100%; height: 18px; margin: 0; background: transparent; }
+  #tbrange::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: #c3cad6; }
+  #tbrange::-moz-range-track { height: 4px; border-radius: 2px; background: #c3cad6; }
+  #tbrange::-webkit-slider-thumb { -webkit-appearance: none; width: var(--tbw); height: 18px; margin-top: -7px; border-radius: 4px; background: #0a58ca; border: none; }
+  #tbrange::-moz-range-thumb { width: var(--tbw); height: 18px; border-radius: 4px; background: #0a58ca; border: none; }
+  #tbtime { position: absolute; top: 0; bottom: 0; width: var(--tbw); display: flex; align-items: center; justify-content: center; pointer-events: none; color: #fff; font: 11px system-ui, sans-serif; font-variant-numeric: tabular-nums; }
   .legendbar { background: #fff; border-radius: 5px; box-shadow: 0 1px 5px rgba(0,0,0,.4); }
   .legendbar button { border: none; background: none; cursor: pointer; padding: 3px 10px; font: 12px/1.4 system-ui, sans-serif; color: #345; }
   body.legendhidden .leaflet-control-layers { display: none; }
@@ -244,7 +253,7 @@
 </aside>
 <div id="map"></div>
 <div id="clock" title="Current time, UTC"></div>
-<div id="timebar" hidden title="Drag to see where the aircraft was at a time on this flight; the radar and the satellite follow it."><span id="tbstart"></span><input type="range" id="tbrange" aria-label="Time on this flight"><span id="tbend"></span><b id="tbtime"></b><button id="tbreset" type="button" title="Back to now: no time marked, and the live radar and satellite in place of the ones for a time" hidden>Current</button></div>
+<div id="timebar" hidden title="Drag to see where the aircraft was at a time on this flight; the radar and the satellite follow it. All the way to the right is Live: the newest position and the live radar and satellite."><span id="tbstart"></span><span id="tbtrack"><input type="range" id="tbrange" aria-label="Time on this flight"><span id="tbtime"></span></span><span id="tbend"></span></div>
 <div id="wxbadges">
   <div class="wxbadge" id="radarbadge" hidden title="The newest frame of the radar composite on the map. It is refreshed every 5 minutes."></div>
   <div class="wxbadge" id="recbadge" hidden title="Radar this server recorded near the followed aircraft, for the time of the selected message (or the newest position). The arrows step through the recorded frames."><button id="recprev" title="The recorded frame before this one">&#9664;</button> <span id="rectext"></span> <button id="recnext" title="The recorded frame after this one">&#9654;</button></div>
@@ -622,7 +631,7 @@ function setViewTime(ms, what) {
   viewTimeChanged();
 }
 // The selection, or a step, moved the time that the radar and the satellite are drawn for.
-// The first time chosen after "now" switches the radar and the satellite to their Past versions (and "Current" back to Live); after
+// The first time chosen after "now" switches the radar and the satellite to their Past versions (and the slider at its right-hand end back to Live); after
 // that the switches are the viewer's, so moving the time does not undo their choice.
 let timed = false;
 function viewTimeChanged() {
@@ -669,35 +678,71 @@ function timeCursorPrepare() {
   const fixes = unifiedFixes(ctx.pts, ctx.msgs).filter(f => f.t >= ctx.chosen.startMs - FLIGHT_TOL && f.t <= ctx.chosen.endMs + FLIGHT_TOL);
   if (fixes.length >= 2) cursorData = {fixes, paths: estimatedPaths(ctx.pts, ctx.msgs, ctx.plan)};
 }
+const TB_HANDLE = 52;   // the handle's width in px, the same as --tbw in the CSS
+// The browser draws the handle with its left edge at the fraction f of the slider's width less its own.
+const handleLeft = (f, width) => f * (width - TB_HANDLE);
+// The value for a handle dragged to the pointer at x (px across the slider), keeping the grip where it was taken on the handle.
+const handleValue = (x, grip, width, lo, hi) => lo + Math.max(0, Math.min(1, (x - grip) / (width - TB_HANDLE))) * (hi - lo);
 function timeCursorSync() {
   const bar = document.querySelector('#timebar');
   cursorGroup.clearLayers();
   bar.hidden = !cursorData;
   if (!cursorData) return;
   const {fixes, paths} = cursorData, lo = fixes[0].t, hi = fixes.at(-1).t, range = document.querySelector('#tbrange');
-  range.min = lo; range.max = hi; range.step = 60000;
+  range.min = lo; range.max = hi; range.step = 'any';   // so the right-hand end, which is Live, can be reached
   document.querySelector('#tbstart').textContent = stamp(lo);
   document.querySelector('#tbend').textContent = stamp(hi);
-  const label = document.querySelector('#tbtime'), reset = document.querySelector('#tbreset');
-  reset.hidden = recAt == null;
-  if (recAt == null) { range.value = hi; label.textContent = ''; return; }   // no time chosen: the newest, and no cursor
+  const label = document.querySelector('#tbtime');
+  if (recAt == null) {   // no time chosen: live, the handle at the newest end saying so, and no aircraft
+    range.value = hi; label.textContent = 'Live'; label.style.left = `calc(1 * (100% - ${TB_HANDLE}px))`;
+    return;
+  }
   const t = Math.max(lo, Math.min(hi, recAt));
   range.value = t;
-  label.textContent = stamp(t);
+  label.textContent = `${fmtTime(t).slice(0, 5)}Z`;   // the date is at the ends of the bar
+  label.style.left = `calc(${hi > lo ? (t - lo) / (hi - lo) : 1} * (100% - ${TB_HANDLE}px))`;   // where the handle is: its travel is the width less its own
   const p = placeAt(fixes, paths, t);
   const alt = Number.isFinite(p.alt) ? `${num(Math.round(p.alt / 100) * 100)} ft` : '', gs = Number.isFinite(p.gs) ? `${Math.round(p.gs)} kt` : '';
   L.marker(ll(p.lat, p.lon), {icon: planeIcon(p.trk ?? 0, {fill: '#0a58ca', opacity: .75, className: 'plane timecursor'}), zIndexOffset: 850, interactive: true}).addTo(cursorGroup)
     .bindTooltip(tip(`${stamp(t)}`, [alt, gs].filter(Boolean).join(' \u00b7 '),
       p.estimated ? `estimated: no position between ${fmtTime(p.a.t).slice(0, 5)} and ${fmtTime(p.b.t).slice(0, 5)}` : p.a === p.b ? 'at a recorded position' : `between the positions of ${fmtTime(p.a.t).slice(0, 5)} and ${fmtTime(p.b.t).slice(0, 5)}`));
 }
-document.querySelector('#tbrange').oninput = e => { recAt = Number(document.querySelector('#tbrange').value); recAtWhat = 'the slider'; viewTimeChanged(); };
+// The browser jumps the handle to the pointer when it is pressed, wherever on the handle that is. So a press on the handle is taken over
+// here: it keeps the grip where it was, and the handle moves only as the pointer does. A press on the bare track is left to the browser.
+{
+  const range = document.querySelector('#tbrange');
+  let grip = null;
+  const onHandle = e => {
+    const r = range.getBoundingClientRect(), x = e.clientX - r.left, left = handleLeft((range.value - range.min) / ((range.max - range.min) || 1), r.width);
+    return x >= left && x <= left + TB_HANDLE ? x - left : null;
+  };
+  if (range.addEventListener) {
+    range.addEventListener('mousedown', e => { if (onHandle(e) != null) e.preventDefault(); });
+    range.addEventListener('pointerdown', e => {
+      const g = onHandle(e);
+      if (g == null) return;
+      e.preventDefault(); grip = g; range.focus(); range.setPointerCapture(e.pointerId);
+    });
+    range.addEventListener('pointermove', e => {
+      if (grip == null) return;
+      range.value = handleValue(e.clientX - range.getBoundingClientRect().left, grip, range.getBoundingClientRect().width, Number(range.min), Number(range.max));
+      range.oninput();
+    });
+    for (const ev of ['pointerup', 'pointercancel']) range.addEventListener(ev, () => { grip = null; });
+  }
+}
+// All the way to the right is Live (and a slider that is already live is left as it is, with whatever the viewer set the switches to).
+document.querySelector('#tbrange').oninput = () => {
+  const range = document.querySelector('#tbrange');
+  if (Number(range.value) >= Number(range.max)) { if (recAt != null) goCurrent(); return; }
+  recAt = Number(range.value); recAtWhat = 'the slider'; viewTimeChanged();
+};
 // Back to now: no time marked, and the radar and the satellite switch to Live (whether or not they are on).
 function goCurrent() {
   recAt = recSelMs = recSelSeen = null; recAtWhat = null;
   wxSetMode('radar', 'live'); wxSetMode('sat', 'live');
   viewTimeChanged();
 }
-document.querySelector('#tbreset').onclick = goCurrent;
 
 document.querySelector('#satatprev').onclick = () => { if (satAtMs != null) { recAt = satAtMs - SAT.stepMin * 60000; recAtWhat = null; viewTimeChanged(); } };
 document.querySelector('#satatnext').onclick = () => { if (satAtMs != null) { recAt = satAtMs + SAT.stepMin * 60000; recAtWhat = null; viewTimeChanged(); } };
