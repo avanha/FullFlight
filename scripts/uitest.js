@@ -1613,6 +1613,17 @@ highlightGroup = null;
       assert.strictEqual(await swap(true, false), '0100', 'radar only');
       assert.strictEqual(await swap(false, true), '0001', 'IR only');
       assert.strictEqual(await swap(false, false), '0000', 'none stays none');
+      // and the other way: the first time chosen swaps live for at-a-time, once; a layer the viewer ticks back stays
+      const state = () => [t.recLayer, t.radarLayer, t.satAtGroup, t.satGroup].map(g => Number(t.map.hasLayer(g))).join('');
+      for (const g of [t.recLayer, t.satAtGroup, t.radarLayer, t.satGroup]) t.map.removeLayer(g);
+      t.map.addLayer(t.radarLayer); t.map.addLayer(t.satGroup);
+      t.recFollow({id: 960, t: new Date(ms(16, 15)).toISOString()}); await settle();
+      assert.strictEqual(state(), '1010', 'going back in time: both become the ones at a time');
+      t.map.removeLayer(t.recLayer); t.map.addLayer(t.radarLayer);
+      range.value = ms(16, 40); range.oninput(); await settle();
+      assert.strictEqual(state(), '0110', 'the viewer ticked live radar back: moving the time leaves it');
+      reset.onclick(); await settle();
+      assert.strictEqual(state(), '0101', 'Current: live again');
       for (const g of [t.radarLayer, t.satGroup]) t.map.removeLayer(g);
       // all flights: no slider, and no aircraft
       dots[1].handlers.click(); await settle();

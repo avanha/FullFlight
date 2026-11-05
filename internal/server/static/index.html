@@ -607,7 +607,18 @@ function setViewTime(ms, what) {
   viewTimeChanged();
 }
 // The selection, or a step, moved the time that the radar and the satellite are drawn for.
-function viewTimeChanged() { if (map.hasLayer(recLayer)) recUpdate(); satAtUpdate(); timeCursorSync(); }
+// The first time chosen after "now" swaps the live radar and satellite for the ones at a time (and "Current" swaps them back); after
+// that the layers are the viewer's to toggle, so moving the time does not undo their choice.
+let timed = false;
+function viewTimeChanged() {
+  if (recAt != null && !timed) {
+    if (map.hasLayer(radarLayer)) { map.removeLayer(radarLayer); map.addLayer(recLayer); }
+    if (map.hasLayer(satGroup)) { map.removeLayer(satGroup); map.addLayer(satAtGroup); }
+  }
+  timed = recAt != null;
+  if (map.hasLayer(recLayer)) recUpdate();
+  satAtUpdate(); timeCursorSync();
+}
 // ---- the time cursor: a slider over the flight, and the aircraft where it was at that time ------------------------
 // Drawn only for one flight (not "all flights"). The slider sets the same time as a message, a dot and the arrows, so the radar and
 // the satellite follow it. Between fixes the aircraft is placed by interpolation, along the dotted estimated path where the track

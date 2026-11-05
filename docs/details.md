@@ -934,7 +934,8 @@ badge arrows, so the recorded radar and the infrared follow it, and a translucen
 at the dot or report itself, between the two positions either side by interpolation (altitude and speed too), or, where the track
 has a silence, along the dotted estimated path, with the tooltip saying it is an estimate. A button beside the slider, **Current**,
 takes the time away again (the aircraft is not marked until a time is chosen) and swaps whichever of the recorded radar and the
-infrared at a time is on for the live radar and the live infrared (none on stays none). Choosing another target or flight does the same. There are no message ticks on it (the messages are on
+infrared at a time is on for the live radar and the live infrared (none on stays none). Choosing another target or flight does the same.
+Going the other way, the first time chosen after that (the slider, a message, a dot or an arrow) swaps the live radar and infrared for the recorded radar and the infrared at a time, again keeping which are on. After that the legend boxes are yours: ticking one back does not get undone by moving the time. There are no message ticks on it (the messages are on
 the track), and no play button yet.
 
 **Folding the legend.** A **Legend ▾** bar above the two legend boxes at the bottom left folds them away (the bar then reads
