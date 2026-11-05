@@ -104,7 +104,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {WX, wxSetMode, radarLayer, satGroup, map, cursorGroup, placeAt, clearGrey, satAtGroup, satAtUpdate, SAT, recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {recNote, WX, wxSetMode, radarLayer, satGroup, map, cursorGroup, placeAt, clearGrey, satAtGroup, satAtUpdate, SAT, recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -1587,13 +1587,13 @@ highlightGroup = null;
       assert.strictEqual(t.cursorGroup.items[0].o.icon.className, 'plane timecursor', 'drawn apart from the aircraft itself');
       assert.ok(lines(t.cursorGroup.items[0].tooltip).includes('at a recorded position'), lines(t.cursorGroup.items[0].tooltip).join(' | '));
       assert.strictEqual(Number(range.value), ms(16, 25)); assert.strictEqual(tbTime.textContent, '10-30 16:25Z'); assert.strictEqual(reset.hidden, false);
-      assert.strictEqual(document.querySelector('#rectext').textContent, 'Radar \u00b7 10-30 16:20Z (5 min before the clicked position)');
+      assert.strictEqual(document.querySelector('#rectext').textContent, 'Radar \u00b7 10-30 16:20Z (-5m)');
       // dragging the slider moves it between the fixes, and says it is a guess where there was a silence
       range.value = ms(16, 35); range.oninput(); await settle();
       assert.strictEqual(t.cursorGroup.items.length, 1, 'one aircraft, moved');
       assert.ok(t.cursorGroup.items[0].ll[0] === 10 && Math.abs((((t.cursorGroup.items[0].ll[1] - 120) % 360) + 360) % 360 - 8 * 10 / 70) < 0.05, 'a seventh of the way to the next fix: ' + t.cursorGroup.items[0].ll);
       assert.match(lines(t.cursorGroup.items[0].tooltip).join(' | '), /estimated: no position between 16:25 and 17:35/);
-      assert.strictEqual(document.querySelector('#rectext').textContent, 'Radar \u00b7 10-30 16:40Z (5 min after the slider)', document.querySelector('#rectext').textContent);
+      assert.strictEqual(document.querySelector('#rectext').textContent, 'Radar \u00b7 10-30 16:40Z (+5m)', document.querySelector('#rectext').textContent);
       // selecting a message moves it too; "Current" takes it away
       t.recFollow({id: 960, t: new Date(ms(16, 15)).toISOString()}); await settle();
       assert.strictEqual(Number(range.value), ms(16, 15)); assert.strictEqual(t.cursorGroup.items.length, 1);
@@ -1672,9 +1672,12 @@ highlightGroup = null;
     fetchLog.length = 0;
     await t.recLoad(); await settle();
     assert.strictEqual(badge.hidden, false);
+    // how a badge says where its frame is from the time wanted: +/- minutes, "Latest" or "Now" with no time chosen, nothing after an arrow
+    assert.deepStrictEqual([t.recNote(600000, 'the slider'), t.recNote(-300000, 'the clicked position'), t.recNote(0, 'the selected message'), t.recNote(-600000, 'the newest position'),
+      t.recNote(0, 'the newest position'), t.recNote(120000, 'now'), t.recNote(600000, 'this frame')], [' (+10m)', ' (-5m)', '', ' (Latest -10m)', ' (Latest)', ' (Now +2m)', '']);
     // a message at 16:25 is nearest the 16:20 frame, which is five minutes before it
     t.recFollow({id: 900, t: at(16, 25)}); await settle();
-    assert.strictEqual(text(), 'Radar \u00b7 10-30 16:20Z (5 min before the selected message)');
+    assert.strictEqual(text(), 'Radar \u00b7 10-30 16:20Z (-5m)');
     assert.ok(fetchLog.includes(`/api/weather/radar/${frame(16, 20).id}/tiles`), 'the frame\'s recorded tiles are asked for: ' + fetchLog);
     assert.deepStrictEqual([...t.recKeys].sort(), ['100/60', '101/60'], 'and only those are drawn');
     // the arrows step through the frames
@@ -1688,7 +1691,7 @@ highlightGroup = null;
     t.recFollow({id: 900, t: at(16, 25)}); await settle();
     assert.strictEqual(text(), 'Radar \u00b7 10-30 16:00Z', 'the same selection does not undo a step');
     t.recFollow({id: 901, t: at(16, 41)}); await settle();
-    assert.strictEqual(text(), 'Radar \u00b7 10-30 16:40Z (1 min before the selected message)');
+    assert.strictEqual(text(), 'Radar \u00b7 10-30 16:40Z (-1m)');
     // a time with no recording near it says so, and shows no radar
     t.recFollow({id: 902, t: at(19, 0)}); await settle();
     assert.strictEqual(text(), 'No radar recorded near 10-30 19:00Z (recorded 10-30 16:00Z to 10-30 16:40Z)');
@@ -1713,7 +1716,7 @@ highlightGroup = null;
     t.satAtGroup.onMap = true;
     t.recFollow({id: 910, t: at(16, 25)});
     assert.strictEqual(satBadge.hidden, false);
-    assert.strictEqual(satText(), 'Satellite IR \u00b7 10-30 16:20Z (5 min before the selected message)', 'the ten-minute frame at or before the time');
+    assert.strictEqual(satText(), 'Satellite IR \u00b7 10-30 16:20Z (-5m)', 'the ten-minute frame at or before the time');
     assert.ok(t.SAT.birds.every(b => b.atTiles.frameMs === frameOf(16, 20)), 'every satellite is set to that frame');
     document.querySelector('#satatnext').onclick();
     assert.strictEqual(satText(), 'Satellite IR \u00b7 10-30 16:30Z', 'the arrow steps ten minutes');

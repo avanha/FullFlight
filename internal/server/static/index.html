@@ -510,7 +510,13 @@ function recTarget() {
 // A time as the badges write it: the date too when it is not today's (UTC), so a frame from days ago is not taken for today's.
 const stamp = ms => `${new Date(ms).toISOString().slice(0, 10) === new Date().toISOString().slice(0, 10) ? '' : new Date(ms).toISOString().slice(5, 10) + ' '}${fmtTime(ms).slice(0, 5)}Z`;
 const recTime = stamp;
-const recAgo = ms => { const m = Math.round(Math.abs(ms) / 60000); return m === 0 ? 'the same time' : `${m} min ${ms < 0 ? 'before' : 'after'}`; };
+// How far a frame is from the time wanted, for a badge: "+10m" when it is after it and "-10m" before, with "Latest" (or "Now") in front
+// when no time was chosen. The time chosen is shown by the slider, so it is not named. Nothing when the frame was reached by the arrows.
+function recNote(offMs, what) {
+  const m = Math.round(offMs / 60000), off = m === 0 ? '' : `${m < 0 ? '-' : '+'}${Math.abs(m)}m`;
+  const note = [what === 'the newest position' ? 'Latest' : what === 'now' ? 'Now' : '', off].filter(Boolean).join(' ');
+  return what === 'this frame' || !note ? '' : ` (${note})`;
+}
 async function recUpdate() {
   const badge = $('#recbadge'), on = map.hasLayer(recLayer);
   badge.hidden = !on;
@@ -526,7 +532,7 @@ async function recUpdate() {
     text.textContent = `No radar recorded near ${recTime(want.ms)} (recorded ${recTime(recFrames[0].ms)} to ${recTime(recFrames.at(-1).ms)})`;
     return;
   }
-  text.textContent = `Radar \u00b7 ${recTime(f.ms)}${want.what === 'this frame' ? '' : ` (${recAgo(f.ms - want.ms)} ${want.what})`}`;
+  text.textContent = `Radar \u00b7 ${recTime(f.ms)}${recNote(f.ms - want.ms, want.what)}`;
   if (recFrameShown === f.id) return;
   const seq = ++recSeq;
   try {
@@ -605,7 +611,7 @@ function satAtUpdate() {
     text.textContent = `No infrared for ${stamp(want.ms)}: GIBS keeps about 90 days`;
   } else {
     if (ms !== satAtMs) { satAtMs = ms; SAT.birds.forEach(b => { b.atTiles.frameMs = ms; b.atTiles.redraw(); }); }
-    text.textContent = `Satellite IR \u00b7 ${stamp(ms)}${want.what === 'this frame' ? '' : ` (${recAgo(ms - want.ms)} ${want.what})`}`;
+    text.textContent = `Satellite IR \u00b7 ${stamp(ms)}${recNote(ms - want.ms, want.what)}`;
   }
   document.querySelector('#satatnext').disabled = ms + step > now - SAT.startBackMin * 60000;
 }
