@@ -7,9 +7,27 @@ import (
 	"strings"
 )
 
-// Avianca's 787s send position and takeoff reports in four formats of their own, none of them documented. All are read
-// from samples (N781AV, October and November 2026) and checked against the aircraft's own track, so the fields are named
-// for what they matched, and the ones that were not understood are left out.
+// 787s send position and takeoff reports in four formats of their own, none of them documented. All are read from samples
+// and checked against the aircraft's own track, so the fields are named for what they matched, and the ones that were not
+// understood are left out. Only the EB report is known to be shared: United's N24993, Air Canada's C-FNOH and Avianca's N781AV
+// send it. The others (label 83, 99 and 24) have so far come from N781AV alone, so their airline is only what their flight
+// number says, and a report that names none is an "Airline" report rather than a guess.
+
+// opsAirlineOf names the airline for a report's start: that of its flight's callsign when it has one.
+func opsAirlineOf(callsign string) string {
+	if len(callsign) >= 3 {
+		return opsAirline(callsign[:3])
+	}
+	return ""
+}
+
+// reportStart is how a summary begins: the airline where we know it, else "Airline", as elsewhere (see aoc.go).
+func reportStart(o OpsReport) string {
+	if o.Airline != "" {
+		return o.Airline
+	}
+	return "Airline"
+}
 
 // A position as these reports write it: degrees, then minutes in tenths (N40382 is 40 38.2 N).
 func tenthMinutes(ns, latDeg, latMin, ew, lonDeg, lonMin string) (lat, lon float64) {
@@ -55,13 +73,13 @@ func groupThousands(n int) string {
 // 12,205 ft just after takeoff, 38328 is cruise), true airspeed, the temperature, the wind speed and the direction it blows
 // from (negative for 180 to 360, as in the Delta report: the ground speeds the track gave agree with it), fuel on board in kg,
 // and the ETA at the destination (hhmm UTC). The heading is a number that makes no sense and is not read. "03A" is not a date.
-var aviancaPosRe = regexp.MustCompile(`^3N01 POSRPT (\d{3,4})/([A-Z]{4})/([A-Z]{4}) \.([A-Z0-9-]+)/\d{2}[A-Z](\d{2}):(\d{2}) ?` +
+var posRpt83Re = regexp.MustCompile(`^3N01 POSRPT (\d{3,4})/([A-Z]{4})/([A-Z]{4}) \.([A-Z0-9-]+)/\d{2}[A-Z](\d{2}):(\d{2}) ?` +
 	`/WPY ?([^/]*?) ?/NWYP ?([^/]*?) ?/HDG ?[^/]*/MCH ?(\d*\.\d+) ?` +
 	`/POS ([NS])(\d{2})(\d{3}) ([EW])(\d{3})(\d{3})/FL ?(\d+)/TAS ?(\d+)/SAT ?([+-]?) ?(\d+) ?` +
 	`/SWND ?(\d+)/DWND ?(-?) ?(\d+)/FOB ?(\d+)/ETA ?(\d{4}|-*)`)
 
-func parseAviancaPOSRPT(text string) (opsParsed, bool) {
-	m := aviancaPosRe.FindStringSubmatch(spaces.ReplaceAllString(strings.TrimSpace(text), " "))
+func parsePOSRPT83(text string) (opsParsed, bool) {
+	m := posRpt83Re.FindStringSubmatch(spaces.ReplaceAllString(strings.TrimSpace(text), " "))
 	if m == nil {
 		return opsParsed{}, false
 	}
@@ -70,9 +88,10 @@ func parseAviancaPOSRPT(text string) (opsParsed, bool) {
 	if !ok || lat > 90 || lon < -180 || lon > 180 {
 		return opsParsed{}, false
 	}
-	o := OpsReport{Airline: "Avianca", Event: "POSRPT", Origin: m[2], Dest: m[3], Reg: m[4], ETA: hhmm(m[24]),
+	o := OpsReport{Event: "POSRPT", Origin: m[2], Dest: m[3], Reg: m[4], ETA: hhmm(m[24]),
 		Info: map[string]string{"waypoint": m[7], "next": m[8], "fob": m[23], "tas": m[17]}}
-	o.Callsign, o.Flight = opsFlight("AVA", m[1])
+	o.Callsign, o.Flight = opsFlight("AVA", m[1]) // (every sample of this format is Avianca's)
+	o.Airline = opsAirlineOf(o.Callsign)
 	alt := float64(atoi(m[16]))
 	temp := float64(atoi(m[19]))
 	if m[18] == "-" {
@@ -88,7 +107,7 @@ func parseAviancaPOSRPT(text string) (opsParsed, bool) {
 	}
 	mach := atof(m[9])
 	o.Info["mach"] = strconv.FormatFloat(mach, 'f', -1, 64)
-	s := fmt.Sprintf("Avianca %s position report %s %s, %s", o.name(), route(o.Origin, o.Dest), latlon(lat, lon), flightLevel(alt))
+	s := fmt.Sprintf("%s %s position report %s %s, %s", reportStart(o), o.name(), route(o.Origin, o.Dest), latlon(lat, lon), flightLevel(alt))
 	if mach > 0.4 {
 		s += fmt.Sprintf(", M%.3f", mach)
 	}
@@ -118,8 +137,8 @@ func parseEMR(text string) (opsParsed, bool) {
 		return opsParsed{}, false
 	}
 	alt := float64(atoi(m[11]))
-	o := OpsReport{Airline: "Avianca", Event: "EMR", Info: map[string]string{"mach": m[12], "tas": m[14]}}
-	s := fmt.Sprintf("Avianca position report %s, %s", latlon(lat, lon), flightLevel(alt))
+	o := OpsReport{Event: "EMR", Info: map[string]string{"mach": m[12], "tas": m[14]}}
+	s := fmt.Sprintf("%s position report %s, %s", reportStart(o), latlon(lat, lon), flightLevel(alt))
 	if mach := atof(m[12]); mach > 0.4 {
 		s += fmt.Sprintf(", M%.3f", mach)
 	}
@@ -145,15 +164,16 @@ func parseTKO(text string) (opsParsed, bool) {
 	if m == nil || hhmm(m[8]) == "" || hhmm(m[9]) == "" {
 		return opsParsed{}, false
 	}
-	o := OpsReport{Airline: "Avianca", Event: "TKO", Origin: m[6], Dest: m[7], Out: hhmm(m[8]), Off: hhmm(m[9]),
+	o := OpsReport{Event: "TKO", Origin: m[6], Dest: m[7], Out: hhmm(m[8]), Off: hhmm(m[9]),
 		Info: map[string]string{"day": m[3], "dep": m[11], "flaps": m[12], "taxi_fuel": m[10]}}
 	o.Callsign, o.Flight = opsFlight(m[1], m[2])
+	o.Airline = opsAirlineOf(o.Callsign)
 	fuel := atof(m[13])
 	if fuel < 1000 {
 		fuel *= 1000 // written in tonnes
 	}
 	o.Info["takeoff_fuel_kg"] = strconv.Itoa(int(fuel + .5))
-	s := fmt.Sprintf("Avianca %s takeoff report %s: %s kg of fuel, flaps %s", o.name(), route(o.Origin, o.Dest), groupThousands(int(fuel+.5)), m[12])
+	s := fmt.Sprintf("%s %s takeoff report %s: %s kg of fuel, flaps %s", reportStart(o), o.name(), route(o.Origin, o.Dest), groupThousands(int(fuel+.5)), m[12])
 	return opsParsed{rep: o, summary: s}, true
 }
 
@@ -204,12 +224,12 @@ func parseEB(text string) (opsParsed, bool) {
 		return opsParsed{}, false
 	}
 	n := fixes[len(fixes)-1]
-	o := OpsReport{Airline: "Avianca", Event: "EB", Origin: h[2], Dest: h[3], Reg: h[1], Info: map[string]string{"positions": strconv.Itoa(len(fixes))}}
+	o := OpsReport{Event: "EB", Origin: h[2], Dest: h[3], Reg: h[1], Info: map[string]string{"positions": strconv.Itoa(len(fixes))}}
 	w := &Weather{TempC: &n.temp}
 	if n.dir <= 360 && n.kt <= 250 {
 		w.WindDirDeg, w.WindKt = &n.dir, &n.kt
 	}
-	s := fmt.Sprintf("Avianca position report %s %s, %s", route(o.Origin, o.Dest), latlon(n.lat, n.lon), flightLevel(n.alt))
+	s := fmt.Sprintf("%s position report %s %s, %s", reportStart(o), route(o.Origin, o.Dest), latlon(n.lat, n.lon), flightLevel(n.alt))
 	var extra []string
 	if len(fixes) > 1 {
 		s += fmt.Sprintf(" (the newest of %d positions)", len(fixes))

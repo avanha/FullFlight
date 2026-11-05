@@ -7,7 +7,7 @@ import (
 )
 
 // Real messages from N781AV, an Avianca 787. The ones received late (the 28th, about four hours) keep the time inside them.
-func TestAviancaReports(t *testing.T) {
+func TestReports787(t *testing.T) {
 	recv := func(s string) time.Time { v, _ := time.Parse("2006-01-02 15:04:05", s); return v }
 	posrpt := "3N01 POSRPT 4907/LEMD/SKBO .N781AV/03A17:11\r\n/WPY AVILA/NWYP LONGA /HDG -88.79/MCH    .47\r\n/POS N40382 W003548/FL 12205/TAS 303/SAT +  1\r\n/SWND     7/DWND -  14/FOB 53800/ETA 0226"
 	r, err := Decode(Message{Label: "83", Text: posrpt})
@@ -38,7 +38,7 @@ func TestAviancaReports(t *testing.T) {
 	// label 99: the time to the second, the position, the altitude, the Mach number
 	emr := "EMR05/06:31:44,N39537W005182,31541,0.804,295,-17,461\r\n082,085,081,084\r\n8.6,32.8,9.0,33.4\r\n8200,+.1,+.0,-7778,-5.8,,,+.0\r\nL/G OFF,AP ENG,FLAP LVR 0,A/I AUTO"
 	r, _ = Decode(Message{Label: "99", Text: emr})
-	if r.Kind != KindOps || r.Pos == nil || r.Summary != "Avianca position report 39.895N 5.303W, FL315, M0.804" || *r.Pos.AltFt != 31541 {
+	if r.Kind != KindOps || r.Pos == nil || r.Summary != "Airline position report 39.895N 5.303W, FL315, M0.804" || *r.Pos.AltFt != 31541 {
 		t.Fatalf("%v %q", r.Kind, r.Summary)
 	}
 	if got := r.Pos.At(recv("2026-10-31 06:31:44")); !got.Equal(time.Date(2026, 10, 31, 6, 31, 44, 0, time.UTC)) {
@@ -62,9 +62,20 @@ func TestAviancaReports(t *testing.T) {
 		t.Errorf("%+v", o)
 	}
 
+	// EB names no flight, so it is no one airline's: United's and Air Canada's send it too
+	for _, c := range []struct{ text, tail string }{
+		{"EB0032AA_ N24993 KDENLIRF 75\r\n 49288-0978760118 37000-52921704701005Z004005", "N24993"},
+		{"EB0032AA_ C-FNOH WSSSCYVR117\r\n 49256-1232101517 02962 0421090290PGIH-055079", "C-FNOH"},
+	} {
+		r, _ = Decode(Message{Label: "H1", Text: c.text})
+		if r.Kind != KindOps || r.Pos == nil || r.Identity.Tail != c.tail || !strings.HasPrefix(r.Summary, "Airline position report ") || strings.Contains(r.Summary, "Avianca") {
+			t.Errorf("%s: %v %q", c.tail, r.Kind, r.Summary)
+		}
+	}
+
 	// EB: one position, with its temperature (-30) and wind (339 degrees, 16 kt)
 	r, _ = Decode(Message{Label: "H1", Text: "EB0032AA_ N781AV LEMDSKBO 36\r\n 40307-0050761720 24824-301339016010/9W003004"})
-	if r.Kind != KindOps || r.Pos == nil || r.Summary != "Avianca position report LEMD→SKBO 40.307N 5.076W, FL248" || r.Identity.Tail != "N781AV" {
+	if r.Kind != KindOps || r.Pos == nil || r.Summary != "Airline position report LEMD→SKBO 40.307N 5.076W, FL248" || r.Identity.Tail != "N781AV" {
 		t.Fatalf("%v %q", r.Kind, r.Summary)
 	}
 	if *r.Wx.TempC != -30 || *r.Wx.WindDirDeg != 339 || *r.Wx.WindKt != 16 || r.Pos.Secs != 17*3600+20*60 {
@@ -96,7 +107,7 @@ func TestAviancaReports(t *testing.T) {
 }
 
 // Avianca's progress report has no TS time, and a hex check on the end.
-func TestAviancaProgress(t *testing.T) {
+func TestProgress787(t *testing.T) {
 	r, _ := Decode(Message{Label: "H1", Text: "PRG/DTLEMD,32L,186,070523,046/FNAVA18231AA"})
 	if r.Kind != KindProgress || r.Summary != "Progress report AVA182 to LEMD runway 32L, ETA 07:05:23Z" {
 		t.Errorf("%v %q", r.Kind, r.Summary)

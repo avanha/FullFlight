@@ -61,7 +61,7 @@ func opsFlight(code, digits string) (callsign, flight string) {
 
 // opsAirline names the airline of an ICAO callsign prefix, for those that send operations messages we read.
 func opsAirline(code string) string {
-	return map[string]string{"ACA": "Air Canada", "UAL": "United", "CKK": "China Cargo", "TZP": "Zipair", "QFA": "Qantas"}[code]
+	return map[string]string{"ACA": "Air Canada", "UAL": "United", "CKK": "China Cargo", "TZP": "Zipair", "QFA": "Qantas", "AVA": "Avianca"}[code]
 }
 
 // hhmm accepts "1921" or "1921Z" and rejects the asterisks a message puts where a time is not yet known.
@@ -151,7 +151,7 @@ func parseOps(label, text string) (opsParsed, bool) {
 		}
 		return parseEB(text)
 	case "83":
-		return parseAviancaPOSRPT(text)
+		return parsePOSRPT83(text)
 	case "99":
 		return parseEMR(text)
 	case "24":

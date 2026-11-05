@@ -729,7 +729,9 @@ times in them join the evidence for a flight's route and departure.
   when they happened even if delivered days late, and name the flight at that time. A take-off report (`TOF`, or `TO` in the
   others) gives the moment of take-off to the second, which becomes the flight's departure time. The other numbers, and event
   codes beyond take-off, climb and cruise, are not interpreted.
-- **Avianca 787** (N781AV; all read from samples and checked against the aircraft's own track):
+- **787 position and takeoff reports** (read from Avianca's N781AV and checked against its own track; `EB` is also sent by United's N24993
+  and Air Canada's C-FNOH). A summary starts with the airline only when the report names a flight to tell it by (`AVA4907`); `EB` and
+  `EMR` name none, so they read "Airline position report" rather than guess:
   - `3N01 POSRPT 4907/LEMD/SKBO .N781AV/03A17:11 …` (label `83`, close kin of the Delta report below, with the time as `hh:mm` and no day):
     the flight and route, the position, the altitude **in feet**, speed, temperature, wind, fuel and the ETA. It is drawn as an
     "Airline" position.
