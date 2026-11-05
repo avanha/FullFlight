@@ -112,6 +112,14 @@ func TestProgress(t *testing.T) {
 	if !ok || p.Callsign != "UPS81" || p.To != "KONT" {
 		t.Errorf("%+v", p)
 	}
+	// Avianca's has no TS time, so there is no time of the report
+	p, ok = ParseProgress("PRG/DTEGLL,09L,146,142154,046/FNAVA120C3DC")
+	if !ok || p.Callsign != "AVA120" || p.To != "EGLL" || p.Runway != "09L" || p.ETA != "142154" || !p.At.IsZero() {
+		t.Errorf("%+v %v", p, ok)
+	}
+	if _, ok := ParseProgress("PRG/XYZ"); ok {
+		t.Error("not a progress report")
+	}
 	if _, ok := ParseProgress("FPN/RP:DA:KLAX:AA:KAUS:F:CNERY"); ok {
 		t.Error("a plan is not a progress report")
 	}

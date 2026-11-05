@@ -72,7 +72,7 @@ Then:
   [Details](docs/details.md#destination-from-the-aircraft)
 - **Current flight** is the newest flight worked out for a tail or hex watch, including the next one announced at the gate.
   [Details](docs/details.md#current-flight)
-- **Airline operations messages** (Qantas, Air Canada, United, China Cargo and others) are decoded and feed the route and
+- **Airline operations messages** (Qantas, Air Canada, United, China Cargo, Avianca and others) are decoded and feed the route and
   departure time. [Details](docs/details.md#airline-operations-messages)
 - **Clearances.** Oceanic clearances and Qantas pre-departure clearances are decoded and drawn as their own layer.
   [Oceanic](docs/details.md#oceanic-clearances) · [Pre-departure](docs/details.md#pre-departure-clearances)

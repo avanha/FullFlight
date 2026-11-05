@@ -43,7 +43,7 @@ type Progress struct {
 
 var (
 	planStart = regexp.MustCompile(`FPN/(?:FN[A-Z0-9]+/)?R[IP]:DA:`)
-	prgStart  = regexp.MustCompile(`^PRG/TS\d{6},\d{6}/`)
+	prgStart  = regexp.MustCompile(`^PRG/(?:TS\d{6},\d{6}/|DT[A-Z0-9]{4},)`) // Avianca sends it without the TS time
 	hex4      = regexp.MustCompile(`[0-9A-F]{4}$`)
 	icaoRe    = regexp.MustCompile(`^[A-Z0-9]{4}$`)
 	callRe    = regexp.MustCompile(`^[A-Z0-9]{3,8}$`)

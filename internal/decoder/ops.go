@@ -146,7 +146,16 @@ func parseOps(label, text string) (opsParsed, bool) {
 	case "A3", "A4":
 		return parseClearance(text)
 	case "H1":
-		return parseEngine(text)
+		if p, ok := parseEngine(text); ok {
+			return p, true
+		}
+		return parseEB(text)
+	case "83":
+		return parseAviancaPOSRPT(text)
+	case "99":
+		return parseEMR(text)
+	case "24":
+		return parseTKO(text)
 	}
 	return opsParsed{}, false
 }
@@ -592,6 +601,9 @@ func decodeOps(m Message) (Result, bool) {
 	r.Text = p.summary
 	if t := p.rep.times(); t != "" && !strings.Contains(p.summary, t) {
 		r.Text += "\n" + t
+	}
+	for _, l := range p.extra {
+		r.Text += "\n" + l
 	}
 	return r, true
 }

@@ -715,6 +715,23 @@ times in them join the evidence for a flight's route and departure.
   when they happened even if delivered days late, and name the flight at that time. A take-off report (`TOF`, or `TO` in the
   others) gives the moment of take-off to the second, which becomes the flight's departure time. The other numbers, and event
   codes beyond take-off, climb and cruise, are not interpreted.
+- **Avianca 787** (N781AV; all read from samples and checked against the aircraft's own track):
+  - `3N01 POSRPT 4907/LEMD/SKBO .N781AV/03A17:11 …` (label `83`, close kin of the Delta report below, with the time as `hh:mm` and no day):
+    the flight and route, the position, the altitude **in feet**, speed, temperature, wind, fuel and the ETA. It is drawn as an
+    "Airline" position.
+  - `EMR05/06:31:44,N39537W005182,31541,0.804,…` (label `99`): the time to the second, the position, altitude, Mach number and true
+    airspeed. The engine and system lines after it are not read.
+  - `EB0032AA_ N781AV LEMDSKBO 36` with a line `40307-0050761720 24824-30…` (label `H1`): a position, the time, altitude, temperature
+    and wind. `EB0031AA_` carries one a minute for several minutes: the newest is the position and the rest are listed in the
+    message's text. A line cut short by the block size is read as far as it goes. The `EB0021CA_` report and the maintenance dumps
+    stay undecoded.
+  - `TKO01 AVA4907/28281720/LEMD/SKBO` (label `24`), the takeoff report: the time it left the gate (`DT`) and took off (`TO`), which
+    become the flight's departure evidence like Air Canada's, and the fuel at takeoff in kg.
+  - `PRG/DTLEMD,32L,186,070523,046/FNAVA182…` (label `H1`) is a progress report without a time of its own: the destination,
+    runway, ETA and the flight. The numbers 186 and 046 are not understood.
+
+  These times are placed on the most recent day that is not after the message arrived, so a position that arrives hours late
+  (several did, on 28 October) lands where it was.
 - **Pre-departure clearances** (`A3`, `A4`, Beijing and Shanghai): the runway, SID and squawk
   (`ACA030 CLRD TO CYVR OFF 36R VIA MUGL7X SQUAWK 0075`), and the status of a request.
 - **Weather requests** (`5U`): Qantas asking for D-ATIS, TAF or METAR for a list of airports, and Fiji Airways and Delta's `WXRQ`.
