@@ -2144,10 +2144,12 @@ async function showTrack(w, focus) {
   if (!needOlder) loadOlderFlights(w.hex).then(() => { if (seq === showSeq) { setFlights(recent, w.hex); syncFlightSelector(); } });
   setFlights(recent, w.hex);
   syncFlightSelector();
-  // The window to fetch: the last few days, or, for a flight older than that, its own time.
+  // The window to fetch: the last few days, or, for a flight older than that or any but the latest, its own time. (The few days
+  // come newest first and capped, so on a busy day the latest flight's messages fill them and an earlier flight, though inside
+  // the window, would be left with none.)
   const own = chosenFlight();
   let span = `hours=${WINDOW_HOURS}`, limit = '';
-  if (own && own.startMs - FLIGHT_TOL < Date.now() - WINDOW_HOURS * 3600000) {
+  if (own && (!own.latest || own.startMs - FLIGHT_TOL < Date.now() - WINDOW_HOURS * 3600000)) {
     const from = own.startMs - 14 * 3600000, to = own.endMs + 3 * 3600000;   // (plans arrive up to half a day before)
     span = `hours=${Math.ceil((to - from) / 3600000)}&until=${encodeURIComponent(new Date(to).toISOString().slice(0, 19) + 'Z')}`;
     limit = '&limit=1000';

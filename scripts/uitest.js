@@ -1299,6 +1299,18 @@ highlightGroup = null;
       assert.ok(hrs >= 4 && hrs < 30, 'about the flight\'s length and a margin, not four days: ' + hrs);
       assert.strictEqual(t.flightChoice, 'CX700@b');
     });
+    // an earlier flight inside the window is fetched by its own time too: the usual window is capped at the newest 300 messages, which
+    // a busy latest flight can fill (N956AK's AS358 showed no messages beside AS421's)
+    const EARLIER = seg('CX800@c', 'CX800', hoursAgo(40), hoursAgo(36), {from: 'VHHH', to: 'KJFK'});
+    await withFlights([EARLIER, REC], async () => {
+      forgetOlder(); fetchLog.length = 0;
+      t.chooseFlight('recent'); await settle(); await settle();
+      assert.ok(!/until=/.test(msgUrl()) && !/limit=/.test(msgUrl()), 'the latest flight: the usual window: ' + msgUrl());
+      t.chooseFlight('CX800@c'); await settle();
+      assert.ok(/until=/.test(trackUrl()) && /until=/.test(msgUrl()) && /limit=1000/.test(msgUrl()), 'an earlier flight, though inside 96 hours: ' + trackUrl() + ' ' + msgUrl());
+      t.chooseFlight('recent'); await settle();
+      assert.ok(!/until=/.test(msgUrl()), 'and back to the usual window for the latest: ' + msgUrl());
+    });
     // an aircraft that has not flown for a week: its latest flight is the old one, and is fetched by its own window
     await withFlights([OLDER], async () => {
       forgetOlder(); fetchLog.length = 0;
