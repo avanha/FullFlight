@@ -104,7 +104,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {handleLeft, handleValue, TB_HANDLE, goCurrent, recNote, WX, wxSetMode, radarLayer, satGroup, map, cursorGroup, placeAt, clearGrey, satAtGroup, satAtUpdate, SAT, recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {slideDragTo, slideRelease, slideGrab: g => { slideGrip = g; }, recPicked, slideSnap, slideDist, SNAP_IN: SNAP_IN, SNAP_OUT: SNAP_OUT, slideKey, handleLeft, handleValue, TB_HANDLE, goCurrent, recNote, WX, wxSetMode, radarLayer, satGroup, map, cursorGroup, placeAt, clearGrey, satAtGroup, satAtUpdate, SAT, recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -1603,6 +1603,46 @@ highlightGroup = null;
       assert.ok(t.handleValue(pressedAt + 40, 20, 452, lo, hi) > lo + f * (hi - lo), 'and moving right moves it right');
       assert.strictEqual(t.handleValue(-500, 20, 452, lo, hi), lo, 'past the left end it stops at the first position');
       assert.strictEqual(t.handleValue(9999, 20, 452, lo, hi), hi, 'and past the right end at the last, which is Live');
+      // a refresh re-applies the selected message: after Live it must not take the page back to that message's time; picking it again does
+      const sel = {id: 960, t: new Date(ms(16, 15)).toISOString()};
+      t.recPicked(); t.recFollow(sel); await settle(); assert.strictEqual(t.recAt, ms(16, 15), 'selecting a message goes to its time');
+      t.goCurrent(); await settle();
+      t.recFollow(sel); await settle(); assert.strictEqual(t.recAt, null, 'the refresh leaves it live');
+      t.recFollow(sel); await settle(); assert.strictEqual(tbTime.textContent, 'Live');
+      t.recPicked(); t.recFollow(sel); await settle(); assert.strictEqual(t.recAt, ms(16, 15), 'picking the message again goes back to its time');
+      t.goCurrent(); await settle();
+      range.value = ms(16, 40); range.oninput(); await settle();
+      // the live end is a detent for the pointer: in at 6 px, out only past 10
+      assert.strictEqual(t.slideDist(hi, lo, hi, 452), 0); assert.strictEqual(t.slideDist(lo, lo, hi, 452), 400, 'a whole travel is the width less the handle');
+      assert.deepStrictEqual([0, t.SNAP_IN, t.SNAP_IN + 1].map(d => t.slideSnap(d, false)), [true, true, false], 'snaps within 6 px');
+      assert.deepStrictEqual([t.SNAP_IN + 1, t.SNAP_OUT, t.SNAP_OUT + 1].map(d => t.slideSnap(d, true)), [true, true, false], 'and holds until 10 px');
+      assert.strictEqual(range.classList.contains('live'), false, 'at a time the handle is blue');
+      t.goCurrent(); assert.strictEqual(range.classList.contains('live'), true, 'and in the live zone green');
+      range.value = ms(16, 40); range.oninput(); await settle();
+      // dragging: the handle stays under the pointer, and is Live (blue, saying so) as soon as it is in the zone, without jumping to the end
+      const W = 452, atDist = dist => (W - 52 - dist) + 20;   // the pointer's x when the handle holding it 20 px in is dist px from the end
+      t.slideGrab(20);
+      t.slideDragTo(atDist(40), W);
+      assert.ok(t.recAt != null && tbTime.textContent !== 'Live' && !range.classList.contains('live'), 'out of the zone: a time, grey');
+      t.slideDragTo(atDist(5), W);
+      assert.strictEqual(t.recAt, null, 'in the zone: live'); assert.strictEqual(tbTime.textContent, 'Live'); assert.ok(range.classList.contains('live'));
+      assert.ok(Number(range.value) < Number(range.max), 'and the handle did not jump to the end');
+      t.slideDragTo(atDist(9), W); assert.strictEqual(t.recAt, null, 'it takes more than 6 px to leave');
+      t.slideDragTo(atDist(11), W); assert.ok(t.recAt != null && tbTime.textContent !== 'Live', 'but 10 is enough');
+      t.slideDragTo(atDist(5), W); t.slideRelease();
+      assert.strictEqual(Number(range.value), Number(range.max), 'let go in the zone, it settles at the end'); assert.strictEqual(tbTime.textContent, 'Live');
+      range.value = ms(16, 40); range.oninput(); await settle();
+      // the keys move the handle: a minute with the arrows, ten with Shift, to the ends with Home and End (End is Live)
+      range.value = ms(16, 40); range.oninput(); await settle();
+      assert.strictEqual(t.slideKey('ArrowRight', false), true); assert.strictEqual(tbTime.textContent, '16:41Z');
+      t.slideKey('ArrowLeft', true); assert.strictEqual(tbTime.textContent, '16:31Z', 'Shift: ten minutes');
+      t.slideKey('PageUp', false); assert.strictEqual(tbTime.textContent, '16:41Z');
+      t.slideKey('Home', false); assert.strictEqual(tbTime.textContent, '16:05Z', 'Home: the first position');
+      t.slideKey('ArrowLeft', false); assert.strictEqual(tbTime.textContent, '16:05Z', 'and no further');
+      t.slideKey('End', false); assert.strictEqual(tbTime.textContent, 'Live', 'End: Live'); assert.strictEqual(t.recAt, null);
+      t.slideKey('ArrowRight', false); assert.strictEqual(tbTime.textContent, 'Live', 'nowhere right of Live');
+      t.slideKey('ArrowLeft', false); assert.strictEqual(tbTime.textContent, '17:34Z', 'left from Live: the minute before the newest');
+      assert.strictEqual(t.slideKey('a', false), false, 'other keys are the browser\'s');
       // all the way to the right is Live: the handle says so, the aircraft goes, and the weather is live
       range.value = range.max; range.oninput(); await settle();
       assert.strictEqual(tbTime.textContent, 'Live'); assert.strictEqual(t.cursorGroup.items.length, 0); assert.strictEqual(t.WX.radar.mode, 'live'); assert.strictEqual(t.recAt, null);
@@ -1611,23 +1651,23 @@ highlightGroup = null;
       assert.strictEqual(t.WX.radar.mode, 'past', 'the switch is the viewer\'s');
       t.goCurrent();
       // selecting a message moves it too; the Live button takes it away
-      t.recFollow({id: 960, t: new Date(ms(16, 15)).toISOString()}); await settle();
+      t.recPicked(); t.recFollow({id: 960, t: new Date(ms(16, 15)).toISOString()}); await settle();
       assert.strictEqual(Number(range.value), ms(16, 15)); assert.strictEqual(t.cursorGroup.items.length, 1);
       t.goCurrent(); await settle();
       assert.strictEqual(t.cursorGroup.items.length, 0, 'no time chosen: no aircraft'); assert.strictEqual(tbTime.textContent, 'Live', 'live again');
       assert.strictEqual(Number(range.value), ms(17, 35));
       // live: the right end of the slider ticks up as positions arrive, and the bar keeps its size (the readouts' widths are in the CSS)
       const tbend = document.querySelector('#tbend');
-      assert.strictEqual(tbend.textContent, '10-30 17:35Z');
+      assert.strictEqual(tbend.textContent, '17:35Z', 'the end is a time of day: its date is the start\'s'); assert.strictEqual(document.querySelector('#tbplus').textContent, '');
       await draw([apt(5, 118), apt(25, 120), apt(0, 128, {t: '2026-10-30T17:35:00Z'}), apt(0, 129, {t: '2026-10-30T17:50:00Z'})], [], false);
-      assert.strictEqual(tbend.textContent, '10-30 17:50Z', 'the end is the newest position'); assert.strictEqual(Number(range.max), ms(17, 50));
+      assert.strictEqual(tbend.textContent, '17:50Z', 'the end is the newest position'); assert.strictEqual(Number(range.max), ms(17, 50));
       assert.strictEqual(Number(range.value), ms(17, 50), 'and the live slider rides at it'); assert.strictEqual(tbTime.textContent, 'Live');
       await draw([apt(5, 118), apt(25, 120), apt(0, 128, {t: '2026-10-30T17:35:00Z'})], [], false);
       // Radar and satellite are a legend row each, with a Live | Past switch: only one version is ever on the map.
       // (The fake map fires no events, so ticking a row is the map's add and the row's own handler.)
       const tick = (kind, on) => { const w = t.WX[kind]; for (const g of [w.proxy, w.live, w.past]) t.map.removeLayer(g); if (on) { t.map.addLayer(w.proxy); w.proxy.handlers.add(); } };
       const state = () => [t.recLayer, t.radarLayer, t.satAtGroup, t.satGroup].map(g => Number(t.map.hasLayer(g))).join('');
-      const first = async () => { t.recFollow({id: 960, t: new Date(ms(16, 15)).toISOString()}); await settle(); };
+      const first = async () => { t.recPicked(); t.recFollow({id: 960, t: new Date(ms(16, 15)).toISOString()}); await settle(); };
       t.goCurrent();
       for (const [radar, sat, live, past] of [[1, 1, '0101', '1010'], [1, 0, '0100', '1000'], [0, 1, '0001', '0010'], [0, 0, '0000', '0000']]) {
         tick('radar', radar); tick('sat', sat);
@@ -1664,6 +1704,15 @@ highlightGroup = null;
       assert.strictEqual(bar.hidden, true, 'not for all flights');
       assert.strictEqual(t.cursorGroup.items.length, 0);
       t.chooseFlight('recent'); await settle();
+    });
+    // a flight that crosses midnight UTC: its end is marked +1, in space kept for it
+    await withFlights([seg('CX843@2', 'CX843', '2026-10-30T22:00:00Z', '2026-10-31T02:00:00Z')], async () => {
+      t.chooseFlight('recent'); await settle();
+      await draw([apt(5, 118, {t: '2026-10-30T23:30:00Z'}), apt(25, 120, {t: '2026-10-30T23:50:00Z'}), apt(0, 128, {t: '2026-10-31T00:20:00Z'})], [], false);
+      assert.strictEqual(document.querySelector('#tbstart').textContent, '10-30 23:30Z'); assert.strictEqual(document.querySelector('#tbend').textContent, '00:20Z');
+      assert.strictEqual(document.querySelector('#tbplus').textContent, '+1', 'the end is the day after the start');
+      await draw([apt(5, 118, {t: '2026-10-30T23:30:00Z'}), apt(25, 120, {t: '2026-10-30T23:50:00Z'}), apt(0, 128, {t: '2026-10-30T23:55:00Z'})], [], false);
+      assert.strictEqual(document.querySelector('#tbplus').textContent, '', 'and nothing when it is the same day');
     });
     t.recLayer.onMap = false;
     await draw([], [], false);

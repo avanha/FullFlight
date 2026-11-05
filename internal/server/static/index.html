@@ -138,20 +138,28 @@
   .wxbadge { padding: 2px 8px; border-radius: 4px; font: 12px system-ui, sans-serif; background: rgba(255,255,255,.9); border: 1px solid #aaa; color: #345; }
   .wxbadge[hidden] { display: none; }
   /* a bar above the legend boxes that folds them away; the layers stay as they are */
-  #timebar { position: fixed; bottom: 14px; left: 620px; right: 90px; z-index: 1000; display: flex; align-items: center; gap: 8px; padding: 4px 10px;
+  #timebar { position: fixed; bottom: 14px; left: 620px; right: 90px; z-index: 1000; display: flex; align-items: center; gap: 6px; padding: 4px 10px;
              background: rgba(255,255,255,.92); border: 1px solid #aaa; border-radius: 6px; font: 12px system-ui, sans-serif; color: #345; }
   #timebar[hidden] { display: none; }
-  /* the readouts at the ends keep their width, so the bar does not change size between live and a chosen time */
-  #timebar #tbstart, #timebar #tbend { min-width: 12ch; font-variant-numeric: tabular-nums; }
-  #timebar #tbend { text-align: right; }
+  /* the times at the ends are as wide as they are (the digits all the same width, so a minute ticking over does not move the slider) */
+  #timebar #tbstart, #timebar #tbend { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  /* room is kept after the end time for "+1", the day after the start when the flight crosses midnight UTC, so it does not move the slider */
+  #tbplus { display: inline-block; width: 2.4ch; text-align: left; }
   /* the handle is a rectangle (--tbw wide) with the chosen time (hh:mmZ) written in it, or "Live" at the right-hand end */
-  #tbtrack { position: relative; flex: 1 1 auto; display: flex; align-items: center; min-width: 100px; --tbw: 52px; }
+  #tbtrack { position: relative; flex: 1 1 auto; display: flex; align-items: center; min-width: 100px; --tbw: 52px; --tbz: 6px; }
   #tbrange { touch-action: none; -webkit-appearance: none; appearance: none; width: 100%; height: 18px; margin: 0; background: transparent; }
-  #tbrange::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: #c3cad6; }
-  #tbrange::-moz-range-track { height: 4px; border-radius: 2px; background: #c3cad6; }
-  #tbrange::-webkit-slider-thumb { -webkit-appearance: none; width: var(--tbw); height: 18px; margin-top: -7px; border-radius: 4px; background: #0a58ca; border: none; }
-  #tbrange::-moz-range-thumb { width: var(--tbw); height: 18px; border-radius: 4px; background: #0a58ca; border: none; }
-  #tbtime { position: absolute; top: 0; bottom: 0; width: var(--tbw); display: flex; align-items: center; justify-content: center; pointer-events: none; color: #fff; font: 11px system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+  /* the last --tbz px of the handle's travel are the live zone, drawn in the active blue (the handle's centre travels from half its width in) */
+  #tbrange::-webkit-slider-runnable-track { height: 4px; border-radius: 2px;
+    background: linear-gradient(to right, #c3cad6 calc(100% - var(--tbw) / 2 - var(--tbz)), #0a58ca 0 calc(100% - var(--tbw) / 2), #c3cad6 0); }
+  #tbrange::-moz-range-track { height: 4px; border-radius: 2px;
+    background: linear-gradient(to right, #c3cad6 calc(100% - var(--tbw) / 2 - var(--tbz)), #0a58ca 0 calc(100% - var(--tbw) / 2), #c3cad6 0); }
+  /* a control grey at a chosen time, the active blue (as the legend's Live | Past switch) when live */
+  #tbrange::-webkit-slider-thumb { -webkit-appearance: none; box-sizing: border-box; width: var(--tbw); height: 18px; margin-top: -7px; border-radius: 4px; background: #eef0f4; border: 1px solid #8a94a6; }
+  #tbrange::-moz-range-thumb { box-sizing: border-box; width: var(--tbw); height: 18px; border-radius: 4px; background: #eef0f4; border: 1px solid #8a94a6; }
+  #tbrange.live::-webkit-slider-thumb { background: #0a58ca; border-color: #0a58ca; }
+  #tbrange.live::-moz-range-thumb { background: #0a58ca; border-color: #0a58ca; }
+  #tbrange.live + #tbtime { color: #fff; }
+  #tbtime { position: absolute; top: 0; bottom: 0; width: var(--tbw); display: flex; align-items: center; justify-content: center; pointer-events: none; color: #345; font: 11px system-ui, sans-serif; font-variant-numeric: tabular-nums; }
   .legendbar { background: #fff; border-radius: 5px; box-shadow: 0 1px 5px rgba(0,0,0,.4); }
   .legendbar button { border: none; background: none; cursor: pointer; padding: 3px 10px; font: 12px/1.4 system-ui, sans-serif; color: #345; }
   body.legendhidden .leaflet-control-layers { display: none; }
@@ -253,7 +261,7 @@
 </aside>
 <div id="map"></div>
 <div id="clock" title="Current time, UTC"></div>
-<div id="timebar" hidden title="Drag to see where the aircraft was at a time on this flight; the radar and the satellite follow it. All the way to the right is Live: the newest position and the live radar and satellite."><span id="tbstart"></span><span id="tbtrack"><input type="range" id="tbrange" aria-label="Time on this flight"><span id="tbtime"></span></span><span id="tbend"></span></div>
+<div id="timebar" hidden title="Drag to see where the aircraft was at a time on this flight; the radar and the satellite follow it. All the way to the right is Live: the newest position and the live radar and satellite."><span id="tbstart"></span><span id="tbtrack"><input type="range" id="tbrange" aria-label="Time on this flight"><span id="tbtime"></span></span><span id="tbendbox"><span id="tbend"></span><span id="tbplus"></span></span></div>
 <div id="wxbadges">
   <div class="wxbadge" id="radarbadge" hidden title="The newest frame of the radar composite on the map. It is refreshed every 5 minutes."></div>
   <div class="wxbadge" id="recbadge" hidden title="Radar this server recorded near the followed aircraft, for the time of the selected message (or the newest position). The arrows step through the recorded frames."><button id="recprev" title="The recorded frame before this one">&#9664;</button> <span id="rectext"></span> <button id="recnext" title="The recorded frame after this one">&#9654;</button></div>
@@ -572,6 +580,8 @@ async function recLoad() {
   await recUpdate();
 }
 // The selection moved to another message: the radar follows it. (A refresh that reselects the same one leaves a step alone.)
+// The viewer picked a message (not a refresh re-applying the selection): its time is followed even if it is the one already selected.
+function recPicked() { recSelSeen = null; }
 function recFollow(m) {
   if (!m) { recSelSeen = recSelMs = null; return; }
   const ms = new Date(m.pos_t || m.t).getTime();
@@ -683,6 +693,24 @@ const TB_HANDLE = 52;   // the handle's width in px, the same as --tbw in the CS
 const handleLeft = (f, width) => f * (width - TB_HANDLE);
 // The value for a handle dragged to the pointer at x (px across the slider), keeping the grip where it was taken on the handle.
 const handleValue = (x, grip, width, lo, hi) => lo + Math.max(0, Math.min(1, (x - grip) / (width - TB_HANDLE))) * (hi - lo);
+// The live end is a detent for the pointer. The handle follows the pointer all the way, never jumping: as soon as it is within SNAP_IN px of
+// the right-hand end it turns blue and reads Live, and the weather and the aircraft go live with it (the zone is drawn on the track, --tbz
+// in the CSS); once there it takes SNAP_OUT px to pull it away (a wider band, so a shaky pointer does not flicker). It settles at the end
+// when the pointer is released. The keyboard is exact.
+const SNAP_IN = 6, SNAP_OUT = 10;
+const slideDist = (v, lo, hi, width) => hi > lo ? (hi - v) / (hi - lo) * (width - TB_HANDLE) : 0;   // px of the handle's travel left to the end
+const slideSnap = (dist, wasLive) => dist <= (wasLive ? SNAP_OUT : SNAP_IN);
+let slideGrip = null;   // while the handle is dragged: how far from its left edge the pointer holds it, in px
+// The handle dragged so that the pointer is at x (px across a slider width wide): a time, or Live in the zone. The handle stays under the pointer.
+function slideDragTo(x, width) {
+  const range = document.querySelector('#tbrange'), lo = Number(range.min), hi = Number(range.max);
+  const v = handleValue(x, slideGrip, width, lo, hi);
+  range.value = v;
+  if (slideSnap(slideDist(v, lo, hi, width), recAt == null)) { if (recAt != null) goCurrent(); else timeCursorSync(); }
+  else { recAt = v; recAtWhat = 'the slider'; viewTimeChanged(); }
+}
+// The pointer was let go: a handle in the live zone settles at the end.
+function slideRelease() { if (slideGrip == null) return; slideGrip = null; timeCursorSync(); }
 function timeCursorSync() {
   const bar = document.querySelector('#timebar');
   cursorGroup.clearLayers();
@@ -691,10 +719,15 @@ function timeCursorSync() {
   const {fixes, paths} = cursorData, lo = fixes[0].t, hi = fixes.at(-1).t, range = document.querySelector('#tbrange');
   range.min = lo; range.max = hi; range.step = 'any';   // so the right-hand end, which is Live, can be reached
   document.querySelector('#tbstart').textContent = stamp(lo);
-  document.querySelector('#tbend').textContent = stamp(hi);
+  const later = Math.floor(hi / 86400000) - Math.floor(lo / 86400000);   // days after the start's UTC day the end falls on
+  document.querySelector('#tbend').textContent = `${fmtTime(hi).slice(0, 5)}Z`;   // its date is the start's, plus the days after it
+  document.querySelector('#tbplus').textContent = later > 0 ? `+${later}` : '';
   const label = document.querySelector('#tbtime');
-  if (recAt == null) {   // no time chosen: live, the handle at the newest end saying so, and no aircraft
-    range.value = hi; label.textContent = 'Live'; label.style.left = `calc(1 * (100% - ${TB_HANDLE}px))`;
+  range.classList.toggle('live', recAt == null);   // the handle is blue in the live zone
+  if (recAt == null) {   // no time chosen: live, the handle saying so (at the newest end, unless it is being dragged), and no aircraft
+    if (slideGrip == null) range.value = hi;
+    label.textContent = 'Live';
+    label.style.left = `calc(${hi > lo ? (Number(range.value) - lo) / (hi - lo) : 1} * (100% - ${TB_HANDLE}px))`;
     return;
   }
   const t = Math.max(lo, Math.min(hi, recAt));
@@ -711,7 +744,6 @@ function timeCursorSync() {
 // here: it keeps the grip where it was, and the handle moves only as the pointer does. A press on the bare track is left to the browser.
 {
   const range = document.querySelector('#tbrange');
-  let grip = null;
   const onHandle = e => {
     const r = range.getBoundingClientRect(), x = e.clientX - r.left, left = handleLeft((range.value - range.min) / ((range.max - range.min) || 1), r.width);
     return x >= left && x <= left + TB_HANDLE ? x - left : null;
@@ -721,16 +753,28 @@ function timeCursorSync() {
     range.addEventListener('pointerdown', e => {
       const g = onHandle(e);
       if (g == null) return;
-      e.preventDefault(); grip = g; range.focus(); range.setPointerCapture(e.pointerId);
+      e.preventDefault(); slideGrip = g; range.focus(); range.setPointerCapture(e.pointerId);
     });
-    range.addEventListener('pointermove', e => {
-      if (grip == null) return;
-      range.value = handleValue(e.clientX - range.getBoundingClientRect().left, grip, range.getBoundingClientRect().width, Number(range.min), Number(range.max));
-      range.oninput();
-    });
-    for (const ev of ['pointerup', 'pointercancel']) range.addEventListener(ev, () => { grip = null; });
+    range.addEventListener('pointermove', e => { if (slideGrip != null) slideDragTo(e.clientX - range.getBoundingClientRect().left, range.getBoundingClientRect().width); });
+    for (const ev of ['pointerup', 'pointercancel']) range.addEventListener(ev, slideRelease);
   }
 }
+// The arrow keys move the handle a minute (ten with Shift), Page Up and Down ten minutes, Home and End to the ends, End being Live. (The
+// slider has no step, so that the right-hand end can be reached, and without one the browser's arrow key moves it by a millisecond.)
+const SLIDE_KEYS = {ArrowLeft: -1, ArrowDown: -1, ArrowRight: 1, ArrowUp: 1, PageDown: -10, PageUp: 10};
+function slideKey(key, shift) {
+  const range = document.querySelector('#tbrange'), lo = Number(range.min), hi = Number(range.max);
+  const at = recAt == null ? hi : Math.max(lo, Math.min(hi, recAt));
+  let to;
+  if (key === 'Home') to = lo;
+  else if (key === 'End') to = hi;
+  else if (key in SLIDE_KEYS) to = at + SLIDE_KEYS[key] * (shift && Math.abs(SLIDE_KEYS[key]) === 1 ? 10 : 1) * 60000;
+  else return false;
+  range.value = Math.max(lo, Math.min(hi, to));
+  range.oninput();
+  return true;
+}
+if (document.querySelector('#tbrange').addEventListener) document.querySelector('#tbrange').addEventListener('keydown', e => { if (slideKey(e.key, e.shiftKey)) e.preventDefault(); });
 // All the way to the right is Live (and a slider that is already live is left as it is, with whatever the viewer set the switches to).
 document.querySelector('#tbrange').oninput = () => {
   const range = document.querySelector('#tbrange');
@@ -738,8 +782,10 @@ document.querySelector('#tbrange').oninput = () => {
   recAt = Number(range.value); recAtWhat = 'the slider'; viewTimeChanged();
 };
 // Back to now: no time marked, and the radar and the satellite switch to Live (whether or not they are on).
+// (The selected message stays "seen": the page refreshes every 30 seconds and re-applies the selection, which must not take it back to the
+// message's time. Picking a message again does, see recPicked.)
 function goCurrent() {
-  recAt = recSelMs = recSelSeen = null; recAtWhat = null;
+  recAt = recSelMs = null; recAtWhat = null;
   wxSetMode('radar', 'live'); wxSetMode('sat', 'live');
   viewTimeChanged();
 }
@@ -2253,6 +2299,7 @@ function pickMessage(id) {
   const m = lastMsgs.find(x => x.id === id);
   if (m && m.part_of) id = m.part_of;        // a block or copy has no row: its whole message does
   selectedMsg = id;
+  recPicked();
   applyHighlight(false);
   const row = rows.get(id);
   if (row && row.scrollIntoView) row.scrollIntoView({block: 'nearest'});
@@ -2375,6 +2422,7 @@ function renderMessages(msgs) {
       pre.hidden = !pre.hidden;
       pre.hidden ? expanded.delete(m.id) : expanded.add(m.id);
       selectedMsg = m.id;
+      recPicked();
       applyHighlight(true);
     };
     rows.set(m.id, d);
