@@ -582,6 +582,26 @@ shown at the blurred position and marked approximate; some have no position. air
 our own verdict but is not a reliable guide to lateness, which is why the delivery is measured here. The page only reports;
 nothing in how messages are handled depends on it.
 
+## Stats
+
+`/stats.html`, from the hamburger menu, shows how the app is doing, and refreshes itself every 30 seconds.
+
+- **Requests to other services**, by host: today, yesterday, the last seven days, this month, in all, how many failed (no answer, or
+  an HTTP error) and how many were refused with a 429, and the first day counted. Every request the server itself makes is counted
+  (airframes.io, the ADS-B sources, AeroDataBox, the OpenStreetMap tile cache, the radar recorder, the backfill downloads), in the
+  database, so the counts survive a restart. Requests your browser makes itself (the map's own tiles when the tile cache is off,
+  weather layers) go from the browser and are not counted. A service we have been told to leave alone (a 429 hold) is shown above
+  the table with when it ends. AeroDataBox's row says what a lookup costs: probably 2 of the plan's 400 monthly units on the free
+  plan, so its "this month" count is a request count, not units, and its month may not start when yours does.
+- **What we hold**: messages and positions in all, in the last day and the last seven days; how many messages we could read into a
+  kind; the same per day for a week; messages by link (VHF, satellite, ...) and positions by source (each ADS-B source, the
+  backfill, AeroDataBox); watches by status, known airframes, notes and receiving stations.
+- **Busiest aircraft** by messages, and **disk**: each table's rows and size, the OpenStreetMap tile cache and the recorded radar
+  against their limits.
+
+The size of the database is measured every five minutes at most, because reading every page holds up the writers for a moment (half
+a second for 70 MB). The counts start from the day this feature was installed; the table is `request_count`.
+
 ## Backfilling a track from adsb.lol's archive
 
 ADS-B polling only records what is in the air while an aircraft is being followed. adsb.lol also publishes every day's tracking

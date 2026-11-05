@@ -23,6 +23,7 @@ import (
 	"github.com/avanha/fullflight/internal/history"
 	"github.com/avanha/fullflight/internal/navdata"
 	"github.com/avanha/fullflight/internal/poller"
+	"github.com/avanha/fullflight/internal/reqcount"
 	"github.com/avanha/fullflight/internal/server"
 	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/tilecache"
@@ -171,8 +172,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// every request to another service is counted by host, for the stats page
+	count := func(host string, status int, failed bool) { st.CountRequest(time.Now(), host, status, failed) }
 	afClient := airframes.NewClient()
+	reqcount.Wrap(afClient.HTTP, count)
 	adsbClient := adsb.NewClient(sources...)
+	reqcount.Wrap(adsbClient.HTTP, count)
 	adsbClient.Spread = *cfg.ADSB.Spread
 	adsbClient.OnPause = func(source string, status int, until time.Time) {
 		log.Warn("adsb source refused us; leaving it alone", "source", source, "http", status, "until", until.UTC().Format("15:04:05Z"))
@@ -181,7 +186,9 @@ func main() {
 		Airframes: afClient, Search: afClient, WaitingEvery: cfg.Poll.Waiting, TrackingEvery: cfg.Poll.Tracking,
 		StopoverGrace: cfg.Poll.StopoverGrace}
 	if cfg.AeroDataBox.APIKey != "" {
-		p.Flights, p.ProviderEvery = aerodatabox.NewClient(cfg.AeroDataBox.APIKey), cfg.AeroDataBox.Every
+		adb := aerodatabox.NewClient(cfg.AeroDataBox.APIKey)
+		reqcount.Wrap(adb.HTTP, count)
+		p.Flights, p.ProviderEvery = adb, cfg.AeroDataBox.Every
 		log.Info("flight-number lookup enabled", "provider", "aerodatabox")
 	}
 	go p.Run(ctx)
@@ -196,17 +203,19 @@ func main() {
 		}
 		api.Backfill = &history.Manager{Store: st, Cache: history.Cache{Dir: cfg.Backfill.CacheDir}, Log: log,
 			MaxBytes: int64(cfg.Backfill.CacheMaxGiB) << 30,
-			Fetch:    &history.Fetcher{UserAgent: version.UserAgent(), Log: log}}
+			Fetch:    &history.Fetcher{UserAgent: version.UserAgent(), Log: log, Client: countedClient(&http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment, ResponseHeaderTimeout: time.Minute}}, count)}}
 		go func() { <-ctx.Done(); api.Backfill.Cancel() }()
 		log.Info("backfill enabled", "cache", cfg.Backfill.CacheDir, "limit_gib", cfg.Backfill.CacheMaxGiB)
 	}
 	api.WeatherDir, api.WeatherRecording = cfg.Weather.Dir, cfg.Weather.Record
 	if cfg.MapTiles.Cache {
-		api.Tiles = &tilecache.Cache{Dir: cfg.MapTiles.Dir, MaxBytes: int64(cfg.MapTiles.MaxMiB) << 20, UserAgent: version.UserAgent(), Referer: version.Repo, Log: log}
+		api.Tiles = &tilecache.Cache{Dir: cfg.MapTiles.Dir, MaxBytes: int64(cfg.MapTiles.MaxMiB) << 20, UserAgent: version.UserAgent(), Referer: version.Repo, Log: log,
+			HTTP: countedClient(&http.Client{Timeout: 15 * time.Second}, count)}
 		log.Info("serving OpenStreetMap tiles from a cache", "dir", cfg.MapTiles.Dir, "limit_mib", cfg.MapTiles.MaxMiB)
 	}
 	if cfg.Weather.Record {
-		rec := &weather.Recorder{Store: st, Dir: cfg.Weather.Dir, UserAgent: version.UserAgent(), Step: cfg.Weather.Step, MaxBytes: int64(cfg.Weather.MaxMiB) << 20, Log: log}
+		rec := &weather.Recorder{Store: st, Dir: cfg.Weather.Dir, UserAgent: version.UserAgent(), Step: cfg.Weather.Step, MaxBytes: int64(cfg.Weather.MaxMiB) << 20, Log: log,
+			HTTP: countedClient(&http.Client{Timeout: 30 * time.Second}, count)}
 		go rec.Run(ctx, cfg.Weather.Every)
 		log.Info("recording radar along followed flights", "dir", cfg.Weather.Dir, "visit_every", cfg.Weather.Every, "frame_every", cfg.Weather.Step, "limit_mib", cfg.Weather.MaxMiB)
 	}
@@ -226,4 +235,10 @@ func main() {
 		log.Error("serve", "err", err)
 		os.Exit(1)
 	}
+}
+
+// countedClient makes c count its requests with record and returns it.
+func countedClient(c *http.Client, record func(host string, status int, failed bool)) *http.Client {
+	reqcount.Wrap(c, record)
+	return c
 }

@@ -46,6 +46,10 @@ type Server struct {
 	WeatherDir       string // where recorded radar tiles are kept; empty serves none
 	WeatherRecording bool   // the recorder is on
 
+	usageMu  sync.Mutex // the size of the database, remembered for a while (see usage)
+	usageAt  time.Time
+	usageVal store.Usage
+
 	flightMu    sync.Mutex
 	flightCache map[string]cachedFlights // hex -> its recent flights, worked out once for everything that shows them
 }
@@ -76,6 +80,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/plan/{hex}", s.plans)
 	mux.HandleFunc("GET /api/fixes", s.fixes)
 	mux.HandleFunc("GET /api/airports", s.airports)
+	mux.HandleFunc("GET /api/stats", s.stats)
 	mux.HandleFunc("GET /api/stations", s.listStations)
 	mux.HandleFunc("POST /api/stations/refresh", s.refreshStations)
 	mux.HandleFunc("GET /api/backfill", s.backfillStatus)

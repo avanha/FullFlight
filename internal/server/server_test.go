@@ -2166,3 +2166,59 @@ func getJSON(t *testing.T, url string, v any) {
 		t.Fatalf("%s: %v", url, err)
 	}
 }
+
+func TestStatsScreen(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	st.AddMessage(store.Message{ID: 1, Hex: "AAAAAA", T: now.Add(-time.Hour), Label: "H1", Text: "a", Kind: "fms_position", SourceType: "vdl"})
+	st.AddPosition(store.Position{Hex: "AAAAAA", T: now.Add(-time.Hour), Lat: 1, Lon: 2, Source: "adsb.lol"})
+	for i := 0; i < 3; i++ {
+		st.CountRequest(now, "aerodatabox.p.rapidapi.com", 200, false)
+	}
+	st.CountRequest(now.AddDate(0, 0, -10), "aerodatabox.p.rapidapi.com", 429, true) // last month: not in this month's count
+	st.CountRequest(now, "api.airframes.io", 200, false)
+	st.SetProviderHold("aerodatabox", now.Add(time.Hour), "MONTHLY quota")
+	tiles := t.TempDir()
+	os.WriteFile(filepath.Join(tiles, "a.png"), make([]byte, 1500), 0o644)
+	srv := &Server{Store: st, Now: func() time.Time { return now }, Tiles: &tilecache.Cache{Dir: tiles, MaxBytes: 1 << 20}}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	code, body := do(t, "GET", ts.URL+"/api/stats", "")
+	if code != 200 {
+		t.Fatalf("%d %s", code, body)
+	}
+	var got struct {
+		Version  string `json:"version"`
+		DBBytes  int64  `json:"db_bytes"`
+		Holdings struct {
+			Messages, Positions int
+			Aircraft            int
+		} `json:"holdings"`
+		Requests []requestsJSON  `json:"requests"`
+		Holds    []statsHoldJSON `json:"holds"`
+		Caches   []cacheJSON     `json:"caches"`
+		Tables   []tableJSON     `json:"tables"`
+		Busiest  []busyJSON      `json:"busiest"`
+	}
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Version == "" || got.DBBytes == 0 || got.Holdings.Messages != 1 || got.Holdings.Positions != 1 || got.Holdings.Aircraft != 1 || len(got.Tables) == 0 || len(got.Busiest) != 1 {
+		t.Errorf("%+v", got)
+	}
+	if len(got.Requests) != 2 || got.Requests[0].Host != "aerodatabox.p.rapidapi.com" {
+		t.Fatalf("requests: %+v", got.Requests)
+	}
+	a := got.Requests[0]
+	if a.Today != 3 || a.Month != 3 || a.Week != 3 || a.Total != 4 || a.Failed != 1 || a.Limited != 1 || a.Since != "2026-10-26" || a.Note == "" {
+		t.Errorf("aerodatabox: %+v", a)
+	}
+	if len(got.Holds) != 1 || got.Holds[0].Name != "aerodatabox" || got.Holds[0].Reason != "MONTHLY quota" {
+		t.Errorf("holds: %+v", got.Holds)
+	}
+	if len(got.Caches) != 1 || got.Caches[0].Bytes != 1500 || got.Caches[0].Files != 1 || got.Caches[0].Limit != 1<<20 {
+		t.Errorf("caches: %+v", got.Caches)
+	}
+}

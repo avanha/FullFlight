@@ -232,6 +232,16 @@ var migrations = []string{
 		fetched  INTEGER NOT NULL,
 		PRIMARY KEY (source, frame_ts, z, x, y)
 	 ) WITHOUT ROWID;`,
+	// The requests we have made to other services, by UTC day and host (see internal/reqcount), for the stats page: how much of a
+	// free service's allowance has gone, kept across restarts.
+	`CREATE TABLE IF NOT EXISTS request_count (
+		day      TEXT NOT NULL,
+		host     TEXT NOT NULL,
+		requests INTEGER NOT NULL DEFAULT 0,
+		failed   INTEGER NOT NULL DEFAULT 0,  -- no answer, or an HTTP error
+		limited  INTEGER NOT NULL DEFAULT 0,  -- HTTP 429: the service said we asked too much
+		PRIMARY KEY (day, host)
+	 ) WITHOUT ROWID;`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.

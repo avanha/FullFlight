@@ -1363,6 +1363,7 @@ highlightGroup = null;
     byId['#menubtn'].onclick(); assert.strictEqual(byId['#menu'].hidden, false, 'the hamburger opens it');
     assert.match(html, /<div id="menu"[^>]*><a id="menu-airframes" href="\/airframes\.html"/, 'Airframes is in the menu');
     assert.match(html, /<a id="menu-stations" href="\/stations\.html"/, 'and so are the stations');
+    assert.match(html, /<a id="menu-stats" href="\/stats\.html"/, 'and the stats');
     assert.ok(!/class="navlink"/.test(html), 'and no longer beside the title');
     assert.ok(vm.runInContext('selected', ctx), 'an aircraft is selected');
     assert.match(html, /<a id="menu-backfill" href="\/backfill\.html" /, 'the backfill link is the plain page');

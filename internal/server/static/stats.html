@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stats</title>
+<style>
+  body { margin: 0; font: 14px system-ui, sans-serif; color: #222; }
+  header { display: flex; flex-wrap: wrap; gap: 10px 12px; align-items: center; padding: 10px 16px; border-bottom: 1px solid #ccc; background: #f4f6fa; }
+  header h2 { margin: 0; font-size: 18px; }
+  header a { color: #1d4ed8; text-decoration: none; }
+  #updated { color: #555; font-size: 12px; margin-left: auto; }
+  #err { color: #b00; padding: 8px 16px; font-size: 13px; }
+  #err:empty { display: none; }
+  main { padding: 8px 16px 24px; max-width: 1100px; }
+  section { margin-top: 18px; }
+  h3 { margin: 0 0 6px; font-size: 15px; }
+  h3 small { font-weight: normal; color: #666; margin-left: 8px; }
+  table { border-collapse: collapse; }
+  th { text-align: left; font-size: 12px; color: #555; padding: 4px 12px 4px 0; border-bottom: 2px solid #ccc; white-space: nowrap; }
+  th.num, td.num { text-align: right; }
+  td { padding: 4px 12px 4px 0; border-bottom: 1px solid #eee; vertical-align: top; }
+  td small { display: block; color: #777; }
+  .tiles { display: flex; flex-wrap: wrap; gap: 10px; }
+  .tile { border: 1px solid #ddd; border-radius: 6px; padding: 8px 14px; min-width: 120px; background: #fafbfc; }
+  .tile b { display: block; font-size: 20px; }
+  .tile span { color: #666; font-size: 12px; }
+  .hold { background: #fff4e5; border: 1px solid #f0c27a; border-radius: 4px; padding: 6px 10px; margin-bottom: 8px; }
+  .bad { color: #b00; }
+  .bar { display: inline-block; height: 8px; background: #8aa4d6; vertical-align: middle; margin-left: 6px; border-radius: 2px; }
+  .cols { display: flex; flex-wrap: wrap; gap: 6px 40px; }
+  .none { color: #777; }
+</style>
+</head>
+<body>
+<header>
+  <a href="/">&larr; Map</a>
+  <h2>Stats</h2>
+  <span id="updated"></span>
+</header>
+<div id="err"></div>
+<main>
+  <section><div class="tiles" id="tiles"></div></section>
+  <section><h3>Requests to other services <small>counted since this was first installed; days are UTC</small></h3>
+    <div id="holds"></div>
+    <table><thead id="reqheads"></thead><tbody id="reqrows"></tbody></table>
+    <div id="noreq" class="none" hidden>No requests counted yet.</div>
+  </section>
+  <section><h3>What we hold</h3>
+    <div class="cols">
+      <table><thead id="holdheads"></thead><tbody id="holdrows"></tbody></table>
+      <table><thead id="dayheads"></thead><tbody id="dayrows"></tbody></table>
+    </div>
+  </section>
+  <section><div class="cols">
+    <div><h3>Messages by link</h3><table><tbody id="bylink"></tbody></table></div>
+    <div><h3>Positions by source</h3><table><tbody id="bysource"></tbody></table></div>
+    <div><h3>Watches and lists</h3><table><tbody id="watches"></tbody></table></div>
+  </div></section>
+  <section><div class="cols">
+    <div><h3>Busiest aircraft <small>by messages</small></h3><table><thead id="busyheads"></thead><tbody id="busyrows"></tbody></table></div>
+    <div><h3>Disk</h3><table><thead id="diskheads"></thead><tbody id="diskrows"></tbody></table></div>
+  </div></section>
+</main>
+<script>
+// ---- the stats page: what we hold, what we have asked other services for, and how big things are ----
+const $ = s => document.querySelector(s);
+async function api(path) {
+  const r = await fetch(path);
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+const num = n => Number(n || 0).toLocaleString('en-US');
+function bytes(n) {
+  if (n < 1024) return `${n} B`;
+  const u = ['KiB', 'MiB', 'GiB', 'TiB'];
+  let v = n / 1024, i = 0;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(v < 10 ? 1 : 0)} ${u[i]}`;
+}
+function span(s) {   // 2d 3h, 5h 12m, 4m
+  const m = Math.max(0, Math.floor(s / 60)), d = Math.floor(m / 1440), h = Math.floor(m % 1440 / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m % 60}m` : `${m}m`;
+}
+const clock = t => new Date(t).toISOString().slice(11, 16) + 'Z';
+const pct = (n, of) => (of ? `${Math.round(100 * n / of)}%` : '—');
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+function row(cells, numFrom = 1) {   // cells are text, or [text, small]; columns from numFrom on are numbers
+  const tr = el('tr');
+  cells.forEach((c, i) => {
+    const td = el('td', i >= numFrom ? 'num' : '', Array.isArray(c) ? c[0] : c);
+    if (Array.isArray(c) && c[1]) td.append(el('small', '', c[1]));
+    tr.append(td);
+  });
+  return tr;
+}
+function heads(id, labels, numFrom = 1) {
+  $(id).replaceChildren(...[(() => { const tr = el('tr'); labels.forEach((l, i) => tr.append(el('th', i >= numFrom ? 'num' : '', l))); return tr; })()]);
+}
+function pairs(id, obj, empty) {
+  const list = Object.entries(obj || {}).sort((a, b) => b[1] - a[1]);
+  $(id).replaceChildren(...(list.length ? list.map(([k, n]) => row([k || '(none)', num(n)])) : [row([empty, ''])]));
+}
+
+function draw(s) {
+  const h = s.holdings;
+  $('#tiles').replaceChildren(...[
+    [s.version, `running ${span((Date.parse(s.now) - Date.parse(s.started)) / 1000)}`],
+    [bytes(s.db_bytes), `database${s.db_free_bytes ? `, ${bytes(s.db_free_bytes)} free inside` : ''}`],
+    [num(h.Messages), `messages, ${num(h.Messages24h)} in the last day`],
+    [num(h.Positions), `positions, ${num(h.Positions24h)} in the last day`],
+    [num(h.Aircraft), 'aircraft'],
+    [s.oldest ? s.oldest.slice(0, 10) : '—', 'oldest data'],
+  ].map(([big, small]) => { const t = el('div', 'tile'); t.append(el('b', '', big), el('span', '', small)); return t; }));
+
+  // requests, with any service we have been told to leave alone
+  $('#holds').replaceChildren(...(s.holds || []).map(x => el('div', 'hold', `${x.name} is on hold until ${clock(x.until)}: ${x.reason}`)));
+  heads('#reqheads', ['Host', 'Today', 'Yesterday', 'Last 7 days', 'This month', 'Total', 'Failed', 'Refused (429)', 'Since']);
+  $('#reqrows').replaceChildren(...(s.requests || []).map(r => {
+    const tr = row([[r.host, r.note], num(r.today), num(r.yesterday), num(r.week), num(r.month), num(r.total), num(r.failed), num(r.limited), r.since]);
+    if (r.limited) tr.children[7].className += ' bad';
+    return tr;
+  }));
+  $('#noreq').hidden = (s.requests || []).length > 0;
+
+  heads('#holdheads', ['', 'Messages', 'Positions']);
+  $('#holdrows').replaceChildren(
+    row(['Total', num(h.Messages), num(h.Positions)]),
+    row(['Last 24 hours', num(h.Messages24h), num(h.Positions24h)]),
+    row(['Last 7 days', num(h.Messages7d), num(h.Positions7d)]),
+    row(['Messages we could read', `${num(h.Decoded)} (${pct(h.Decoded, h.Messages)})`, '']));
+  heads('#dayheads', ['Day (UTC)', 'Messages', 'Positions']);
+  const top = Math.max(1, ...h.Days.map(d => Math.max(d.Messages, d.Positions)));
+  $('#dayrows').replaceChildren(...h.Days.map(d => {
+    const tr = row([d.Day, num(d.Messages), num(d.Positions)]);
+    const bar = el('span', 'bar'); bar.style.width = `${Math.round(60 * d.Messages / top)}px`;
+    tr.children[1].append(bar);
+    return tr;
+  }));
+  pairs('#bylink', h.MessagesBy, 'none yet');
+  pairs('#bysource', h.PositionsBy, 'none yet');
+  const w = Object.assign({}, h.Watches);
+  $('#watches').replaceChildren(...[...Object.entries(w).sort((a, b) => b[1] - a[1]).map(([k, n]) => row([k, num(n)])),
+    row(['airframes known', num(h.Airframes)]), row(['notes', num(h.Notes)]), row(['receiving stations', num(h.Stations)])]);
+
+  heads('#busyheads', ['Aircraft', 'Messages', 'Positions']);
+  $('#busyrows').replaceChildren(...(s.busiest || []).map(b => {
+    const tr = row([[b.tail || b.hex, b.tail ? b.hex : ''], num(b.messages), num(b.positions)]);
+    return tr;
+  }));
+  heads('#diskheads', ['', 'Rows / files', 'Size']);
+  $('#diskrows').replaceChildren(
+    ...(s.tables || []).map(t => row([`table ${t.name}`, num(t.rows), bytes(t.bytes)], 1)),
+    ...(s.caches || []).map(c => row([[c.name, c.dir], num(c.files), c.limit ? `${bytes(c.bytes)} of ${bytes(c.limit)}` : bytes(c.bytes)], 1)),
+    ...(h.WxTiles ? [row(['radar tiles recorded', num(h.WxTiles), bytes(h.WxBytes)], 1)] : []));
+}
+
+let timer = null;
+async function load() {
+  try {
+    const s = await api('/api/stats');
+    $('#err').textContent = '';
+    draw(s);
+    $('#updated').textContent = `updated ${clock(s.now)}`;
+  } catch (e) {
+    $('#err').textContent = e.message;
+  }
+}
+load();
+if (typeof setInterval !== 'undefined') timer = setInterval(load, 30000);   // the counters move while it is open
+</script>
+</body>
+</html>

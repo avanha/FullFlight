@@ -1377,3 +1377,47 @@ func TestAddWatchSaysWhatItDid(t *testing.T) {
 		t.Errorf("after it ran out: %q", how)
 	}
 }
+
+func TestRequestCountsAndHoldings(t *testing.T) {
+	st, _ := Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 11, 5, 12, 0, 0, 0, time.UTC)
+	st.CountRequest(now, "api.airframes.io", 200, false)
+	st.CountRequest(now.Add(time.Minute), "api.airframes.io", 200, false)
+	st.CountRequest(now, "api.airframes.io", 429, true)
+	st.CountRequest(now, "api.adsb.lol", 0, true)
+	st.CountRequest(now.AddDate(0, 0, -3), "api.airframes.io", 200, false)
+	got, err := st.RequestCounts(now.AddDate(0, 0, -1))
+	if err != nil || len(got) != 2 || got[0] != (RequestCount{"2026-11-05", "api.adsb.lol", 1, 1, 0}) || got[1] != (RequestCount{"2026-11-05", "api.airframes.io", 3, 1, 1}) {
+		t.Errorf("since yesterday: %+v %v", got, err)
+	}
+	if all, _ := st.RequestCounts(time.Time{}); len(all) != 3 {
+		t.Errorf("all: %+v", all)
+	}
+
+	at := now.Add(-2 * time.Hour)
+	st.AddMessage(Message{ID: 1, Hex: "AAAAAA", T: at, Label: "H1", Text: "a", Kind: "fms_position", SourceType: "vdl"})
+	st.AddMessage(Message{ID: 2, Hex: "AAAAAA", T: at.AddDate(0, 0, -2), Label: "H1", Text: "b", Kind: "unknown", SourceType: "vdl"})
+	st.AddMessage(Message{ID: 3, Hex: "BBBBBB", T: at.AddDate(0, 0, -20), Label: "H1", Text: "c", Kind: "cpdlc", SourceType: "aero-acars"})
+	st.AddPosition(Position{Hex: "AAAAAA", T: at, Lat: 1, Lon: 2, Source: "adsb.lol"})
+	st.AddPosition(Position{Hex: "CCCCCC", T: at.AddDate(0, 0, -1), Lat: 1, Lon: 2, Source: "history"})
+	h, err := st.Holdings(now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.Messages != 3 || h.Messages24h != 1 || h.Messages7d != 2 || h.Decoded != 2 || h.Undecoded != 1 || h.Positions != 2 || h.Positions24h != 1 || h.Aircraft != 3 {
+		t.Errorf("%+v", h)
+	}
+	if h.MessagesBy["vdl"] != 2 || h.MessagesBy["aero-acars"] != 1 || h.PositionsBy["adsb.lol"] != 1 || h.PositionsBy["history"] != 1 {
+		t.Errorf("by link and source: %+v %+v", h.MessagesBy, h.PositionsBy)
+	}
+	if len(h.Days) != 7 || h.Days[6].Day != "2026-11-05" || h.Days[6].Messages != 1 || h.Days[6].Positions != 1 || h.Days[4].Messages != 1 || h.Days[5].Positions != 1 {
+		t.Errorf("days: %+v", h.Days)
+	}
+
+	st.SetProviderHold("aerodatabox", now.Add(time.Hour), "quota")
+	st.SetProviderHold("rainviewer", now.Add(-time.Hour), "old")
+	if holds, _ := st.ProviderHolds(now); len(holds) != 1 || holds["aerodatabox"].Reason != "quota" {
+		t.Errorf("holds: %+v", holds)
+	}
+}

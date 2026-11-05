@@ -19,15 +19,16 @@ the app section by section) and `HANDOFF.md` (design, data-source findings and d
 - `internal/flights/` divides an aircraft's history into flights; `internal/airlines/` maps airline codes;
   `internal/flightplan/`, `internal/waypoints/`, `internal/navdata/`, `internal/airports/` hold route and place data.
   `internal/regs/` works out a hex from a US, Canadian or Australian registration and back (the countries whose addresses follow a rule).
+- `internal/reqcount/` counts the requests we make to other services, by host (shown on the stats page).
 - `internal/store/` is SQLite (tables `watch`, `position`, `message`, `fix`, `airframe`, ...), `internal/server/` the HTTP API,
   `internal/server/static/index.html` the whole map page (HTML, CSS and script in one file).
-- `scripts/uitest.js` (the map page), `scripts/uitest-notes.js` (notes and airframes) and `scripts/uitest-backfill.js`, `scripts/uitest-stations.js` and `scripts/uitest-explain.js` drive the page scripts against a fake DOM and, for the map, a recording fake Leaflet.
+- `scripts/uitest.js` (the map page), `scripts/uitest-notes.js` (notes and airframes) and `scripts/uitest-backfill.js`, `scripts/uitest-stations.js`, `scripts/uitest-stats.js` and `scripts/uitest-explain.js` drive the page scripts against a fake DOM and, for the map, a recording fake Leaflet.
 - `testdata/` real sample messages and API responses. `docs/` is the GitHub Pages home page plus API notes.
 
 ## Build and test
 
     go vet ./... && go test ./...
-    node scripts/uitest.js && node scripts/uitest-notes.js && node scripts/uitest-backfill.js && node scripts/uitest-stations.js && node scripts/uitest-explain.js   # needs node; not part of go test
+    node scripts/uitest.js && node scripts/uitest-notes.js && node scripts/uitest-backfill.js && node scripts/uitest-stations.js && node scripts/uitest-stats.js && node scripts/uitest-explain.js   # needs node; not part of go test
 
 Only Go is needed (no C compiler or libraries; `CGO_ENABLED=0` builds). Run the Go tests after any change, and the node scripts
 after any change to the pages or their helpers. If node is not installed, say so rather than claiming the page is tested; a
