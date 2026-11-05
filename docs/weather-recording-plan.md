@@ -95,5 +95,5 @@ Detecting deviations is not part of this: the user notices a deviation and inves
 ## Order of work
 
 1. Radar recorder and its index table, behind the setting, with tests against saved tiles in `testdata/`.
-2. ~~The "Weather at the time" control in the page for radar~~: done, as the legend layer "Recorded radar (at the selected time)" with a stepper.
+2. ~~The "Weather at the time" control in the page for radar~~: done, as the Past side of the legend's "Weather radar" row, with a stepper.
 3. IR on demand, then the grey filter and the post-landing filtered copy.

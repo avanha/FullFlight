@@ -104,7 +104,7 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {radarLayer, satGroup, map, cursorGroup, placeAt, clearGrey, satAtGroup, satAtUpdate, SAT, recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {WX, wxSetMode, radarLayer, satGroup, map, cursorGroup, placeAt, clearGrey, satAtGroup, satAtUpdate, SAT, recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
   const initialViews = calls.setView.length;
@@ -268,7 +268,7 @@ highlightGroup = null;
   const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
   // the legend lists all five sources
   assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS', 'ACMF', 'AOC', 'POS', 'POSRPT', 'POSA1', 'SB', 'Airline', 'AeroDataBox']);
-  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radar|Recorded radar (at the selected time)|Satellite (IR)|Satellite IR (at the selected time)|Waypoints|Predictions|Planned route|Clearances (oceanic, departure)|Estimated path|Projection|Wind barbs|D-ATIS, METAR and TAF requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
+  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radarLivePast|Satellite (IR)LivePast|Waypoints|Predictions|Planned route|Clearances (oceanic, departure)|Estimated path|Projection|Wind barbs|D-ATIS, METAR and TAF requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
   // each source gets its own colour and style
   for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {
     const r = await lineOf([], [at2(0, 41, -105, kind), at2(10, 41.1, -104, kind), at2(20, 41.2, -103, kind)]);
@@ -1600,31 +1600,41 @@ highlightGroup = null;
       reset.onclick(); await settle();
       assert.strictEqual(t.cursorGroup.items.length, 0, 'no time chosen: no aircraft'); assert.strictEqual(reset.hidden, true);
       assert.strictEqual(Number(range.value), ms(17, 35));
-      // Current swaps the layers for a time for the live ones, keeping which are on: both, radar only, none
-      const swap = async (recOn, satOn) => {
-        for (const g of [t.recLayer, t.satAtGroup, t.radarLayer, t.satGroup]) t.map.removeLayer(g);
-        if (recOn) t.map.addLayer(t.recLayer);
-        if (satOn) t.map.addLayer(t.satAtGroup);
-        t.recFollow({id: 960, t: new Date(ms(16, 15)).toISOString()}); await settle();
-        reset.onclick(); await settle();
-        return [t.map.hasLayer(t.recLayer), t.map.hasLayer(t.radarLayer), t.map.hasLayer(t.satAtGroup), t.map.hasLayer(t.satGroup)].map(Number).join('');
-      };
-      assert.strictEqual(await swap(true, true), '0101', 'both on: both become live');
-      assert.strictEqual(await swap(true, false), '0100', 'radar only');
-      assert.strictEqual(await swap(false, true), '0001', 'IR only');
-      assert.strictEqual(await swap(false, false), '0000', 'none stays none');
-      // and the other way: the first time chosen swaps live for at-a-time, once; a layer the viewer ticks back stays
+      // Radar and satellite are a legend row each, with a Live | Past switch: only one version is ever on the map.
+      // (The fake map fires no events, so ticking a row is the map's add and the row's own handler.)
+      const tick = (kind, on) => { const w = t.WX[kind]; for (const g of [w.proxy, w.live, w.past]) t.map.removeLayer(g); if (on) { t.map.addLayer(w.proxy); w.proxy.handlers.add(); } };
       const state = () => [t.recLayer, t.radarLayer, t.satAtGroup, t.satGroup].map(g => Number(t.map.hasLayer(g))).join('');
-      for (const g of [t.recLayer, t.satAtGroup, t.radarLayer, t.satGroup]) t.map.removeLayer(g);
-      t.map.addLayer(t.radarLayer); t.map.addLayer(t.satGroup);
-      t.recFollow({id: 960, t: new Date(ms(16, 15)).toISOString()}); await settle();
-      assert.strictEqual(state(), '1010', 'going back in time: both become the ones at a time');
-      t.map.removeLayer(t.recLayer); t.map.addLayer(t.radarLayer);
+      const first = async () => { t.recFollow({id: 960, t: new Date(ms(16, 15)).toISOString()}); await settle(); };
+      reset.onclick();
+      for (const [radar, sat, live, past] of [[1, 1, '0101', '1010'], [1, 0, '0100', '1000'], [0, 1, '0001', '0010'], [0, 0, '0000', '0000']]) {
+        tick('radar', radar); tick('sat', sat);
+        assert.strictEqual(state(), live, `Live, radar ${radar} satellite ${sat}`);
+        await first();
+        assert.strictEqual(state(), past, `the first time chosen: Past versions of what was on (${radar}${sat})`);
+        reset.onclick(); await settle();
+        assert.strictEqual(state(), live, `Current: Live again (${radar}${sat})`);
+      }
+      // the switch is the viewer's: Live chosen while at a time stays through moving the time; Past chosen while live stays
+      tick('radar', 1); tick('sat', 1);
+      await first();
+      t.wxSetMode('radar', 'live');
+      assert.strictEqual(state(), '0110', 'switched the radar back to Live at a time');
       range.value = ms(16, 40); range.oninput(); await settle();
-      assert.strictEqual(state(), '0110', 'the viewer ticked live radar back: moving the time leaves it');
+      assert.strictEqual(state(), '0110', 'moving the time leaves it');
+      assert.strictEqual(document.body.dataset.wxradar, 'live'); assert.strictEqual(document.body.dataset.wxsat, 'past');
       reset.onclick(); await settle();
-      assert.strictEqual(state(), '0101', 'Current: live again');
-      for (const g of [t.radarLayer, t.satGroup]) t.map.removeLayer(g);
+      t.wxSetMode('sat', 'past');
+      assert.strictEqual(state(), '0110', 'Past chosen while live');
+      // off stays off: the mode is remembered for when the row is ticked, and unticking removes both versions
+      tick('radar', 0); tick('sat', 0);
+      t.wxSetMode('radar', 'past');
+      assert.strictEqual(state(), '0000');
+      tick('radar', 1);
+      assert.strictEqual(state(), '1000', 'ticked: the version its switch says');
+      t.WX.radar.proxy.handlers.remove(); t.map.removeLayer(t.WX.radar.proxy);
+      assert.strictEqual(state(), '0000', 'unticked: neither version');
+      reset.onclick(); await settle();
+      tick('radar', 0); tick('sat', 0);
       // all flights: no slider, and no aircraft
       dots[1].handlers.click(); await settle();
       t.chooseFlight('all'); await settle(); await draw([apt(5, 118), apt(25, 120), apt(0, 128, {t: '2026-10-30T17:35:00Z'})], [], false);

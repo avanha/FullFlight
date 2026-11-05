@@ -315,7 +315,7 @@ to 50, pink 55 to 60, white 65 and over, so the colour is rain intensity, not te
 
 It is polite: one request at a time with a pause between, our User-Agent, and a refusal (429 or a server error) ends the visit
 and holds off for an hour, remembered across a restart. The index must name a RainViewer host over https. If the app is not
-running for more than two hours the radar for that time is lost. The map's legend has a **Recorded radar (at the selected time)** layer that draws them. It shows the frame nearest the
+running for more than two hours the radar for that time is lost. The **Past** side of the legend's "Weather radar" row draws them. It shows the frame nearest the
 selected message (or the newest position when none is selected), with a badge saying which frame it is and how many minutes
 from that time; the arrows on the badge step through the recorded frames, and clicking one of the small ADS-B dots on the track (the ones that show a tooltip) draws the radar for that dot's time, so an ADS-B-only flight can be walked along its track (see the time slider below). It draws only the tiles that were recorded, which is
 the area around the followed aircraft, and leaves the rest blank (where there was no position for more than an hour, none was recorded: nothing says where the aircraft was). When no frame was recorded within 15 minutes of the time
@@ -814,7 +814,7 @@ plan with no callsign, is matched on time alone.
 
 ## Weather radar
 
-"Weather radar" in the map legend (first entry, off until you tick it, and remembered) lays [RainViewer](https://www.rainviewer.com)'s
+"Weather radar" in the map legend (first entry, off until you tick it, and remembered; its **Live | Past** switch chooses this live layer or the recorded one below) lays [RainViewer](https://www.rainviewer.com)'s
 global radar composite over the map, in the NEXRAD colours (green to red), at 65% opacity. A label under the clock gives the time
 of the frame and its age; the newest frame is fetched when it is switched on and every 5 minutes after. The browser fetches it
 straight from RainViewer (the server is not involved), and the map credits it; see RainViewer's terms for what it may be used
@@ -838,7 +838,7 @@ imagery, not a gap.
 
 ### Satellite IR at the selected time
 
-"Satellite IR (at the selected time)" in the legend draws the frame for the time of the selected message (or of the newest
+The **Past** side of the legend's "Satellite (IR)" row draws the frame for the time of the selected message (or of the newest
 position when none is selected) instead of the newest. Nothing is recorded for it: GIBS keeps its infrared frames for about 90
 days (a frame of 2026-08-06 was there on 2026-11-03 and one of 2026-08-03 was not), so the page asks GIBS for the old frame
 directly, as the live layer does for the new one, with the same satellites, hole filling and 55% opacity. The frame is the
@@ -950,9 +950,11 @@ spans the flight from its first position to its last. It sets the same time as s
 badge arrows, so the recorded radar and the infrared follow it, and a translucent blue aircraft shows where the aircraft was then:
 at the dot or report itself, between the two positions either side by interpolation (altitude and speed too), or, where the track
 has a silence, along the dotted estimated path, with the tooltip saying it is an estimate. A button beside the slider, **Current**,
-takes the time away again (the aircraft is not marked until a time is chosen) and swaps whichever of the recorded radar and the
-infrared at a time is on for the live radar and the live infrared (none on stays none). Choosing another target or flight does the same.
-Going the other way, the first time chosen after that (the slider, a message, a dot or an arrow) swaps the live radar and infrared for the recorded radar and the infrared at a time, again keeping which are on. After that the legend boxes are yours: ticking one back does not get undone by moving the time. There are no message ticks on it (the messages are on
+takes the time away again (the aircraft is not marked until a time is chosen) and sets the radar and the satellite
+to **Live**. Choosing another target or flight does the same. Going the other way, the first time chosen after that (the slider, a
+message, a dot or an arrow) sets both to **Past**. Each of the two rows in the legend, "Weather radar" and "Satellite (IR)", has a
+**Live | Past** switch; it is the viewer's after that, so moving the time does not undo it, and it keeps its setting while the row is
+unticked, for when it is ticked. Only one of the two versions of a row is ever on the map. There are no message ticks on it (the messages are on
 the track), and no play button yet.
 
 **Folding the legend.** A **Legend ▾** bar above the two legend boxes at the bottom left folds them away (the bar then reads
