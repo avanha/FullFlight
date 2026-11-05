@@ -925,3 +925,30 @@ func TestAnOriginSeenOnADSBGivesWayToOneEnteredByHand(t *testing.T) {
 		t.Errorf("a destination alone leaves the seen origin: %+v", sg)
 	}
 }
+
+// N956AK flew AS485 into Seattle, heard only by FMS reports (the last at 1,000 ft, a mile from the runway), and sat for an hour and a
+// half; ADS-B picked it up at the gate as AS421 and watched it leave. The arrival has no number of its own, and 1h23m from a numbered
+// flight with no route it would be adopted as that flight's start: the landing and the stop show they are two.
+func TestLandingSeenOnlyByMessagesIsNotAdoptedByTheNextFlight(t *testing.T) {
+	build := func(lastAlt float64, lastLat float64) []Segment {
+		r := newRig(t)
+		for i, p := range []struct{ lat, lon, alt float64 }{{44.2, -121.6, 36000}, {45.6, -122.5, 36000}, {47.07, -122.5, 13100}, {lastLat, -122.318, lastAlt}} {
+			tm := at(0, 19, 49).Add(time.Duration(i) * 15 * time.Minute)
+			lat, lon, alt := p.lat, p.lon, p.alt
+			r.msg(store.Message{T: tm, Kind: "fms_position", Lat: &lat, Lon: &lon, AltFt: &alt, PosT: &tm})
+		}
+		r.air(at(0, 21, 57), "ASA421", 47.449, -122.306, 0, true)
+		r.air(at(0, 22, 19), "ASA421", 47.45, -122.31, 100, false)
+		for i, alt := range []float64{1900, 12200, 17200, 30100} {
+			r.air(at(0, 22, 24).Add(time.Duration(i)*5*time.Minute), "ASA421", 47.4, -122.3+float64(i)*0.3, alt, false)
+		}
+		return r.segments()
+	}
+	segs := build(500, 47.467)
+	if len(segs) != 2 || segs[0].Identified || segs[1].Flight != "AS421" || segs[1].Start.Before(at(0, 21, 57)) {
+		t.Errorf("the arrival is its own flight and AS421 starts at the gate: %s %+v", names(segs), segs)
+	}
+	if segs := build(500, 47.8); len(segs) != 1 {
+		t.Errorf("a last fix 20 nm from the airport was not a landing: %s %+v", names(segs), segs)
+	}
+}

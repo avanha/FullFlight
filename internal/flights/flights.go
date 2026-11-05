@@ -84,6 +84,8 @@ const (
 	unseenApproachGap = time.Hour
 	unseenApproachNM  = 8.0
 	unseenApproachFt  = 2000.0
+	onFinalFt         = 3000.0 // a single fix this low and this close (onFinalNM) is an approach, with no earlier fix to show it descending
+	onFinalNM         = 3.0
 	approachKt        = 150.0 // for the time left to touchdown from the last fix of an approach
 	departedNM        = 4.0   // how close to an airport the fix on the ground is, for a flight seen taking off from it
 	StaleGap          = time.Hour
@@ -381,9 +383,17 @@ func segments(st *store.Store, hexAddr string, since, until time.Time, tr *trace
 	unseen := unseenStops(fixes)
 	for _, u := range unseen {
 		stops = append(stops, u.GroundStop)
-		tr.note("stops", "unseen-stop", u.Land, u.Depart, "a stop at %s that no fix showed: the fix at %s is low, climbing and next to it, long after one far away or one on the way in", u.Airport, u.Depart.Format("15:04:05"))
+		tr.note("stops", "unseen-stop", u.Land, u.Depart, "a stop at %s that no fix showed: the fix at %s is low and next to it, on the ground or climbing, long after one far away or one on the way in", u.Airport, u.Depart.Format("15:04:05"))
 	}
 	segs = splitAtStopovers(segs, stops, ev, posTimes, tr)
+	// A stop that falls between two pieces, not inside one, divides them as surely: they are never one flight.
+	for _, u := range unseen {
+		for i := 0; i+1 < len(segs); i++ {
+			if !segs[i].End.After(u.Land) && !segs[i+1].Start.Before(u.Land) && u.Depart.Sub(u.Land) >= StopoverMin {
+				segs[i].stopAfter = true
+			}
+		}
+	}
 
 	// 6. the route the aircraft reported; pieces of one flight that share it are joined
 	routes, err := st.RouteReports(hexAddr, since.Add(-RouteSlack), until.Add(RouteSlack))
@@ -997,7 +1007,29 @@ func unseenStops(fixes []store.AirFix) []unseenStop {
 	var out []unseenStop
 	for k := 1; k < len(fixes); k++ {
 		prev, f := fixes[k-1], fixes[k]
-		if f.T.Sub(prev.T) < unseenApproachGap || f.OnGround || f.AltFt == nil || *f.AltFt > unseenClimbFt {
+		if f.T.Sub(prev.T) < unseenApproachGap {
+			continue
+		}
+		if f.OnGround {
+			// ...or the first fix after the silence is on the ground at the airport the one before was coming in to (N956AK's AS485
+			// into Seattle, last heard on final, then ADS-B picking it up at the gate as AS421): it landed, and the stop lasts at
+			// least until that fix.
+			if prev.OnGround || prev.AltFt == nil {
+				continue
+			}
+			hits := airports.Near(f.Lat, f.Lon, departedNM)
+			if len(hits) == 0 {
+				continue
+			}
+			away := geo.DistNM(prev.Lat, prev.Lon, hits[0].Lat, hits[0].Lon)
+			if !approach(fixes, k-1, away) {
+				continue
+			}
+			land := prev.T.Add(time.Duration(away / approachKt * float64(time.Hour)))
+			out = append(out, unseenStop{store.GroundStop{Land: land, Depart: f.T}, hits[0].ICAO})
+			continue
+		}
+		if f.AltFt == nil || *f.AltFt > unseenClimbFt {
 			continue
 		}
 		climbing := false
@@ -1029,10 +1061,16 @@ func unseenStops(fixes []store.AirFix) []unseenStop {
 }
 
 // approach reports whether fixes[i], away nm from the airport, was an aircraft coming in to it: in the air, low, close, and lower than
-// a fix in the ten minutes before.
+// a fix in the ten minutes before; or, where fixes are sparse (an FMS report every fifteen minutes), simply very low and very close.
 func approach(fixes []store.AirFix, i int, away float64) bool {
 	f := fixes[i]
-	if f.OnGround || f.AltFt == nil || *f.AltFt > unseenApproachFt || away > unseenApproachNM {
+	if f.OnGround || f.AltFt == nil {
+		return false
+	}
+	if *f.AltFt <= onFinalFt && away <= onFinalNM {
+		return true
+	}
+	if *f.AltFt > unseenApproachFt || away > unseenApproachNM {
 		return false
 	}
 	for j := i - 1; j >= 0 && f.T.Sub(fixes[j].T) <= 10*time.Minute; j-- {

@@ -439,6 +439,11 @@ seen origin. The same holds when the fix before was the approach itself (low, wi
 nothing was heard for an hour or more: it landed, and the climb-out from that airport is the next flight. Where there is no
 such climb-out (an aircraft last seen circling near the airport, or first seen at cruise height) the flight is left whole.
 
+The next fix may also be on the ground instead of a climb-out: an arrival heard only by messages (an FMS report on final) and then
+ADS-B at the gate, an hour or more later, within 4 nm of the same airport. That is a landing too, and the piece before it is never
+joined to the flight after it, even when it has no number of its own (N956AK's AS485 into Seattle and the AS421 that left it).
+Where fixes are sparse, one fix below 3,000 ft and within 3 nm of the airport counts as an approach without an earlier, higher one.
+
 ### Seen taking off
 
 A flight whose messages gave no origin, but whose first fix is ADS-B on the ground within 4 nm of an airport and which is then
