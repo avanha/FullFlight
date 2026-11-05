@@ -25,7 +25,7 @@ navdata:
 
 aerodatabox:                   # optional: find a flight by number when ADS-B has lost it (mid-ocean)
   api_key: ""                  # RapidAPI key for AeroDataBox; empty turns this off
-  every: 30m                   # least time between lookups for one watch; each one uses your quota
+  every: 2h                    # least time between lookups for one watch; each one uses your quota (the free plan has 400 units a month, 2 or more a lookup)
 
 backfill:                      # optional: fill in the track from before an aircraft was followed, from adsb.lol's daily archives
   enabled: false               # each day is 3 to 4 GB; nothing is downloaded unless this is on and you start it from the menu

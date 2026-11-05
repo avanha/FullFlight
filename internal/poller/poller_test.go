@@ -568,10 +568,10 @@ func TestProviderFindsAFlightADSBCannot(t *testing.T) {
 	if len(pr.calls) != 1 {
 		t.Errorf("asked again after a minute: %v", pr.calls)
 	}
-	now = now.Add(30 * time.Minute)
+	now = now.Add(2 * time.Hour)
 	p.Once(context.Background())
 	if len(pr.calls) != 2 {
-		t.Errorf("calls after 31 min = %v", pr.calls)
+		t.Errorf("calls after 2h1m = %v", pr.calls)
 	}
 }
 
@@ -935,7 +935,7 @@ func TestProviderIsAskedOnlyWhereItCanHelp(t *testing.T) {
 		t.Fatalf("the first look tries both days: %v", pr.calls)
 	}
 	// found under yesterday's date: the next look asks for that one only
-	now = now.Add(31 * time.Minute)
+	now = now.Add(2*time.Hour + time.Minute)
 	p.Once(context.Background())
 	if !reflect.DeepEqual(pr.calls[2:], []string{"CK624/2026-10-29"}) {
 		t.Errorf("the second look: %v", pr.calls[2:])
@@ -994,7 +994,7 @@ func TestProviderRefusalPutsLookupsOnHold(t *testing.T) {
 		}
 	}
 
-	// five hours on, still held; after six, asked again, and an answer ends the matter
+	// five hours on, still held; once the hold has ended and a lookup is due again (the look at five hours was the last), asked again, and an answer ends the matter
 	pr.err = nil
 	pr.byDate = map[string][]aerodatabox.Flight{"2026-10-31": {{Status: "EnRoute", Hex: "781D8D", Reg: "B-221W", GS: &gs}}}
 	now = now.Add(5 * time.Hour)
@@ -1002,7 +1002,7 @@ func TestProviderRefusalPutsLookupsOnHold(t *testing.T) {
 	if len(pr.calls) != 1 {
 		t.Errorf("asked during the hold: %v", pr.calls)
 	}
-	now = now.Add(time.Hour + time.Minute)
+	now = now.Add(2*time.Hour + time.Minute)
 	p.Once(context.Background())
 	if len(pr.calls) < 2 {
 		t.Errorf("never asked again: %v", pr.calls)

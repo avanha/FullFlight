@@ -86,7 +86,7 @@ needs its ICAO callsign and cannot be looked up.
 
 The quota is small, so it is spent only where it can help:
 
-- A watch asks at most every `aerodatabox.every` (30m), and not for a flight that has landed or whose aircraft is known and
+- A watch asks at most every `aerodatabox.every` (2h; the free RapidAPI plan has 400 units a month and a lookup costs two or more, so 30m could use a month's quota on one lost flight), and not for a flight that has landed or whose aircraft is known and
   has not yet left the ground.
 - Once the flight is found under a date, only that date is asked about.
 - Each request is logged (`flight lookup`, with `requests_today`).

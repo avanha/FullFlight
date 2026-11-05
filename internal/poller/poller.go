@@ -66,7 +66,7 @@ type Poller struct {
 	// ground before the flight counts as finished; default 3h.
 	StopoverGrace time.Duration
 	// ProviderEvery is the least time between flight-number lookups for one watch; each costs a request
-	// against a quota. Default 30m.
+	// against a quota (a free RapidAPI plan has 400 units a month, and a lookup costs 2 or more). Default 2h.
 	ProviderEvery time.Duration
 	// ProviderMaxAge ignores a provider position older than this; default 6h.
 	ProviderMaxAge time.Duration
@@ -112,7 +112,7 @@ func (p *Poller) defaults() {
 		p.StopoverGrace = 3 * time.Hour
 	}
 	if p.ProviderEvery == 0 {
-		p.ProviderEvery = 30 * time.Minute
+		p.ProviderEvery = 2 * time.Hour
 	}
 	if p.ProviderMaxAge == 0 {
 		p.ProviderMaxAge = 6 * time.Hour

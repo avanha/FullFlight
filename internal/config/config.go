@@ -33,7 +33,7 @@ type Config struct {
 	// over an ocean. Leave the key empty to turn it off.
 	AeroDataBox struct {
 		APIKey string        `yaml:"api_key"`
-		Every  time.Duration `yaml:"every"` // least time between lookups per watch; default 30m
+		Every  time.Duration `yaml:"every"` // least time between lookups per watch; default 2h
 	} `yaml:"aerodatabox"`
 
 	// Navdata holds the optional waypoint database (fix.dat.gz, nav.dat.gz); fetch it with `fullflight -fetch-navdata`.
