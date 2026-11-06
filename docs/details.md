@@ -111,6 +111,9 @@ plus hand parsers), never from airframes.io's own fields. Those are kept as `af_
 number, or a tail that belongs to a different hex) shows as a warning badge. A message heard by several stations is stored once
 (`rx_count`). `GET /api/messages/{hex}?hours=48&limit=300` returns them, oldest first.
 
+A registration of seven characters (`B-16783`) fills the ARINC 622 aircraft address, so the application is followed directly by the
+registration (`.AT1B-16783`, not `.AT1.VT-ALN`); these are read as ADS-C and CPDLC like the others.
+
 **Positions.** ADS-C, CPDLC, REP081 and FMS (`POS…`) positions are placed in time from their embedded timestamps and drawn in
 orange. One is marked suspect only when it is impossible (over 700 kt) against every one of the two nearest fixes on each side,
 so a coherent run of fixes is never condemned by a conflicting one and the result does not depend on fetch order. The newest

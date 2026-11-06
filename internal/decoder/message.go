@@ -80,9 +80,10 @@ var (
 	flightID   = regexp.MustCompile(`^([A-Z0-9]{2})(\d{1,4})[A-Z]?$`)
 	// a 10 character prefix: message number (a letter, two digits, a letter) and flight (airline and four digits)
 	msgNumFlight = regexp.MustCompile(`^[A-Z]\d{2}[A-Z][A-Z0-9]{2}\d{4}`)
-	ownerAddr    = regexp.MustCompile(`^/[A-Z0-9]{7}\.([A-Z0-9]{3})\.`)
+	// (a registration of seven characters, B-16783, fills the aircraft address and leaves no padding dot behind the application: .AT1B-16783)
+	ownerAddr = regexp.MustCompile(`^/[A-Z0-9]{7}\.([A-Z0-9]{3})(?:\.|[A-Z0-9-])`)
 	// Some VDL2 traffic arrives with the leading "/" missing.
-	noSlashARINC = regexp.MustCompile(`^[A-Z0-9]{7}\.(ADS|AT1|CR1|CC1|DR1|AFN|TI2)[./]`)
+	noSlashARINC = regexp.MustCompile(`^[A-Z0-9]{7}\.(ADS|AT1|CR1|CC1|DR1|AFN|TI2)[./A-Z0-9-]`)
 )
 
 // SplitPrefix separates the 4-char message number + 6-char flight ID that
