@@ -503,7 +503,7 @@ Every message has two times: when it arrived, and the time it counts as for the 
 
 - the time the aircraft put in it where that is a full date and time: an A350 or RTR report's own time, an operations event's
   time, or its day of the month and time of day (placed in the month it arrived or the one before), a REP081's seconds into the
-  month, or the position time of an ACMF, AOC, `*POS` or POSRPT report;
+  month, or the position time of an ACMF, AOC, `*POS` or POSRPT report, or of an airline's position report (a route it names does not count when its position has only a time of day and it arrived over 12 hours later: which day it was made on is a guess);
 - for a message about a flight that has not left yet, when that flight is due to leave;
 - otherwise the arrival. A message with no time of its own (ATIS requests, CPDLC, AFN logons and the like) can only count from
   its arrival.
@@ -786,6 +786,14 @@ times in them join the evidence for a flight's route and departure.
   header and is not read. Positions agree with ADS-B to the minute.
 - **EVA Air** (read from B-16783): labels `11` out, `12` off, `13` on, `14` in: `OFF01EVA619    /--310633KLAXRCTP` is wheels up on the 31st at
   06:33Z, Los Angeles to Taipei. An arrival names its airport twice. The aircraft condition (`ACM`) reports and the engine numbers are not read.
+- **Weather observations** (`A3…` climb, `D3…` descent, `E3…` cruise, on `H1`): a few points a minute or less apart, each with
+  latitude and longitude, altitude, temperature and wind, as in `A3M2312343KSEAKLAX…` followed by
+  `N47335W1221840455P003097006G0009`. The header gives the airports and the day of the month; the time comes from the report (a
+  climb's lines carry none, and the report's own time is within half a minute of its last point; the others carry it on the first
+  line). The newest timed point is the position, so a report delivered days late lands on the day it was made. They name the route and are
+  drawn as "Airline" positions with their wind. Where a report has no position at all, the day and time still count for the flight it
+  belongs to. Read from 306 reports, 231 checked against ADS-B (all within a minute's flying).
+
   These times are placed on the most recent day that is not after the message arrived, so a position that arrives hours late
   (several did, on 28 October) lands where it was.
 - **Pre-departure clearances** (`A3`, `A4`, Beijing and Shanghai): the runway, SID and squawk

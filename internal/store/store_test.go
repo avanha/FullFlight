@@ -1151,6 +1151,19 @@ func TestSatellitePositionReportsNameTheRoute(t *testing.T) {
 	}
 }
 
+// An airline position report delivered a day late has only a time of day for its position, so which day it was sent on is a guess:
+// it is not evidence of the route of the flight that guess lands in. One that arrives promptly, or gives its date, is.
+func TestALateAirlineReportWithOnlyATimeOfDayIsNotRouteEvidence(t *testing.T) {
+	s := open(t)
+	at := time.Date(2026, 10, 29, 19, 22, 0, 0, time.UTC)
+	ops := `{"fields":{"ops":{"origin":"KSEA","dest":"KMCO"}}}`
+	s.AddMessage(Message{ID: 1, Hex: "AD4AFB", T: at.Add(15 * time.Hour), PosT: &at, Label: "H1", Text: "late", Kind: "ops_report", Decoded: ops})
+	s.AddMessage(Message{ID: 2, Hex: "AD4AFB", T: at.Add(time.Minute), PosT: &at, Label: "H1", Text: "prompt", Kind: "ops_report", Decoded: ops})
+	rs, err := s.RouteReports("AD4AFB", at.Add(-time.Hour), at.Add(time.Hour))
+	if err != nil || len(rs) != 1 || rs[0].To != "KMCO" {
+		t.Fatalf("%+v %v", rs, err)
+	}
+}
 // A message counts as the time the aircraft put in it, where that is a full date and time, not as the time it arrived: an A350
 // report delivered two days late is evidence of its flight at the time it was sent, and is listed with that flight.
 func TestLateMessagesCountFromTheirOwnTime(t *testing.T) {

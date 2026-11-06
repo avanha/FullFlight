@@ -599,7 +599,8 @@ const opsWindow = `ts BETWEEN ?2 - 172800 AND ?3 + 604800`
 
 // routeReportsSQL selects (t, origin, dest, source, rx: when it arrived) from the kinds of message that say where a flight is going: a
 // REP081 report, another A350 report (or its XML maintenance report, or a takeoff report) that names the route, a 787 ACMF report, an airline (label 83) position report and a filed flight plan (arguments:
-// hex, from, to).
+// hex, from, to). An airline report that has only a time of day for its position and arrived over half a day later is left out: which day
+// it was made on is a guess, and a wrong one would give the flight of that day a route it did not fly.
 var routeReportsSQL = `
 	SELECT COALESCE(pos_ts, ts) AS t, COALESCE(json_extract(decoded, '$.fields.rep081.Origin'), '') AS origin,
 		json_extract(decoded, '$.fields.rep081.Dest') AS dest, 'REP081' AS src, ts AS rx
@@ -618,7 +619,8 @@ var routeReportsSQL = `
 	SELECT t, origin, dest, 'airline report', t FROM (
 		SELECT at_ts AS t, COALESCE(json_extract(decoded, '$.fields.ops.origin'), '') AS origin, json_extract(decoded, '$.fields.ops.dest') AS dest
 		FROM message WHERE hex=?1 AND kind='ops_report' AND ` + opsWindow + ` AND time_flag=0
-		  AND json_valid(decoded) AND COALESCE(json_extract(decoded, '$.fields.ops.dest'), '') != '') WHERE t BETWEEN ?2 AND ?3
+		  AND json_valid(decoded) AND COALESCE(json_extract(decoded, '$.fields.ops.dest'), '') != ''
+		  AND NOT (ts - at_ts > 43200 AND at_basis = 'event' AND json_extract(decoded, '$.fields.ops.at') IS NULL AND json_extract(decoded, '$.fields.ops.info.day') IS NULL)) WHERE t BETWEEN ?2 AND ?3
 	UNION ALL
 	SELECT COALESCE(pos_ts, ts), COALESCE(json_extract(decoded, '$.fields.origin'), ''), json_extract(decoded, '$.fields.dest'),
 		CASE kind WHEN 'acmf_report' THEN 'ACMF' ELSE 'airline report' END, COALESCE(pos_ts, ts)

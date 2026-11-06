@@ -13,6 +13,7 @@ const (
 	BasisMonth   = "month"   // seconds since 00:00 UTC on the 1st (REP081)
 	BasisDay     = "day"     // seconds since 00:00 UTC (CPDLC position report)
 	BasisDayHint = "dayhint" // time of day and day of the month (POSRPT): Secs is day*100000 + seconds of day
+	BasisUTCDay  = "utcday"  // time of day and the UTC day of the month (weather observations): Secs is day*100000 + seconds of day
 	BasisDate    = "date"    // month, day, hour and minute (*POS report): Secs is the number MMDDHHMM
 	BasisWindow  = "window"  // between two times of day (POSA1): Secs is first*100000 + last, in seconds of day
 	BasisReceipt = "receipt" // no usable embedded time: placed at when it was received
@@ -36,6 +37,8 @@ func (p Pos) At(recv time.Time) time.Time {
 		return ResolveMonthSeconds(int64(p.Secs), recv)
 	case BasisDay:
 		return ResolveSecondsOfDay(p.Secs, recv)
+	case BasisUTCDay:
+		return ResolveUTCDay(int(p.Secs)/100000, float64(int(p.Secs)%100000), recv)
 	case BasisDate:
 		return ResolveMonthDay(int(p.Secs), recv)
 	case BasisWindow:

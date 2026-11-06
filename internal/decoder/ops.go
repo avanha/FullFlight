@@ -157,7 +157,7 @@ func parseOps(label, text string) (opsParsed, bool) {
 		if p, ok := parseEB(text); ok {
 			return p, true
 		}
-		for _, parse := range []func(string) (opsParsed, bool){parseABS, parseAlaskaTakeoff} {
+		for _, parse := range []func(string) (opsParsed, bool){parseABS, parseAlaskaTakeoff, parseAMDAR} {
 			if p, ok := parse(text); ok {
 				return p, true
 			}

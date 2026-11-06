@@ -34,14 +34,14 @@ type eventFields struct {
 	} `json:"fields"`
 }
 
-// positionTimed lists the kinds of report whose position time is the time of the report, because they give the date.
-var positionTimed = map[string]bool{"acmf_report": true, "aoc_position": true, "pos_report": true, "posrpt": true}
+// positionTimed lists the kinds of report whose position time is the time of the report, because they give the date (an airline's operations report counts when it has a position; one with a full time of its own was settled above).
+var positionTimed = map[string]bool{"acmf_report": true, "aoc_position": true, "pos_report": true, "posrpt": true, "ops_report": true}
 
 // EventTime says when a message counts as, and on what basis. rx is when it arrived, posT the time of the position it
 // carries, if any, and decoded its decoded JSON.
 //
 // In order, the first that applies: the full time of an operations event; the time in an A350 report (a report with the zero time
-// has none); the position time of a REP081 or of the kinds that give a date (ACMF, AOC, *POS, POSRPT); an operations event's or a
+// has none); the position time of a REP081 or of the kinds that give a date (ACMF, AOC, *POS, POSRPT, an airline's position report); an operations event's or a
 // pre-departure clearance's day of the month and time of day. Otherwise the arrival, or, for a flight not yet left, when it is due.
 func EventTime(rx time.Time, kind string, posT *time.Time, decoded string) (time.Time, string) {
 	var f eventFields

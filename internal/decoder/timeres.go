@@ -94,6 +94,21 @@ func ResolveMonthDay(mmddhhmm int, ref time.Time) time.Time {
 	return best
 }
 
+// ResolveUTCDay places a time of day that comes with the day of the month it was taken on: the latest such time not after recv
+// (allowing ClockSkew), which can be days before it for a report delivered late. A report taken in the last minutes of a day
+// may be dated the next one (a cruise report at 23:52 on the 31st, dated the 1st). If no day in the last 40 has that number, recv.
+func ResolveUTCDay(day int, secs float64, recv time.Time) time.Time {
+	recv = recv.UTC()
+	base := recv.Truncate(24 * time.Hour)
+	for k := -1; k <= 40; k++ {
+		t := base.AddDate(0, 0, -k).Add(time.Duration(secs * float64(time.Second)))
+		if (t.Day() == day || t.AddDate(0, 0, 1).Day() == day) && !t.After(recv.Add(ClockSkew)) {
+			return t
+		}
+	}
+	return recv
+}
+
 // ResolveDayTime places a time of day (seconds since 00:00 UTC) that comes with a day of the month, which is the day
 // the flight is dated, not always the UTC day of the report (a flight that crosses midnight UTC is still dated
 // for its start). It is the latest such time not after recv (allowing ClockSkew) whose UTC day, or the day before it,
