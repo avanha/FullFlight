@@ -885,6 +885,12 @@ was filed); the legend switches it off. The projection follows it: an aircraft w
 it (70 degrees) is projected along the legs, turning where they turn, and stops at the destination; otherwise the straight-line
 projection is used. The plan is as filed, not as flown.
 
+The navigation database is from 2013, and a fix introduced since can share its name with an older one far away. A fix the plan gave
+no coordinates for, placed from the database, that sends the route more than 300 nm out of its way and back is left out of the plan
+and listed as not placed (B-LRM's plan from Madrid put SUDAR in Russia, 800 nm from its place between DARVA and OGOLI in Uzbekistan).
+The position is also remembered as wrong (table `fix_suspect`, with why), and is left out of every later lookup of that name: other plans
+and the waypoints named in reports. A position learned from the aircraft's own reports is never dropped or marked.
+
 Which plan is the flight's: the newest that arrived from 12 hours before the flight began until it ended (plans go out at the gate),
 and whose callsign is the flight's own number (UAL1887 and UA1887 are the same flight; leading zeros do not count). A plan filed for
 another number is passed over however near its time, since an aircraft's next flight is often filed while it is still on the last:

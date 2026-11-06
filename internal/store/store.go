@@ -242,6 +242,15 @@ var migrations = []string{
 		limited  INTEGER NOT NULL DEFAULT 0,  -- HTTP 429: the service said we asked too much
 		PRIMARY KEY (day, host)
 	 ) WITHOUT ROWID;`,
+	// positions in the downloaded navigation database that a flight plan showed to be wrong (a name reused for another place since)
+	`CREATE TABLE IF NOT EXISTS fix_suspect (
+		name TEXT NOT NULL,
+		lat  REAL NOT NULL,
+		lon  REAL NOT NULL,
+		why  TEXT NOT NULL DEFAULT '',
+		ts   INTEGER NOT NULL,
+		PRIMARY KEY (name, lat, lon)
+	 ) WITHOUT ROWID;`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.

@@ -53,6 +53,9 @@ func (s *Server) plans(w http.ResponseWriter, r *http.Request) {
 			return out
 		}
 		for _, p := range s.Nav.Lookup(name) {
+			if s.Store.SuspectFix(name, p.Lat, p.Lon) {
+				continue // a flight plan showed the database wrong about it
+			}
 			out = append(out, [2]float64{p.Lat, p.Lon})
 		}
 		return out
@@ -106,7 +109,7 @@ func (s *Server) plans(w http.ResponseWriter, r *http.Request) {
 			route := *c.Route // from the origin airport, to no airport: the clearance stops short of the destination
 			route.From = c.Origin
 			pts, missing := flightplan.Resolve(&route, lookup, airport)
-			pts, missing = dropDetours(pts, missing)
+			pts, missing, _ = dropDetours(pts, missing)
 			at := m.At // issued on its day and time, whenever it was delivered
 			if at.IsZero() {
 				at = m.T
@@ -147,6 +150,13 @@ func (s *Server) plans(w http.ResponseWriter, r *http.Request) {
 				pts[i].Kind = "learned"
 			}
 		}
+		// A learned position is the aircraft's own; one from the database that sends the route far off and back is the wrong place of that
+		// name, and is remembered as such.
+		var dropped []flightplan.Point
+		pts, missing, dropped = dropDetours(pts, missing)
+		for _, d := range dropped {
+			s.Store.MarkFixSuspect(d.Name, d.Lat, d.Lon, fmt.Sprintf("sent the route of the flight plan of %s %s\u2192%s far off its course", p.Callsign, p.From, p.To), m.T)
+		}
 		if k, dup := seen[key]; dup {
 			out[k].T, out[k].ID = m.T, m.ID
 			if n := len(pts) - len(missing); n >= given[key] { // the newer copy is at least as complete
@@ -168,25 +178,26 @@ func (s *Server) plans(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
-// dropDetours takes out of a resolved route the named points that send it a long way off and back: the navigation database is from
+// dropDetours takes out of a resolved route the named points from the database that send it a long way off and back: the navigation database is from
 // 2013, and a fix introduced since can share its name with an older one on the far side of the world. A point is dropped when the
-// route goes over 300 nm out of its way to reach it, and is listed as not placed.
-func dropDetours(pts []flightplan.Point, missing []string) ([]flightplan.Point, []string) {
+// route goes over 300 nm out of its way to reach it, and is listed as not placed. The points taken out are returned too.
+func dropDetours(pts []flightplan.Point, missing []string) (kept []flightplan.Point, notPlaced []string, dropped []flightplan.Point) {
 	out := pts[:0:0]
 	for i, p := range pts {
-		if p.Kind == "fix" || p.Kind == "learned" {
+		if p.Kind == "fix" {
 			if i > 0 && i+1 < len(pts) {
 				prev, next := out[len(out)-1], pts[i+1]
 				in, onward, direct := geo.DistNM(prev.Lat, prev.Lon, p.Lat, p.Lon), geo.DistNM(p.Lat, p.Lon, next.Lat, next.Lon), geo.DistNM(prev.Lat, prev.Lon, next.Lat, next.Lon)
 				if in+onward-direct > 300 && in+onward > 2*direct {
 					missing = append(missing, p.Name)
+					dropped = append(dropped, p)
 					continue
 				}
 			}
 		}
 		out = append(out, p)
 	}
-	return out, missing
+	return out, missing, dropped
 }
 
 func routeKey(p *flightplan.Plan) string {

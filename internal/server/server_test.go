@@ -1254,6 +1254,49 @@ func TestPlanUsesLearnedFixes(t *testing.T) {
 	}
 }
 
+// B-LRM's plan from Madrid named SUDAR between DARVA and OGOLI in Uzbekistan; the 2013 database has a SUDAR in Russia, 800 nm off the route.
+// A plan leaves such a name out, and remembers the database's position as wrong, so the name is not placed there again for any plan or
+// report. A position we learned from the aircraft is never marked.
+func TestPlanDropsAFixTheDatabaseHasWrong(t *testing.T) {
+	st, _ := store.Open(":memory:")
+	defer st.Close()
+	now := time.Date(2026, 11, 6, 10, 0, 0, 0, time.UTC)
+	nav := navdata.New()
+	nav.Add("METKA", navdata.Point{Lat: 40.725, Lon: 51.5, Kind: "fix"})
+	nav.Add("DARVA", navdata.Point{Lat: 41.3067, Lon: 60.4283, Kind: "fix"})
+	nav.Add("SUDAR", navdata.Point{Lat: 54.0617, Lon: 53.455, Kind: "fix"})
+	nav.Add("OGOLI", navdata.Point{Lat: 41.4828, Lon: 66.6089, Kind: "fix"})
+	nav.Add("TISIB", navdata.Point{Lat: 41.6, Lon: 69.9, Kind: "fix"})
+	plan := `{"fields":{"plan":{"callsign":"CPA372","from":"","to":"","fixes":[{"name":"METKA"},{"name":"DARVA"},{"name":"SUDAR"},{"name":"OGOLI"},{"name":"TISIB"}]}}}`
+	st.AddMessage(store.Message{ID: 1, Hex: "780AB8", T: now.Add(-time.Hour), Label: "H1", Text: "FPN/x", Kind: "flight_plan", Decoded: plan})
+	ts := httptest.NewServer((&Server{Store: st, Nav: nav, Now: func() time.Time { return now }}).Handler())
+	defer ts.Close()
+	names := func() ([]string, []string) {
+		_, body := do(t, "GET", ts.URL+"/api/plan/780ab8", "")
+		var plans []struct {
+			Points  []struct{ Name string }
+			Missing []string
+		}
+		if err := json.Unmarshal([]byte(body), &plans); err != nil || len(plans) != 1 {
+			t.Fatalf("%v: %s", err, body)
+		}
+		var on []string
+		for _, p := range plans[0].Points {
+			on = append(on, p.Name)
+		}
+		return on, plans[0].Missing
+	}
+	if on, missing := names(); strings.Contains(strings.Join(on, " "), "SUDAR") || len(missing) != 1 || missing[0] != "SUDAR" {
+		t.Errorf("points %v missing %v", on, missing)
+	}
+	if !st.SuspectFix("SUDAR", 54.0617, 53.455) || st.SuspectFix("DARVA", 41.3067, 60.4283) {
+		t.Error("the wrong position of SUDAR, and only that, is marked")
+	}
+	if on, missing := names(); strings.Contains(strings.Join(on, " "), "SUDAR") || len(missing) != 1 {
+		t.Errorf("second time: points %v missing %v", on, missing)
+	}
+}
+
 func TestPauseAndResumeAPI(t *testing.T) {
 	st, _ := store.Open(":memory:")
 	defer st.Close()

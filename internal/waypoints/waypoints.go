@@ -117,6 +117,9 @@ func (r *Resolver) learned(w *Waypoint, name string, ref [2]float64, est *[2]flo
 func (r *Resolver) database(w *Waypoint, e store.FixEntry, ref [2]float64, fl store.FixList, est *[2]float64, nextDist float64) bool {
 	best := nearest(ref, est, func(yield func(lat, lon float64)) {
 		for _, p := range r.Nav.Lookup(e.Name) {
+			if r.Store.SuspectFix(e.Name, p.Lat, p.Lon) {
+				continue // a flight plan showed the database wrong about it
+			}
 			if e.Role != "passed" && fl.Trk != nil && angleDiff(bearing(ref[0], ref[1], p.Lat, p.Lon), *fl.Trk) > 100 {
 				continue // behind the aircraft
 			}

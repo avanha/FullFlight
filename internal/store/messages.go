@@ -429,6 +429,20 @@ func (s *Store) LearnedFixes(name string) []LearnedFix {
 	return out
 }
 
+// MarkFixSuspect records that the navigation database's position for a waypoint name is wrong, with why we think so. The database is
+// from 2013 and a name can have been given to another place since; a position marked is left out of later lookups.
+func (s *Store) MarkFixSuspect(name string, lat, lon float64, why string, at time.Time) error {
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO fix_suspect (name, lat, lon, why, ts) VALUES (?,?,?,?,?)`, name, lat, lon, why, at.Unix())
+	return err
+}
+
+// SuspectFix reports whether the database's position for name at (lat, lon) has been marked wrong.
+func (s *Store) SuspectFix(name string, lat, lon float64) bool {
+	var n int
+	s.db.QueryRow(`SELECT COUNT(*) FROM fix_suspect WHERE name=? AND ABS(lat-?) < 0.01 AND ABS(lon-?) < 0.01`, name, lat, lon).Scan(&n)
+	return n > 0
+}
+
 // FixSummary is one learned waypoint position with the evidence behind it.
 type FixSummary struct {
 	Name        string
