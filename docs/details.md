@@ -1002,7 +1002,7 @@ aircraft on past the runway. So the server infers a landing, with or without a k
   destination wins when several are near); and
 - the time to reach it at the fix's speed, plus a minute for a late fix, has passed.
 
-The watch then carries `landing` (airport, estimated touchdown, the evidence); the plane turns green with a `landed` badge, the
+The watch then carries `landing` (airport, estimated touchdown, the evidence); the plane turns green (with no badge: its tooltip says whether it landed or is the next flight waiting), the
 projection is not drawn, and the sidebar and hover say `landed RJAA ~03:26:44Z`. A newer position of any kind clears it. It is an
 inference: a missed approach that then leaves coverage would be called a landing until the aircraft is heard again.
 

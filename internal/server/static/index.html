@@ -1309,7 +1309,7 @@ function planeIcon(track, {fill = '#c00', opacity = 1, ageMs = null, landed = fa
     html: (step && step.ring ? '<span class="agering"></span>' : '') +
           `<svg viewBox="0 0 24 24" width="30" height="30" style="transform: rotate(${deg}deg); opacity: ${Number(opacity)}">` +
           `<path d="${PLANE_PATH}" fill="${fill}" stroke="#fff" stroke-width="1.2" stroke-linejoin="round"/></svg>` +
-          (landed ? '<span class="agebadge s5">landed</span>' : step ? `<span class="agebadge s${step.n}">${ago(Date.now() - ageMs).replace(' ago', '')}</span>` : ''),
+          (step ? `<span class="agebadge s${step.n}">${ago(Date.now() - ageMs).replace(' ago', '')}</span>` : ''),
   });
 }
 
