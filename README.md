@@ -72,7 +72,7 @@ Then:
   [Details](docs/details.md#destination-from-the-aircraft)
 - **Current flight** is the newest flight worked out for a tail or hex watch, including the next one announced at the gate.
   [Details](docs/details.md#current-flight)
-- **Airline operations messages** (Qantas, Air Canada, United, Alaska, China Cargo, Avianca and others) are decoded and feed the route and
+- **Airline operations messages** (Qantas, Air Canada, United, Alaska, Delta, China Cargo, Avianca and others) are decoded and feed the route and
   departure time. [Details](docs/details.md#airline-operations-messages)
 - **FMS plans and weather observations.** A Boeing FMS's plan with the ETA of each waypoint, and the climb, descent and cruise weather
   reports, are read for the route, the positions and the wind. [Plans](docs/details.md#fms-plan-reports) · [Observations](docs/details.md#airline-operations-messages)

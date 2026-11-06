@@ -792,6 +792,16 @@ times in them join the evidence for a flight's route and departure.
   are wider: latitude and longitude in thousandths of a degree, the time, a six digit altitude, the temperature and the wind. The
   flight is "AS" and its number; only the performance report spells the callsign. A later block of a long `ABS` message has no
   header and is not read. Positions agree with ADS-B to the minute.
+- **Delta** (read from N501DN, an A350, and a narrow-body that flew from Portland and Los Angeles): the dispatch messages on label `RA`
+  (to the aircraft) and `25` (from it), each starting with a class number. `PRE-PUSHBACK MSG` gives the flight (`FLT 0782/02NOV`),
+  the route (`A/C 3501 LAX-ATL RLS 1`), the fuel and the open MEL items (deferred defects, as chapter-and-item codes such as
+  `C27-00-20`); `ACARS FUEL SVC RCD` is the fuel put in, in gallons and in pounds, tank by tank; `ACARS WDR UPDATE` (and `-TOPR`, and
+  the two-column `WIDE WDR`) is the weight and data release: people on board, cargo, fuel, ramp, zero-fuel and take-off weights with
+  their centres of gravity, the weather at take-off, the take-off runways and the MEL items again; `FLT NBR DAL87 RLS 1` is the
+  dispatch release with the passengers, the weights, the fuel plan, the route as filed, the ETOPS airports and, in its last line, the
+  registration. Weights are in thousands of pounds as sent and shown in pounds. They name the route, so they count as route evidence.
+  A long message arrives in blocks and the first is cut anywhere, so every value is read where it is found. The crew verification
+  message (names and employee numbers) and the fueler's name are not read, and the push-planning and uplink messages are left undecoded.
 - **EVA Air** (read from B-16783): labels `11` out, `12` off, `13` on, `14` in: `OFF01EVA619    /--310633KLAXRCTP` is wheels up on the 31st at
   06:33Z, Los Angeles to Taipei. An arrival names its airport twice. The aircraft condition (`ACM`) reports and the engine numbers are not read.
 - **Weather observations** (`A3…` climb, `D3…` descent, `E3…` cruise, on `H1`): a few points a minute or less apart, each with
