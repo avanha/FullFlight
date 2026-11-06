@@ -1164,6 +1164,22 @@ func TestALateAirlineReportWithOnlyATimeOfDayIsNotRouteEvidence(t *testing.T) {
 		t.Fatalf("%+v %v", rs, err)
 	}
 }
+
+// An FMS position report that carries the plan (RI:DA:KMCO:AA:KSEA) and the last page of the forecast (which names the airport it
+// lands at) are route evidence; the pages before it, with no arrival, and an ordinary progress report are not.
+func TestFMSPlanReportsNameTheRoute(t *testing.T) {
+	s := open(t)
+	at := time.Date(2026, 10, 30, 16, 20, 0, 0, time.UTC)
+	s.AddMessage(Message{ID: 1, Hex: "AD4AFB", T: at, Label: "H1", Text: "POSN", Kind: "fms_position", Decoded: `{"fields":{"plan":{"from":"KMCO","to":"KSEA"}}}`})
+	s.AddMessage(Message{ID: 2, Hex: "AD4AFB", T: at.Add(time.Second), Label: "H1", Text: "a", Kind: "progress", Decoded: `{"fields":{"fms_page":2}}`})
+	s.AddMessage(Message{ID: 3, Hex: "AD4AFB", T: at.Add(2 * time.Second), Label: "H1", Text: "b", Kind: "progress", Decoded: `{"fields":{"fms_page":3,"progress":{"to":"KSEA","runway":"16R"}}}`})
+	s.AddMessage(Message{ID: 4, Hex: "AD4AFB", T: at.Add(3 * time.Second), Label: "H1", Text: "c", Kind: "progress", Decoded: `{"fields":{"progress":{"to":"KORD"}}}`})
+	rs, err := s.RouteReports("AD4AFB", at.Add(-time.Hour), at.Add(time.Hour))
+	if err != nil || len(rs) != 2 || rs[0].From != "KMCO" || rs[0].To != "KSEA" || rs[1].From != "" || rs[1].To != "KSEA" {
+		t.Fatalf("%+v %v", rs, err)
+	}
+}
+
 // A message counts as the time the aircraft put in it, where that is a full date and time, not as the time it arrived: an A350
 // report delivered two days late is evidence of its flight at the time it was sent, and is listed with that flight.
 func TestLateMessagesCountFromTheirOwnTime(t *testing.T) {

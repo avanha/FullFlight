@@ -128,7 +128,7 @@ func (s *Server) plans(w http.ResponseWriter, r *http.Request) {
 			out = append(out, planJSON{ID: m.ID, T: at, Callsign: c.Callsign, From: c.Origin, To: c.Dest, Points: pts, Missing: missing, Kind: "pdc", Detail: detail})
 			continue
 		}
-		if m.Kind != "flight_plan" {
+		if m.Kind != "flight_plan" && m.Kind != "fms_position" { // (an FMS report carries its plan)
 			continue
 		}
 		var d struct {

@@ -29,6 +29,7 @@ type Plan struct {
 	Callsign string `json:"callsign,omitempty"` // "UPS58", from the FN field
 	From     string `json:"from"`               // ICAO
 	To       string `json:"to"`
+	Runway   string `json:"runway,omitempty"` // the arrival runway, where the plan gives one: KSEA(16R)
 	Fixes    []Fix  `json:"fixes,omitempty"`
 }
 
@@ -87,6 +88,20 @@ func ParsePlan(text string) (*Plan, bool) {
 	return p, true
 }
 
+// ParseRI reads the route section of a plan that comes inside another report ("RI:DA:KMCO:AA:KSEA(16R):D:RDSOX1.JFRYS:F:..."), or
+// reports false if it is not one.
+func ParseRI(sec string) (*Plan, bool) {
+	if !strings.HasPrefix(sec, "RI:DA:") && !strings.HasPrefix(sec, "RP:DA:") {
+		return nil, false
+	}
+	p := &Plan{}
+	parseChain(sec, p)
+	if !icaoRe.MatchString(p.From) || !icaoRe.MatchString(p.To) {
+		return nil, false
+	}
+	return p, true
+}
+
 // parseChain reads "RP:DA:KLAX:AA:RKSI:CR:...:D:SID:F:route:A:STAR:AP:approach:F:route": keys and values
 // alternate. Only the DA/AA airports and the F (route) values are used; the departure and arrival
 // procedures and the approach are left out.
@@ -98,6 +113,9 @@ func parseChain(sec string, p *Plan) {
 			p.From = t[i+1]
 		case "AA":
 			p.To = t[i+1]
+			if j := strings.IndexByte(p.To, '('); j > 0 && strings.HasSuffix(p.To, ")") {
+				p.To, p.Runway = p.To[:j], p.To[j+1:len(p.To)-1]
+			}
 		case "F":
 			p.Fixes = append(p.Fixes, parseRoute(t[i+1])...)
 		}

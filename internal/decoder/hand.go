@@ -276,6 +276,7 @@ func parseFMS(body string, r *Result) {
 		}
 		r.Fixes = append(r.Fixes, ref)
 	}
+	fmsPlanPart(body, r)
 }
 
 // timeOfDay reads "153019" as seconds into the day, or nil if it is not a time.

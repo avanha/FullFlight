@@ -1219,7 +1219,8 @@ function wptIcon(exact) {
   return L.divIcon({className: 'wpt-wrap', iconSize: [14, 14], iconAnchor: [7, 7], html: `<div class="wpt${exact ? '' : ' est'}"></div>`});
 }
 const ROLE_TEXT = {passed: w => `passed${w.t ? ' ' + fmtTime(w.t) : ''}${w.alt_ft ? ' at ' + num(w.alt_ft) + ' ft' : ''}`,
-                   next: w => `next fix${w.t ? ', ETA ' + fmtTime(w.t) : ''}`, then: () => 'fix after next'};
+                   next: w => `next fix${w.t ? ', ETA ' + fmtTime(w.t) : ''}`, then: () => 'fix after next',
+                   ahead: w => `on its route${w.t ? ', ETA ' + fmtTime(w.t) : ''}`};
 // The fixes a report named, drawn only while that report is the selected message (as its predictions are).
 function drawWaypoints(m) {
   wptGroup.clearLayers();

@@ -628,8 +628,12 @@ var routeReportsSQL = `
 	  AND json_extract(decoded, '$.fields.dest') IS NOT NULL AND json_extract(decoded, '$.fields.dest') != ''
 	UNION ALL
 	SELECT ts, COALESCE(json_extract(decoded, '$.fields.plan.from'), ''), json_extract(decoded, '$.fields.plan.to'), 'flight plan', ts
-	FROM message WHERE hex=?1 AND kind='flight_plan' AND ts BETWEEN ?2 AND ?3 AND time_flag=0
-	  AND json_extract(decoded, '$.fields.plan.to') IS NOT NULL AND json_extract(decoded, '$.fields.plan.to') != ''`
+	FROM message WHERE hex=?1 AND kind IN ('flight_plan', 'fms_position') AND ts BETWEEN ?2 AND ?3 AND time_flag=0 AND json_valid(decoded)
+	  AND json_extract(decoded, '$.fields.plan.to') IS NOT NULL AND json_extract(decoded, '$.fields.plan.to') != ''
+	UNION ALL
+	SELECT ts, '', json_extract(decoded, '$.fields.progress.to'), 'FMS forecast', ts
+	FROM message WHERE hex=?1 AND kind='progress' AND ts BETWEEN ?2 AND ?3 AND time_flag=0 AND json_valid(decoded)
+	  AND json_extract(decoded, '$.fields.fms_page') IS NOT NULL AND COALESCE(json_extract(decoded, '$.fields.progress.to'), '') != ''`
 
 // RouteReport is one origin/destination report: when it happened (T) and when it reached us (Rx), which differ for the
 // reports an aircraft stores and delivers late.

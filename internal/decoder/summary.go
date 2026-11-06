@@ -352,7 +352,7 @@ func summarize(r Result) string {
 		if n, ok := r.Fields["next_waypoint"]; ok {
 			s += fmt.Sprintf(", next %v", n)
 		}
-		return s
+		return s + fmsPlanSummary(r)
 	}
 	return undecodedSummary(r)
 }

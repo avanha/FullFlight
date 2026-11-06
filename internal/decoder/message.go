@@ -189,6 +189,9 @@ func Decode(m Message) (Result, error) {
 	if r, ok := decodePlan(m); ok {
 		return r, nil
 	}
+	if r, ok := decodeFMSPage(m); ok {
+		return r, nil
+	}
 	if r, ok := decodeUPS(m); ok {
 		return r, nil
 	}

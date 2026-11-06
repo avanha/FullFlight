@@ -834,6 +834,21 @@ issued, not from when a station delivered it (one reached us three days late). T
 fix may be missing, or share its name with an older one far away: a named point that sends the route more than 300 nm out of its
 way and back is left off and listed as not placed. Stored messages show it after `fullflight -redecode`. Read from six clearances.
 
+## FMS plan reports
+
+Boeing FMS units send their plan with a position report, in pages. The first page is the position report (`POSN28258W082126,RDSOX,230650,181,JFRYS,…`)
+followed by the route (`/RI:DA:KMCO:AA:KSEA(16R):D:RDSOX1.JFRYS:F:JFRYS..PATOY.Q116.JAWJA..`, the filed plan's format with the arrival runway in
+brackets), performance numbers (`/PR…`) and the forecast for each waypoint (`/FH`): name, ETA (hhmmss), speed, altitude, fuel, temperature, wind
+and the leg to the next. Later pages carry the rest of the list, cut anywhere, and the last gives the arrival (`/DTKSEA,16R,79,042536,73`: airport, runway
+and the ETA at the runway). Read from N956AK's reports (51 messages, three pages each) and the landing agrees with its track.
+
+- The first page stays an FMS position report and now carries its plan: the summary adds `plan KMCO→KSEA runway 16R, 16 fixes`, the plan is drawn
+  and the projection follows it as for a filed plan, and the route counts as a `flight plan` report.
+- The waypoints in the next two hours also go on the report as fixes "on its route", with their ETAs, so selecting the report draws
+  them beside the aircraft (a name far away is too easily another place of the same name).
+- Later pages are `progress` messages ("FMS route forecast, page 2: SGF 00:54Z to HETHR 04:17Z"), with each waypoint's ETA and altitude in
+  the text. The last also gives the destination, which counts as a route report (`FMS forecast`).
+
 ## Predicted winds
 
 Airlines that plan with forecast winds (Air Canada, Qantas and others) exchange them over ACARS, decoded as `wind_forecast`
