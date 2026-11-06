@@ -223,8 +223,14 @@ func parseEB(text string) (opsParsed, bool) {
 	if len(fixes) == 0 {
 		return opsParsed{}, false
 	}
+	return ebResult(h[1], h[2], h[3], "EB", "", fixes), true
+}
+
+// ebResult is the report for the positions of an EB-style message (also Alaska's ABS): the newest is the message's position and the
+// rest are in its text.
+func ebResult(reg, origin, dest, event, airline string, fixes []ebFix) opsParsed {
 	n := fixes[len(fixes)-1]
-	o := OpsReport{Event: "EB", Origin: h[2], Dest: h[3], Reg: h[1], Info: map[string]string{"positions": strconv.Itoa(len(fixes))}}
+	o := OpsReport{Airline: airline, Event: event, Origin: origin, Dest: dest, Reg: reg, Info: map[string]string{"positions": strconv.Itoa(len(fixes))}}
 	w := &Weather{TempC: &n.temp}
 	if n.dir <= 360 && n.kt <= 250 {
 		w.WindDirDeg, w.WindKt = &n.dir, &n.kt
@@ -237,5 +243,5 @@ func parseEB(text string) (opsParsed, bool) {
 			extra = append(extra, fmt.Sprintf("%02d:%02dZ %s, %s ft", int(f.secs)/3600, int(f.secs)%3600/60, latlon(f.lat, f.lon), groupThousands(int(f.alt))))
 		}
 	}
-	return opsParsed{rep: o, pos: &Pos{Lat: n.lat, Lon: n.lon, AltFt: &n.alt, Secs: n.secs, Basis: BasisDay}, wx: w, summary: s, extra: extra, tail: h[1]}, true
+	return opsParsed{rep: o, pos: &Pos{Lat: n.lat, Lon: n.lon, AltFt: &n.alt, Secs: n.secs, Basis: BasisDay}, wx: w, summary: s, extra: extra, tail: reg}
 }

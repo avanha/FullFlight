@@ -776,6 +776,14 @@ times in them join the evidence for a flight's route and departure.
   - `PRG/DTLEMD,32L,186,070523,046/FNAVA182…` (label `H1`) is a progress report without a time of its own: the destination,
     runway, ETA and the flight. The numbers 186 and 046 are not understood.
 
+- **Alaska Airlines** (read from N956AK and checked against its track). Label `80` movement messages: `1101 OFFRP 1388/31 KBUR/KSEA .N956AK`
+  with `/OUT 1744/OFF 1804/…/ETA 2004` (left the gate, wheels up, ETA), `ONRP` (`/ON`), `INRANG` (a new ETA near the destination)
+  and `FAROUT` (pushback). Door, cargo and acknowledgement messages on the label are left undecoded. On `H1`: the takeoff report
+  (`N956AK 21388KBURKSEATO311026180429`, the takeoff to the second, which becomes the flight's departure), the performance report
+  (`APM`, read as United's is, behind a line holding a message number) and the `ABS` position report, a cousin of `EB` whose fields
+  are wider: latitude and longitude in thousandths of a degree, the time, a six digit altitude, the temperature and the wind. The
+  flight is "AS" and its number; only the performance report spells the callsign. A later block of a long `ABS` message has no
+  header and is not read. Positions agree with ADS-B to the minute.
   These times are placed on the most recent day that is not after the message arrived, so a position that arrives hours late
   (several did, on 28 October) lands where it was.
 - **Pre-departure clearances** (`A3`, `A4`, Beijing and Shanghai): the runway, SID and squawk

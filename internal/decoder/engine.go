@@ -21,7 +21,8 @@ import (
 var (
 	engineEvtRe = regexp.MustCompile(`^/ILNGE7X\.([A-Z0-9]{3})(\d{3})[A-Z]{2} ([A-Z0-9-]{5,6}?)(\d)([A-Z]{3}\d{1,4}) +(\d{6})(\d{6})([A-Z]{4})([A-Z]{4})`)
 	enginePosRe = regexp.MustCompile(`([+-]\d{8})([+-]\d{8})([+-]\d{8})`)
-	apmRe       = regexp.MustCompile(`^APM +(\d+) +([A-Z0-9-]{5,6}) +([A-Z]{3}\d{1,4}) +([A-Z]{4})([A-Z]{4})(\d{6})(\d{6}),`)
+	apmRe       = regexp.MustCompile(`^APM +(?:(\d+) +)?([A-Z0-9-]{5,6}) +([A-Z]{3}\d{1,4}) +([A-Z]{4})([A-Z]{4})(\d{6})(\d{6}),`)
+	apmHeadRe   = regexp.MustCompile(`^\w{4} *\r?\n`)
 	apmPosRe    = regexp.MustCompile(`[ ,](-?\d{1,2}\.\d{4}),,,\s*\n\s*(-?\d{1,3}\.\d{4}),,,`)
 	apmAltRe    = regexp.MustCompile(`\.\d{3},,,\s*[\d.]+,,,\s*-?[\d.]+,,,\s*(\d{5}),,,`)
 	engReportRe = regexp.MustCompile(`^<(\d{3})>[A-Z]{3} ([A-Z0-9-]{5,6}?)([A-Z]{3}\d{1,4}) ER \d{2}(\d{6})(\d{6})([A-Z]{4})([A-Z]{4})`)
@@ -55,6 +56,9 @@ func posAt(lat, lon float64, altFt *float64, t time.Time) *Pos {
 
 func parseEngine(text string) (opsParsed, bool) {
 	t := strings.TrimSpace(text)
+	if m := apmHeadRe.FindString(t); m != "" && strings.HasPrefix(t[len(m):], "APM") { // Alaska's follows a line with its message number (B03A)
+		t = t[len(m):]
+	}
 	switch {
 	case strings.HasPrefix(t, "/ILNGE7X.<"): // a later block of an engine report, run on to the next one
 		return parseEngineReport(spaces.ReplaceAllString(strings.TrimPrefix(t, "/ILNGE7X."), " "))
