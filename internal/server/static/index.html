@@ -175,13 +175,14 @@
   /* the shading choice and the readout of the tile under the pointer belong to the recorded radar, so they show only in Past */
   /* in Past the shading choice sits before the Live | Past switch, which keeps its place at the right edge as the satellite row's does */
   .wxshade { white-space: nowrap; display: none; }
-  body[data-wxradar="past"] .wxshade { display: inline; margin-left: auto; }
-  body[data-wxradar="past"] .wxswitch[data-kind="radar"] { margin-left: 0; }
+  body[data-wxradar="past"] .wxshade { display: inline; margin-left: auto; padding-left: 22px; }
+  body[data-wxradar="past"] .wxswitch[data-kind="radar"] { margin-left: 0; padding-left: 4px; }
   .wxshade button { font: 11px/1.3 system-ui, sans-serif; padding: 0 6px; border: 1px solid #8a94a6; background: #fff; color: #345; cursor: pointer; }
   .wxshade button:first-child { border-radius: 3px 0 0 3px; }
   .wxshade button:last-child { border-radius: 0 3px 3px 0; }
   .wxshade button:not(:first-child) { border-left: none; }
-  .wxshade button.on { background: #0a58ca; border-color: #0a58ca; color: #fff; }
+  body[data-wxshade="off"] .wxshade button[data-shade="off"], body[data-wxshade="dim"] .wxshade button[data-shade="dim"],
+  body[data-wxshade="light"] .wxshade button[data-shade="light"] { background: #0a58ca; border-color: #0a58ca; color: #fff; }
   /* what the pointer is over, slid out under the recorded radar's badge; it floats, so nothing around it moves */
   #recbadge { position: relative; }
   #rechere { position: absolute; top: 100%; right: 0; margin-top: 2px; padding: 2px 8px; border-radius: 4px; white-space: nowrap; pointer-events: none;
@@ -514,7 +515,7 @@ satGroup.on('remove', () => {
 // message, or of the newest position when none is selected, and stepped frame by frame with the arrows. It exists only where
 // an aircraft was, so a tile that was not recorded is left blank, never filled from another frame.
 const REC = {listUrl: '/api/weather/radar', refreshMs: 5 * 60000, fitMin: 15, zoom: 7};
-let recNone = new Set(), recClear = new Set();   // the places in the shown frame RainViewer had no tile for, and those whose tile has no rain
+let recNone = new Set(), recClear = new Set();   // the places in the shown frame RainViewer had no tile for, and those whose tile has no echoes
 let recFrames = [], recRecording = false, recFailed = false, recIdx = -1, recKeys = new Set(), recFrameShown = null, recAt = null, recAtWhat = null, recSelSeen = null, recSelMs = null, recTimer = null, recSeq = 0;
 const RecordedTiles = L.TileLayer.extend({
   createTile(coords, done) {
@@ -578,7 +579,7 @@ function recShadeDraw() {
 function recSetShade(mode) {
   recShade = mode;
   try { localStorage.setItem('recshade', mode); } catch (e) { /* not saved: fine */ }
-  document.querySelectorAll('.wxshade button').forEach(b => b.classList.toggle('on', b.dataset.shade === mode));
+  document.body.dataset.wxshade = mode;   // the switch is drawn from this: the legend redraws its rows, so they cannot hold the state
   recShadeDraw();
 }
 // What is at a place, for the box that slides out under the radar badge: the pointer moves over the map and this says why a place
@@ -592,7 +593,7 @@ function recHere(latlng) {
   const k = `${x}/${y}`;
   if (!recFrameShown) return 'No radar frame for this time';
   return recNone.has(k) ? 'Radar: none to record here (no coverage)'
-       : recClear.has(k) ? 'Radar recorded here: no rain'
+       : recClear.has(k) ? 'Radar recorded here: no echoes'
        : recKeys.has(k) ? 'Radar recorded here'
        : 'Radar not recorded here';
 }

@@ -1785,10 +1785,12 @@ highlightGroup = null;
     assert.deepStrictEqual(paint('light', 7, 5, 5), [], 'and nothing is drawn where nothing was recorded');
     const here = (lat, lng) => t.recHere({lat, lng});
     assert.deepStrictEqual([here(9.8, 102.7), here(9.8, 105.5), here(9.8, 108.3), here(9.8, 120), here(9.8, 102.7 - 360)],
-      ['Radar recorded here', 'Radar recorded here: no rain', 'Radar: none to record here (no coverage)', 'Radar not recorded here', 'Radar recorded here'], 'what is under the pointer, wrapping the world');
+      ['Radar recorded here', 'Radar recorded here: no echoes', 'Radar: none to record here (no coverage)', 'Radar not recorded here', 'Radar recorded here'], 'what is under the pointer, wrapping the world');
     assert.strictEqual(t.recShade, 'dim', 'dim is the default');
     assert.ok(t.map.hasLayer(t.shadeLayer), 'and the shading is on the map with the recorded radar');
+    assert.strictEqual(document.body.dataset.wxshade, 'dim', 'the switch is drawn from the body, which the legend\'s redraws leave alone');
     t.recSetShade('off');
+    assert.strictEqual(document.body.dataset.wxshade, 'off');
     assert.strictEqual(t.map.hasLayer(t.shadeLayer), false, 'Off takes it away');
     assert.strictEqual(storage.recshade, 'off', 'and the choice is remembered');
     t.recSetShade('light');

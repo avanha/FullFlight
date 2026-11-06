@@ -327,7 +327,7 @@ the area around the followed aircraft, and leaves the rest blank (where there wa
 **Off | Dim | Light** switch (shown in Past, before the Live | Past switch as in the satellite row, remembered, Dim to start with): Dim darkens everything that was not recorded, Light
 lightens what was, and both hatch a place RainViewer has no radar for (as over most of the oceans). The shading lies under the radar, so the radar's colours
 are unchanged. Where the pointer is over a blank place, a small box slides out under the radar time badge (top right) saying why ("Radar not recorded here", recorded with
-no rain, or no radar coverage). A place that was recorded shows nothing, and the box goes after three seconds of a still pointer. It floats, so nothing moves when it
+no echoes, or no radar coverage). A place that was recorded shows nothing, and the box goes after three seconds of a still pointer. It floats, so nothing moves when it
 comes and goes, and the tiles take no part in the mouse, so the track and its dots stay clickable. When no frame was recorded within 15 minutes of the time
 wanted it says so, and shows nothing, rather than a frame from another time. The server serves the frames
 (`GET /api/weather/radar`, a frame's `.../{frame}/tiles` and `.../{frame}/{z}/{x}/{y}.png`) from the weather directory, whether
