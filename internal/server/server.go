@@ -280,6 +280,7 @@ type routeJSON struct {
 	FromManual bool      `json:"from_manual,omitempty"` // entered by hand: see flights.Segment
 	FromSeen   bool      `json:"from_seen,omitempty"`   // seen on ADS-B: see flights.Segment
 	ToManual   bool      `json:"to_manual,omitempty"`
+	ToSeen     bool      `json:"to_seen,omitempty"`
 }
 
 func (s *Server) route(segs []flights.Segment) *routeJSON {
@@ -290,7 +291,7 @@ func (s *Server) route(segs []flights.Segment) *routeJSON {
 	if sg.From == "" && sg.To == "" {
 		return nil
 	}
-	out := &routeJSON{From: sg.From, To: sg.To, T: sg.RouteAt, Source: sg.RouteSource, FromManual: sg.FromManual, FromSeen: sg.FromSeen, ToManual: sg.ToManual}
+	out := &routeJSON{From: sg.From, To: sg.To, T: sg.RouteAt, Source: sg.RouteSource, FromManual: sg.FromManual, FromSeen: sg.FromSeen, ToManual: sg.ToManual, ToSeen: sg.ToSeen}
 	switch {
 	case sg.RouteSource != "": // a report said so, and is as old as it is
 		age := s.now().Sub(sg.RouteAt)
@@ -572,6 +573,7 @@ type lastFlightJSON struct {
 	FromManual  bool      `json:"from_manual,omitempty"` // entered by hand: see flights.Segment
 	FromSeen    bool      `json:"from_seen,omitempty"`   // where ADS-B saw it climb out: see flights.Segment
 	ToManual    bool      `json:"to_manual,omitempty"`
+	ToSeen      bool      `json:"to_seen,omitempty"`
 	FromName    string    `json:"from_name,omitempty"`
 	ToName      string    `json:"to_name,omitempty"`
 	Departed    time.Time `json:"departed,omitzero"`
@@ -625,7 +627,7 @@ func (s *Server) lastFlightFor(hex string, now time.Time) *lastFlightJSON {
 			break
 		}
 	}
-	out := &lastFlightJSON{Flight: sg.Flight, Callsign: sg.Callsign, From: sg.From, To: sg.To, FromManual: sg.FromManual, FromSeen: sg.FromSeen, ToManual: sg.ToManual, Departed: sg.Departed, DepartedHow: sg.DepartedHow, Start: sg.Start, End: sg.End}
+	out := &lastFlightJSON{Flight: sg.Flight, Callsign: sg.Callsign, From: sg.From, To: sg.To, FromManual: sg.FromManual, FromSeen: sg.FromSeen, ToManual: sg.ToManual, ToSeen: sg.ToSeen, Departed: sg.Departed, DepartedHow: sg.DepartedHow, Start: sg.Start, End: sg.End}
 	if a, ok := airports.Lookup(sg.From); ok {
 		out.FromName = a.Name
 	}

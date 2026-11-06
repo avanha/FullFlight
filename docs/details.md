@@ -460,6 +460,13 @@ A flight whose messages gave no origin, but whose first fix is ADS-B on the grou
 seen in the air, left from that airport; the route shows it with the same tilde (`KLAX~`). A flight first seen in the air, or on
 the ground away from any airport, or only ever on the ground, gets none.
 
+### Seen landing
+
+A flight whose messages gave no destination, whose last fix is ADS-B on the ground within 4 nm of an airport after being seen in
+the air, ended there; failing that, a flight followed by another leg after a stop went to where that leg began. The route shows
+it with a tilde (`KDEN~`). This is how the first leg of a flight number reused on the way back (AS421 Seattle to Denver, then
+Denver to Seattle) gets its destination. A route entered by hand replaces it, and a message that names a destination wins.
+
 ### Next-flight chatter
 
 Airline operations messages (a cockpit asking for the weather along the next route, the airline sending the next flight's data)

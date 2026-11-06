@@ -111,6 +111,7 @@ type Segment struct {
 	SeenAt      time.Time `json:"seen_at,omitzero"`       // and when it was made
 	FromManual  bool      `json:"from_manual,omitempty"`  // From was entered by hand, because no message gave one
 	FromSeen    bool      `json:"from_seen,omitempty"`    // From is where ADS-B saw the flight climb out, because no message gave one
+	ToSeen      bool      `json:"to_seen,omitempty"`      // To is where ADS-B saw the flight land, or where the next leg started, because no message gave one
 	ToManual    bool      `json:"to_manual,omitempty"`
 	Departed    time.Time `json:"departed,omitzero"`      // when it left, if we know
 	DepartedHow string    `json:"departed_how,omitempty"` // "takeoff", "adsb", "pushback" or "taxi": see store.Departure
@@ -468,6 +469,20 @@ func segments(st *store.Store, hexAddr string, since, until time.Time, tr *trace
 			}
 		}
 	}
+	// A flight no message gave a destination for went where ADS-B saw it land, or failing that where the next leg began after a stop.
+	for i := range segs {
+		sg := &segs[i]
+		if sg.To != "" {
+			continue
+		}
+		if a, ok := landedAt(fixes, sg.Start, sg.End); ok {
+			sg.To, sg.ToSeen = a, true
+			tr.note("route", "seen-destination", sg.Start, sg.End, "destination %s taken from ADS-B seeing it land there", a)
+		} else if sg.stopAfter && i+1 < len(segs) && segs[i+1].From != "" {
+			sg.To, sg.ToSeen = segs[i+1].From, true
+			tr.note("route", "seen-destination", sg.Start, sg.End, "destination %s taken from where the next leg began after a stop", sg.To)
+		}
+	}
 	// 7. an origin or destination typed in by hand fills in one the messages never gave (what they give wins)
 	manual, err := st.ManualRoutes(hexAddr, since, until)
 	if err != nil {
@@ -612,8 +627,8 @@ func applyManualRoute(sg *Segment, manual []store.ManualRoute) {
 	if (sg.From == "" || sg.FromSeen) && best.From != "" { // what was entered by hand wins over where the track was seen to start
 		sg.From, sg.FromManual, sg.FromSeen = best.From, true, false
 	}
-	if sg.To == "" && best.To != "" {
-		sg.To, sg.ToManual = best.To, true
+	if (sg.To == "" || sg.ToSeen) && best.To != "" { // as for the origin, what was entered by hand wins over what was seen
+		sg.To, sg.ToManual, sg.ToSeen = best.To, true, false
 	}
 }
 
@@ -1138,6 +1153,25 @@ func leftFrom(fixes []store.AirFix, from, to time.Time) (string, bool) {
 			}
 		}
 		return "", false
+	}
+	return "", false
+}
+
+// landedAt is the airport the flight ended at, if ADS-B's last fix in the span is on the ground next to one.
+func landedAt(fixes []store.AirFix, from, to time.Time) (string, bool) {
+	var last *store.AirFix
+	flew := false // a flight still at its gate has only ground fixes, and is leaving from there
+	for k := range fixes {
+		if f := &fixes[k]; !f.T.Before(from) && !f.T.After(to) {
+			last = f
+			flew = flew || !f.OnGround
+		}
+	}
+	if last == nil || !last.OnGround || !flew {
+		return "", false
+	}
+	if hits := airports.Near(last.Lat, last.Lon, departedNM); len(hits) > 0 {
+		return hits[0].ICAO, true
 	}
 	return "", false
 }

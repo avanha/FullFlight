@@ -1065,7 +1065,7 @@ async function refresh() {
       const r = document.createElement('small');
       r.className = 'route' + (w.route.stale ? ' stale' : '');
       const differs = w.dest && w.route.to && w.dest !== w.route.to ? ` — you set ${w.dest}` : '';
-      r.textContent = `${w.route.from ? routeEnd(w.route.from, w.route.from_manual, w.route.from_seen) + ' → ' : '→ '}${routeEnd(w.route.to, w.route.to_manual)} (${w.route.source}${w.route.t ? ' ' + ago(w.route.t) : ''}${w.route.stale ? ', may be out of date' : ''}${differs})`;
+      r.textContent = `${w.route.from ? routeEnd(w.route.from, w.route.from_manual, w.route.from_seen) + ' → ' : '→ '}${routeEnd(w.route.to, w.route.to_manual, w.route.to_seen)} (${w.route.source}${w.route.t ? ' ' + ago(w.route.t) : ''}${w.route.stale ? ', may be out of date' : ''}${differs})`;
       r.title = [w.route.from_name && `From ${w.route.from_name}`, w.route.to_name && `To ${w.route.to_name}`].filter(Boolean).join('\n');
       li.append(r);
     }
@@ -1177,7 +1177,7 @@ function trend(pts) {
 // else just the route it last reported.
 function flightLines(w) {
   const sg = flightSegs.length && flightSegs[flightSegs.length - 1].latest ? flightSegs[flightSegs.length - 1] : null;
-  const route = sg && (sg.from || sg.to) ? routeText(sg) : w.route && !w.route.stale ? `${w.route.from ? routeEnd(w.route.from, w.route.from_manual, w.route.from_seen) + ' \u2192 ' : '\u2192 '}${routeEnd(w.route.to, w.route.to_manual)}` : '';
+  const route = sg && (sg.from || sg.to) ? routeText(sg) : w.route && !w.route.stale ? `${w.route.from ? routeEnd(w.route.from, w.route.from_manual, w.route.from_seen) + ' \u2192 ' : '\u2192 '}${routeEnd(w.route.to, w.route.to_manual, w.route.to_seen)}` : '';
   return [[sg && sg.flight, route].filter(Boolean).join(' '), sg ? departLong(sg) : ''];
 }
 
@@ -1734,10 +1734,10 @@ const dayLabel = ms => new Date(ms).toUTCString().slice(5, 11);   // "30 Oct"
 // An airport entered by hand rather than reported carries a star.
 // (a tilde: the origin is where ADS-B saw the flight climb out, which no message gave)
 const routeEnd = (code, manual, seen) => (code ? code + (manual ? '*' : seen ? '~' : '') : '?');
-const segLabel = s => `${s.flight || 'unidentified'} \u00b7 ${dayLabel(s.startMs)}${s.from || s.to ? ` \u00b7 ${routeEnd(s.from, s.from_manual, s.from_seen)}\u2192${routeEnd(s.to, s.to_manual)}` : ''}`;
+const segLabel = s => `${s.flight || 'unidentified'} \u00b7 ${dayLabel(s.startMs)}${s.from || s.to ? ` \u00b7 ${routeEnd(s.from, s.from_manual, s.from_seen)}\u2192${routeEnd(s.to, s.to_manual, s.to_seen)}` : ''}`;
 // How a flight is written where space is short (the flag on the map, the aircraft's hover): "SQ23 KJFK \u2192 WSSS", then
 // when it left if we know ("dep 15:56Z" for a takeoff, "out 06:44Z" for leaving the gate).
-const routeText = s => (s.from || s.to ? `${routeEnd(s.from, s.from_manual, s.from_seen)} \u2192 ${routeEnd(s.to, s.to_manual)}` : '');
+const routeText = s => (s.from || s.to ? `${routeEnd(s.from, s.from_manual, s.from_seen)} \u2192 ${routeEnd(s.to, s.to_manual, s.to_seen)}` : '');
 const flightText = s => [s.flight || 'unidentified', routeText(s)].filter(Boolean).join(' ');
 const hhmmZ = ms => new Date(ms).toISOString().slice(11, 16) + 'Z';
 const departShort = s => (s.departed ? `${s.departed_how === 'pushback' || s.departed_how === 'taxi' ? 'out' : 'dep'} ${hhmmZ(Date.parse(s.departed))}` : '');
@@ -1812,18 +1812,18 @@ async function setJoin(join) {
 // edited: with "all flights" chosen there is nothing to edit.
 function syncRouteEditor() {
   const sg = chosenFlight();
-  const edit = !!sg && (!sg.from || !sg.to || sg.from_manual || sg.to_manual || sg.from_seen);   // (an origin only seen on ADS-B can be replaced)
+  const edit = !!sg && (!sg.from || !sg.to || sg.from_manual || sg.to_manual || sg.from_seen || sg.to_seen);   // (an end only seen on ADS-B can be replaced)
   $('#routeedit').hidden = !edit;
   if (!edit) $('#routeform').hidden = true;
-  const manual = !!sg && !!(sg.from_manual || sg.to_manual), seen = !!sg && !!sg.from_seen;
+  const manual = !!sg && !!(sg.from_manual || sg.to_manual), seen = !!sg && !!(sg.from_seen || sg.to_seen);
   $('#routebtn').textContent = manual ? 'Edit route' : 'Set route';
   $('#routenote').hidden = !manual && !seen;
-  $('#routenote').textContent = [manual && '* manually entered', seen && '~ origin seen on ADS-B climbing out'].filter(Boolean).join('  ');
+  $('#routenote').textContent = [manual && '* manually entered', sg && sg.from_seen && '~ origin seen on ADS-B climbing out', sg && sg.to_seen && '~ destination seen on ADS-B landing'].filter(Boolean).join('  ');
 }
 function openRouteEditor() {
   const sg = chosenFlight();
   if (!sg) return;
-  for (const [id, code, manual] of [['#routefrom', sg.from, sg.from_manual || sg.from_seen], ['#routeto', sg.to, sg.to_manual]]) {
+  for (const [id, code, manual] of [['#routefrom', sg.from, sg.from_manual || sg.from_seen], ['#routeto', sg.to, sg.to_manual || sg.to_seen]]) {
     const input = $(id);
     input.value = code || '';
     input.disabled = !!code && !manual;

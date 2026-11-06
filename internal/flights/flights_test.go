@@ -926,6 +926,31 @@ func TestAnOriginSeenOnADSBGivesWayToOneEnteredByHand(t *testing.T) {
 	}
 }
 
+// AS421 flew Seattle to Denver and, an hour later, Denver to Seattle under the same number; no report gave either destination. The
+// first leg went to Denver: ADS-B saw it land there. A flight still at its gate is not "going" to the airport it stands at.
+func TestADestinationNoMessageGaveIsTakenFromTheLanding(t *testing.T) {
+	r := newRig(t)
+	r.said(at(0, 20, 0), "AS421")
+	for i, p := range []struct{ lat, lon, alt float64 }{{47.45, -122.31, 0}, {47.6, -122.0, 12000}, {45.0, -112.0, 36000}, {39.85, -104.67, 0}} {
+		r.air(at(0, 20, 5).Add(time.Duration(i)*time.Hour), "ASA421", p.lat, p.lon, p.alt, p.alt == 0)
+	}
+	if segs := r.segments(); len(segs) != 1 || segs[0].To != "KDEN" || !segs[0].ToSeen {
+		t.Errorf("landed at Denver: %+v", segs)
+	}
+	r = newRig(t)
+	r.said(at(0, 20, 0), "AS421")
+	r.air(at(0, 20, 5), "ASA421", 47.45, -122.31, 0, true)
+	r.air(at(0, 20, 10), "ASA421", 47.45, -122.31, 0, true)
+	if segs := r.segments(); len(segs) != 1 || segs[0].To != "" {
+		t.Errorf("still at the gate: %+v", segs)
+	}
+	sg := Segment{To: "KDEN", ToSeen: true, Start: at(0, 16, 0), End: at(0, 22, 0)}
+	applyManualRoute(&sg, []store.ManualRoute{{To: "KPDX", Start: at(0, 15, 0), End: at(0, 23, 0), Created: at(1, 0, 0)}})
+	if sg.To != "KPDX" || !sg.ToManual || sg.ToSeen {
+		t.Errorf("a destination entered by hand wins over the one seen: %+v", sg)
+	}
+}
+
 // N956AK flew AS485 into Seattle, heard only by FMS reports (the last at 1,000 ft, a mile from the runway), and sat for an hour and a
 // half; ADS-B picked it up at the gate as AS421 and watched it leave. The arrival has no number of its own, and 1h23m from a numbered
 // flight with no route it would be adopted as that flight's start: the landing and the stop show they are two.
