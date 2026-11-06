@@ -183,6 +183,9 @@ func Decode(m Message) (Result, error) {
 		}
 		wrapped = parsePrefix(prefix)
 	}
+	if i := strings.Index(m.Text, "#M1BPOSN"); i > 0 && i <= 12 {
+		m.Text = m.Text[i+4:] // an FMS position report behind a message number and "#M1B" (EVA Air's)
+	}
 	if r, ok := decodePlan(m); ok {
 		return r, nil
 	}

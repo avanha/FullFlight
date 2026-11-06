@@ -784,6 +784,8 @@ times in them join the evidence for a flight's route and departure.
   are wider: latitude and longitude in thousandths of a degree, the time, a six digit altitude, the temperature and the wind. The
   flight is "AS" and its number; only the performance report spells the callsign. A later block of a long `ABS` message has no
   header and is not read. Positions agree with ADS-B to the minute.
+- **EVA Air** (read from B-16783): labels `11` out, `12` off, `13` on, `14` in: `OFF01EVA619    /--310633KLAXRCTP` is wheels up on the 31st at
+  06:33Z, Los Angeles to Taipei. An arrival names its airport twice. The aircraft condition (`ACM`) reports and the engine numbers are not read.
   These times are placed on the most recent day that is not after the message arrived, so a position that arrives hours late
   (several did, on 28 October) lands where it was.
 - **Pre-departure clearances** (`A3`, `A4`, Beijing and Shanghai): the runway, SID and squawk

@@ -136,6 +136,8 @@ func parseOps(label, text string) (opsParsed, bool) {
 			return p, true
 		}
 		return parseWXRQ(text)
+	case "11", "12", "13", "14":
+		return parseEVAMovement(text)
 	case "4T", "4Q":
 		return parseACMovement(text)
 	case "49", "17":
