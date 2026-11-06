@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/avanha/fullflight/internal/store"
 	"github.com/avanha/fullflight/internal/weather"
 )
 
@@ -37,7 +38,8 @@ func (s *Server) radarFrames(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, out)
 }
 
-// radarFrameTiles lists which tiles of a frame were recorded: the map layer asks for only those.
+// radarFrameTiles lists which tiles of a frame were recorded: the map layer asks for only those. "none" lists the places
+// RainViewer had no tile for (no radar coverage), which have no picture, and "clear" those whose picture has nothing in it.
 func (s *Server) radarFrameTiles(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseInt(r.PathValue("frame"), 10, 64)
 	if err != nil || s.WeatherDir == "" {
@@ -53,13 +55,20 @@ func (s *Server) radarFrameTiles(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	out := make([][2]int, 0, len(tiles))
+	out, none, clear := make([][2]int, 0, len(tiles)), [][2]int{}, [][2]int{}
 	for _, t := range tiles {
-		if t.Z == weather.RadarZoom {
+		switch {
+		case t.Z != weather.RadarZoom:
+		case t.Status == store.WxNone:
+			none = append(none, [2]int{t.X, t.Y})
+		default:
 			out = append(out, [2]int{t.X, t.Y})
+			if t.Status == store.WxClear {
+				clear = append(clear, [2]int{t.X, t.Y})
+			}
 		}
 	}
-	writeJSON(w, 200, map[string]any{"z": weather.RadarZoom, "tiles": out})
+	writeJSON(w, 200, map[string]any{"z": weather.RadarZoom, "tiles": out, "none": none, "clear": clear})
 }
 
 // radarTile serves a recorded tile. A frame's tiles never change, so a browser may keep one for good.
@@ -73,7 +82,7 @@ func (s *Server) radarTile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	frame := time.Unix(id, 0).UTC()
-	if !s.Store.HaveWxTile(weather.SourceRadar, frame, z, x, y) {
+	if !s.Store.HaveWxTile(weather.SourceRadar, frame, z, x, y) { // a tile RainViewer did not have is held, but has no file: the open below fails
 		http.NotFound(w, r)
 		return
 	}

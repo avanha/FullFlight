@@ -5,6 +5,14 @@ import (
 	"time"
 )
 
+// What a recorded tile is. A tile the source did not have is recorded too, with no file, so that a blank place on the map can be
+// told from one that was never visited (and is not asked for again at the next visit).
+const (
+	WxPicture = 0 // a picture, with weather in it
+	WxNone    = 1 // the source had no tile: no coverage there
+	WxClear   = 2 // a picture with nothing in it: covered, and clear
+)
+
 // WxTile is one recorded weather tile: which source and frame it shows, and where in the tile pyramid.
 type WxTile struct {
 	Source  string
@@ -12,6 +20,7 @@ type WxTile struct {
 	Z, X, Y int
 	Bytes   int64
 	Fetched time.Time
+	Status  int
 }
 
 // HaveWxTile reports whether the tile has been recorded.
@@ -23,8 +32,8 @@ func (s *Store) HaveWxTile(source string, frame time.Time, z, x, y int) bool {
 
 // AddWxTile records a tile; recording one again replaces its row.
 func (s *Store) AddWxTile(t WxTile) error {
-	_, err := s.db.Exec(`INSERT OR REPLACE INTO wx_tile (source, frame_ts, z, x, y, bytes, fetched) VALUES (?,?,?,?,?,?,?)`,
-		t.Source, ts(t.Frame), t.Z, t.X, t.Y, t.Bytes, ts(t.Fetched))
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO wx_tile (source, frame_ts, z, x, y, bytes, fetched, status) VALUES (?,?,?,?,?,?,?,?)`,
+		t.Source, ts(t.Frame), t.Z, t.X, t.Y, t.Bytes, ts(t.Fetched), t.Status)
 	return err
 }
 
@@ -44,9 +53,9 @@ func (s *Store) OldestWxFrame() (source string, frame time.Time, ok bool) {
 	return source, time.Unix(f, 0).UTC(), true
 }
 
-// WxFrameTiles lists the tiles recorded for one frame.
+// WxFrameTiles lists the tiles recorded for one frame, those the source did not have included.
 func (s *Store) WxFrameTiles(source string, frame time.Time) ([]WxTile, error) {
-	rows, err := s.db.Query(`SELECT z, x, y, bytes, fetched FROM wx_tile WHERE source=? AND frame_ts=? ORDER BY z, y, x`, source, ts(frame))
+	rows, err := s.db.Query(`SELECT z, x, y, bytes, fetched, status FROM wx_tile WHERE source=? AND frame_ts=? ORDER BY z, y, x`, source, ts(frame))
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +64,7 @@ func (s *Store) WxFrameTiles(source string, frame time.Time) ([]WxTile, error) {
 	for rows.Next() {
 		t := WxTile{Source: source, Frame: frame}
 		var f int64
-		if err := rows.Scan(&t.Z, &t.X, &t.Y, &t.Bytes, &f); err != nil {
+		if err := rows.Scan(&t.Z, &t.X, &t.Y, &t.Bytes, &f, &t.Status); err != nil {
 			return nil, err
 		}
 		t.Fetched = time.Unix(f, 0).UTC()

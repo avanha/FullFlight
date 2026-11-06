@@ -29,12 +29,13 @@ class El {
   set innerHTML(v) { this._html = v; this.children = []; }
   get innerHTML() { return this._html; }
 }
-const byId = {};
+const byId = {}, byAll = {};
 const document = {
   body: new El('body'),
   execResult: true,
   execCommand(c) { calls.exec.push(c); return this.execResult; },
   querySelector: s => byId[s] ||= new El(s),
+  querySelectorAll: s => (byAll[s] ||= []),
   createElement: t => new El(t),
   createTextNode: t => ({text: t}),
 };
@@ -54,6 +55,7 @@ const mapObj = { on(ev, fn) { mapHandlers[ev] = fn; return this; }, off() { retu
   getBounds: () => ({ pad: () => ({ contains: ll => !(ll[0] > 50) }) }) };   // "in view" unless lat > 50
 const L = {
   map: () => mapObj, tileLayer: () => ({ addTo() { return this; }, on() { return this; }, setUrl() { return this; } }),
+  GridLayer: { extend: () => function () { return { addTo() { return this; }, on() { return this; }, redraw() { this.redraws = (this.redraws || 0) + 1; return this; } }; } },
   TileLayer: { extend: () => function () { return { addTo() { return this; }, on(ev, fn) { (this.handlers ||= {})[ev] = fn; return this; }, setUrl() { return this; }, redraw() { return this; } }; } },
   layerGroup() { const g = new Layer(); g.clearLayers = () => { g.items = []; }; g.removeLayer = l => { g.items = g.items.filter(x => x !== l); }; groups.push(g); return g; },
   polyline(ll, o) { calls.polylines++; const l = new Layer(); l.ll = ll; l.o = o; calls.lines.push(l); return l; },
@@ -67,7 +69,7 @@ const L = {
 const planData = [];     // what /api/plan returns
 const airportData = {total: 1, airports: [{icao: 'FAOR', iata: 'JNB', name: 'O.R. Tambo International Airport', city: 'Johannesburg'}]};   // what /api/airports returns
 const flightData = [];   // what /api/flights returns; empty unless a test sets it
-const storage = {trackMode: 'source'};   // the older tests below look at the per-source lines; the unified track has its own (8c2)
+const storage = {trackMode: 'source', recradar: '1'};   // (the recorded radar was left on: a reload brings it back as the live radar)   // the older tests below look at the per-source lines; the unified track has its own (8c2)
 const watch = {id: 1, kind: 'tail', ident: 'B-LRM', start: '2026-10-30T10:00:00Z', end: '2026-11-01T00:00:00Z', status: 'tracking',
   hex: '780AB8', tail: 'B-LRM', type: 'A359', last_pos: {t: new Date().toISOString(), kind: 'ADS-B', lat: 40, lon: -100}};
 const pts = [{t: '2026-10-30T16:00:00Z', lat: 40, lon: -101, alt_ft: 35000, gs: 470, track: 90, vrate: 0, callsign: 'CPA843', source: 'adsb.lol'},
@@ -88,7 +90,7 @@ global.fetch = async (url, opts) => {
   if (opts && opts.method === 'PUT') { lastPut = {url, body: JSON.parse(opts.body)}; return { status: putReply.status, ok: putReply.status < 400, json: async () => putReply.body }; }
   if (opts && opts.method === 'POST') { lastPostBody = JSON.parse(opts.body); return { status: postReply.status, ok: postReply.status < 400, json: async () => postReply.body }; }
   if (url === '/api/weather/radar') { if (radarListFails) throw new Error('offline'); return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(radarList)) }; }
-  if (/^\/api\/weather\/radar\/\d+\/tiles$/.test(url)) return { status: 200, ok: true, json: async () => ({z: 7, tiles: [[100, 60], [101, 60]]}) };
+  if (/^\/api\/weather\/radar\/\d+\/tiles$/.test(url)) return { status: 200, ok: true, json: async () => ({z: 7, tiles: [[100, 60], [101, 60]], none: [[102, 60]], clear: [[101, 60]]}) };
   const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : url.startsWith('/api/flights') ? flightData.filter(sg => !/hours=96\b/.test(url) || Date.parse(sg.end) >= Date.now() - 96 * 3600e3) : url.startsWith('/api/plan') ? planData : url.startsWith('/api/airports') ? airportData : null;
   return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(body)) };   // a fresh copy each time, like a real response
 };
@@ -104,9 +106,10 @@ highlightGroup = null;
 
 (async () => {
   // run the page script; capture the two layer groups (track layer first, highlight second)
-  vm.runInContext(src + '\n;globalThis.__t = {slideDragTo, slideRelease, slideGrab: g => { slideGrip = g; }, recPicked, slideSnap, slideDist, SNAP_IN: SNAP_IN, SNAP_OUT: SNAP_OUT, slideKey, handleLeft, handleValue, TB_HANDLE, goCurrent, recNote, WX, wxSetMode, radarLayer, satGroup, map, cursorGroup, placeAt, clearGrey, satAtGroup, satAtUpdate, SAT, recLayer, recUpdate, recLoad, recFollow, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
+  vm.runInContext(src + '\n;globalThis.__t = {slideDragTo, slideRelease, slideGrab: g => { slideGrip = g; }, recPicked, slideSnap, slideDist, SNAP_IN: SNAP_IN, SNAP_OUT: SNAP_OUT, slideKey, handleLeft, handleValue, TB_HANDLE, goCurrent, recNote, WX, wxSetMode, radarLayer, satGroup, map, cursorGroup, placeAt, clearGrey, satAtGroup, satAtUpdate, SAT, recLayer, recUpdate, recLoad, recFollow, paintShade, recHere, recSetShade, shadeLayer, get recShade() { return recShade; }, get recKeys() { return recKeys; }, get recAt() { return recAt; }, drawClearances, clearanceGroup, readAs, segOf, chooseFlight, syncFlightSelector, get flightChoice() { return flightChoice; }, get flightSegs() { return flightSegs; }, predGroup, projection, estimatedPaths, setTrackMode, thinPoints, bridgeGroup, walkRoute, choosePlan, drawPlan, planGroup, ghostAt, advance, drawProjection, wptGroup, projGroup, setAhead, pickMessage, get lonRef() { return lonRef; }, get selectedMsg2() { return selectedMsg; }, SOURCES, landingNote, refresh, showTrack, renderMessages, get selectedMsg(){return selectedMsg}, expanded, rows, markers, watches: () => watches};', ctx);
   highlightGroup = groups[1];
   const t = ctx.__t;
+  assert.ok(t.WX.radar.mode === 'live' && t.map.hasLayer(t.WX.radar.proxy) && !t.map.hasLayer(t.recLayer), 'a radar left on in Past comes back ticked and Live after a reload');
   const initialViews = calls.setView.length;
   const tick = () => new Promise(r => setTimeout(r, 10));
   await tick();
@@ -268,7 +271,7 @@ highlightGroup = null;
   const at2 = (mm, lat, lon, kind, extra = {}) => ({id: 100 + mm, t: `2026-10-30T15:${String(mm).padStart(2, '0')}:00Z`, kind, summary: 's', raw: 'r', label: 'B6', rx_count: 1, lat, lon, ...extra});
   // the legend lists all five sources
   assert.deepStrictEqual(Object.keys(calls.legend).map(k => k.replace(/<[^>]*>|&#\d+;/g, '').trim()), ['ADS-B', 'ADS-C', 'CPDLC', 'REP081', 'FMS', 'ACMF', 'AOC', 'POS', 'POSRPT', 'POSA1', 'SB', 'Airline', 'AeroDataBox']);
-  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radarLivePast|Satellite (IR)LivePast|Waypoints|Predictions|Planned route|Clearances (oceanic, departure)|Estimated path|Projection|Wind barbs|D-ATIS, METAR and TAF requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
+  assert.ok(Object.keys(calls.legendExtra).map(k => k.replace(/<[^>]*>|&#?\w+;/g, '').trim()).join('|') === 'Weather radarOffDimLightLivePast|Satellite (IR)LivePast|Waypoints|Predictions|Planned route|Clearances (oceanic, departure)|Estimated path|Projection|Wind barbs|D-ATIS, METAR and TAF requests', 'radar, satellite, waypoints, predictions, projection and wind barbs have legend entries');
   // each source gets its own colour and style
   for (const kind of ['adsc', 'cpdlc', 'miam', 'fms_position']) {
     const r = await lineOf([], [at2(0, 41, -105, kind), at2(10, 41.1, -104, kind), at2(20, 41.2, -103, kind)]);
@@ -1765,6 +1768,42 @@ highlightGroup = null;
     assert.strictEqual(text(), 'Radar \u00b7 10-30 16:20Z (-5m)');
     assert.ok(fetchLog.includes(`/api/weather/radar/${frame(16, 20).id}/tiles`), 'the frame\'s recorded tiles are asked for: ' + fetchLog);
     assert.deepStrictEqual([...t.recKeys].sort(), ['100/60', '101/60'], 'and only those are drawn');
+    // ----- where the radar was recorded: shading under it, and what is at the pointer -----
+    const paint = (mode, z, x, y) => { const log = []; const ctx = {fillRect: (...a) => log.push(['fill', ...a]), clearRect: (...a) => log.push(['clear', ...a]), save() {}, restore() {}, beginPath() {}, rect() {}, clip() {},
+      moveTo() { log.push(['hatch']); }, lineTo() {}, stroke() {}, set fillStyle(v) {}, set strokeStyle(v) {}, set lineWidth(v) {}};
+      t.paintShade(ctx, {z, x, y}, mode, new Set(['100/60', '101/60']), new Set(['102/60'])); return log; };
+    assert.deepStrictEqual(paint('off', 7, 100, 60), [], 'Off draws nothing');
+    assert.deepStrictEqual(paint('dim', 7, 100, 60).filter(c => c[0] !== 'hatch'), [['fill', 0, 0, 256, 256], ['clear', 0, 0, 256, 256]], 'Dim darkens the tile and clears what was recorded');
+    assert.deepStrictEqual(paint('dim', 7, 50, 60).filter(c => c[0] !== 'hatch'), [['fill', 0, 0, 256, 256]], 'a tile with nothing recorded in it is dimmed all over');
+    assert.deepStrictEqual(paint('dim', 8, 200, 120).filter(c => c[0] === 'clear'), [['clear', 0, 0, 512, 512]], 'closer in, the recorded tile is larger than the map tile');
+    assert.deepStrictEqual(paint('dim', 6, 50, 30).filter(c => c[0] === 'clear'), [['clear', 0, 0, 128, 128], ['clear', 128, 0, 128, 128]], 'farther out, several recorded tiles fall in one');
+    assert.deepStrictEqual(paint('light', 7, 100, 60), [['fill', 0, 0, 256, 256]], 'Light lightens only the recorded tiles');
+    assert.ok(paint('light', 7, 102, 60).some(c => c[0] === 'hatch'), 'a place RainViewer had no radar for is hatched');
+    assert.ok(paint('dim', 7, 102, 60).some(c => c[0] === 'hatch'), 'in Dim as well');
+    assert.deepStrictEqual(paint('light', 7, 5, 5), [], 'and nothing is drawn where nothing was recorded');
+    const here = (lat, lng) => t.recHere({lat, lng});
+    assert.deepStrictEqual([here(9.8, 102.7), here(9.8, 105.5), here(9.8, 108.3), here(9.8, 120), here(9.8, 102.7 - 360)],
+      ['Radar recorded here', 'Radar recorded here: no rain', 'Radar: none to record here (no coverage)', 'Radar not recorded here', 'Radar recorded here'], 'what is under the pointer, wrapping the world');
+    assert.strictEqual(t.recShade, 'dim', 'dim is the default');
+    assert.ok(t.map.hasLayer(t.shadeLayer), 'and the shading is on the map with the recorded radar');
+    t.recSetShade('off');
+    assert.strictEqual(t.map.hasLayer(t.shadeLayer), false, 'Off takes it away');
+    assert.strictEqual(storage.recshade, 'off', 'and the choice is remembered');
+    t.recSetShade('light');
+    assert.ok(t.map.hasLayer(t.shadeLayer) && t.shadeLayer.redraws > 0, 'Light puts it back and redraws it');
+    mapHandlers.mousemove({latlng: {lat: 9.8, lng: 102.7}});
+    const box = document.querySelector('#rechere');
+    assert.strictEqual(box.classList.contains('show'), false, 'a place that was recorded needs no box');
+    mapHandlers.mousemove({latlng: {lat: 9.8, lng: 120}});
+    assert.ok(box.classList.contains('show') && box.textContent === 'Radar not recorded here', 'the box slides out under the radar badge where nothing was recorded');
+    mapHandlers.mousemove({latlng: {lat: 9.8, lng: 108.3}});
+    assert.strictEqual(box.textContent, 'Radar: none to record here (no coverage)');
+    calls.timers.at(-1)();
+    assert.strictEqual(box.classList.contains('show'), false, 'the box goes by itself after a few seconds without the pointer moving');
+    calls.timers.length = 0;
+    mapHandlers.mouseout();
+    assert.strictEqual(box.classList.contains('show'), false, 'and goes when the pointer leaves');
+    t.recSetShade('dim');
     // the arrows step through the frames
     document.querySelector('#recnext').onclick(); await settle();
     assert.strictEqual(text(), 'Radar \u00b7 10-30 16:40Z');

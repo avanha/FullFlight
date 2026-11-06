@@ -1450,3 +1450,32 @@ func TestRequestCountsAndHoldings(t *testing.T) {
 		t.Errorf("holds: %+v", holds)
 	}
 }
+
+// A database that recorded radar before tiles had a status gets the column on opening, and its tiles count as pictures.
+func TestWxTilesWithoutAStatusAreUpgraded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wx.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame := time.Date(2026, 11, 4, 7, 20, 0, 0, time.UTC)
+	if _, err := s.db.Exec(`ALTER TABLE wx_tile DROP COLUMN status`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO wx_tile (source, frame_ts, z, x, y, bytes, fetched) VALUES ('radar', ?, 7, 100, 60, 10, ?)`, frame.Unix(), frame.Unix()); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	s, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	tiles, err := s.WxFrameTiles("radar", frame)
+	if err != nil || len(tiles) != 1 || tiles[0].Status != WxPicture {
+		t.Errorf("%+v %v", tiles, err)
+	}
+	if err := s.AddWxTile(WxTile{Source: "radar", Frame: frame, Z: 7, X: 101, Y: 60, Fetched: frame, Status: WxNone}); err != nil {
+		t.Fatal(err)
+	}
+}

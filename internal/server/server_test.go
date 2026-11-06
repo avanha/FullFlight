@@ -2139,6 +2139,10 @@ func TestRecordedRadarIsListedAndServed(t *testing.T) {
 		os.WriteFile(p, []byte(png), 0o600)
 		st.AddWxTile(store.WxTile{Source: weather.SourceRadar, Frame: frame, Z: tl.Z, X: tl.X, Y: tl.Y, Bytes: int64(len(png)), Fetched: frame})
 	}
+	// a place RainViewer had no radar for, and a tile with nothing in it
+	st.AddWxTile(store.WxTile{Source: weather.SourceRadar, Frame: frame, Z: 7, X: 102, Y: 60, Fetched: frame, Status: store.WxNone})
+	st.AddWxTile(store.WxTile{Source: weather.SourceRadar, Frame: frame, Z: 7, X: 103, Y: 60, Bytes: int64(len(png)), Fetched: frame, Status: store.WxClear})
+	os.WriteFile(weather.TilePath(dir, frame, weather.Tile{Z: 7, X: 103, Y: 60}), []byte(png), 0o600)
 	ts := httptest.NewServer((&Server{Store: st, WeatherDir: dir, WeatherRecording: true}).Handler())
 	defer ts.Close()
 	var list struct {
@@ -2151,16 +2155,17 @@ func TestRecordedRadarIsListedAndServed(t *testing.T) {
 		}
 	}
 	getJSON(t, ts.URL+"/api/weather/radar", &list)
-	if !list.Recording || list.Zoom != 7 || len(list.Frames) != 1 || list.Frames[0].ID != frame.Unix() || list.Frames[0].Tiles != 2 || !list.Frames[0].Time.Equal(frame) {
+	if !list.Recording || list.Zoom != 7 || len(list.Frames) != 1 || list.Frames[0].ID != frame.Unix() || list.Frames[0].Tiles != 4 || !list.Frames[0].Time.Equal(frame) {
 		t.Fatalf("%+v", list)
 	}
 	var tiles struct {
-		Z     int
-		Tiles [][2]int
+		Z                  int
+		Tiles, None, Clear [][2]int
 	}
 	getJSON(t, fmt.Sprintf("%s/api/weather/radar/%d/tiles", ts.URL, frame.Unix()), &tiles)
-	if tiles.Z != 7 || len(tiles.Tiles) != 2 || tiles.Tiles[0] != [2]int{100, 60} {
-		t.Errorf("%+v", tiles)
+	if tiles.Z != 7 || len(tiles.Tiles) != 3 || tiles.Tiles[0] != [2]int{100, 60} || len(tiles.None) != 1 || tiles.None[0] != [2]int{102, 60} ||
+		len(tiles.Clear) != 1 || tiles.Clear[0] != [2]int{103, 60} {
+		t.Errorf("the tiles with a picture, the places with none and the clear ones: %+v", tiles)
 	}
 	resp, err := http.Get(fmt.Sprintf("%s/api/weather/radar/%d/7/100/60.png", ts.URL, frame.Unix()))
 	if err != nil {
@@ -2175,6 +2180,7 @@ func TestRecordedRadarIsListedAndServed(t *testing.T) {
 	for _, path := range []string{
 		fmt.Sprintf("/api/weather/radar/%d/7/5/5.png", frame.Unix()),    // a tile that was not recorded
 		fmt.Sprintf("/api/weather/radar/%d/7/200/60.png", frame.Unix()), // none there either
+		fmt.Sprintf("/api/weather/radar/%d/7/102/60.png", frame.Unix()), // RainViewer had no tile: held, but no picture
 		fmt.Sprintf("/api/weather/radar/%d/6/50/30.png", frame.Unix()),  // not the recorded zoom
 		fmt.Sprintf("/api/weather/radar/%d/7/-1/60.png", frame.Unix()),
 		fmt.Sprintf("/api/weather/radar/%d/7/999/60.png", frame.Unix()),

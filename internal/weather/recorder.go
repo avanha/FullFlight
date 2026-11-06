@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	gopng "image/png"
 	"io"
 	"log/slog"
 	"net/http"
@@ -49,6 +50,7 @@ type Recorder struct {
 type Result struct {
 	Frames  int   // frames in the window that had an aircraft in them
 	Fetched int   // tiles fetched
+	Missing int   // tiles RainViewer did not have (recorded as such)
 	Had     int   // tiles already held
 	Bytes   int64 // what the fetched tiles weigh
 	Evicted int   // frames deleted to stay under the limit
@@ -178,6 +180,8 @@ func (r *Recorder) RecordOnce(ctx context.Context) (Result, error) {
 			if n > 0 {
 				res.Fetched++
 				res.Bytes += n
+			} else {
+				res.Missing++
 			}
 			select {
 			case <-ctx.Done():
@@ -227,8 +231,8 @@ func (r *Recorder) paths(from, to time.Time) ([][]Point, error) {
 	return out, nil
 }
 
-// fetchTile downloads one tile and records it, returning its size; a tile RainViewer does not have (404) is skipped, and
-// returns 0. Any other refusal ends the visit.
+// fetchTile downloads one tile and records it, returning its size; a tile RainViewer does not have (404) is recorded without a
+// file, and returns 0. Any other refusal ends the visit, and nothing is recorded for it: the next visit asks again.
 func (r *Recorder) fetchTile(ctx context.Context, host string, f Frame, t Tile) (int64, error) {
 	resp, err := r.get(ctx, TileURL(host, f, t))
 	if err != nil {
@@ -237,7 +241,7 @@ func (r *Recorder) fetchTile(ctx context.Context, host string, f Frame, t Tile) 
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode == http.StatusNotFound:
-		return 0, nil
+		return 0, r.Store.AddWxTile(store.WxTile{Source: SourceRadar, Frame: f.Time, Z: t.Z, X: t.X, Y: t.Y, Fetched: r.now(), Status: store.WxNone})
 	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
 		return 0, r.refused(resp.StatusCode, r.now())
 	case resp.StatusCode != http.StatusOK:
@@ -262,8 +266,30 @@ func (r *Recorder) fetchTile(ctx context.Context, host string, f Frame, t Tile) 
 		os.Remove(tmp)
 		return 0, err
 	}
-	err = r.Store.AddWxTile(store.WxTile{Source: SourceRadar, Frame: f.Time, Z: t.Z, X: t.X, Y: t.Y, Bytes: int64(len(body)), Fetched: r.now()})
+	status := store.WxPicture
+	if empty(body) {
+		status = store.WxClear
+	}
+	err = r.Store.AddWxTile(store.WxTile{Source: SourceRadar, Frame: f.Time, Z: t.Z, X: t.X, Y: t.Y, Bytes: int64(len(body)), Fetched: r.now(), Status: status})
 	return int64(len(body)), err
+}
+
+// empty reports whether a PNG is wholly transparent: a tile RainViewer has, with no rain in it. A picture that will not decode
+// is taken to have something in it.
+func empty(body []byte) bool {
+	img, err := gopng.Decode(bytes.NewReader(body))
+	if err != nil {
+		return false
+	}
+	b := img.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			if _, _, _, a := img.At(x, y).RGBA(); a != 0 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // TilePath is where a recorded radar tile's file is.
@@ -317,7 +343,7 @@ func (r *Recorder) Run(ctx context.Context, every time.Duration) {
 		if err != nil {
 			r.log().Warn("recording radar", "err", err, "fetched", res.Fetched)
 		} else if res.Fetched > 0 || res.Evicted > 0 {
-			r.log().Info("recorded radar", "frames", res.Frames, "tiles", res.Fetched, "already_held", res.Had, "bytes", res.Bytes, "evicted_frames", res.Evicted)
+			r.log().Info("recorded radar", "frames", res.Frames, "tiles", res.Fetched, "not_available", res.Missing, "already_held", res.Had, "bytes", res.Bytes, "evicted_frames", res.Evicted)
 		}
 		wait = every
 	}

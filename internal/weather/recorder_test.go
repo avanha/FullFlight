@@ -1,8 +1,12 @@
 package weather
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/color"
+	gopng "image/png"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -195,17 +199,43 @@ func TestATooManyRequestsEndsTheVisitAndIsRemembered(t *testing.T) {
 	}
 }
 
-func TestAMissingTileIsSkippedNotRecorded(t *testing.T) {
+func TestAMissingTileIsRecordedWithNoFileAndNotAskedForAgain(t *testing.T) {
 	r := newRig(t, tenMinute(3)...)
 	r.follow("780AB8", Point{t0, 0, 100}, Point{t0.Add(time.Hour), 0, 100.01})
 	r.rec.Ring = 1
 	r.status["/v2/radar/"] = http.StatusNotFound
 	res, err := r.rec.RecordOnce(t.Context())
-	if err != nil || res.Fetched != 0 {
-		t.Errorf("%+v %v", res, err)
+	if err != nil || res.Fetched != 0 || res.Missing == 0 {
+		t.Fatalf("%+v %v", res, err)
 	}
 	if n, _ := r.st.WxBytes(); n != 0 {
 		t.Errorf("%d bytes recorded for tiles that were not there", n)
+	}
+	frames, _ := r.st.WxFrames(SourceRadar)
+	tiles, _ := r.st.WxFrameTiles(SourceRadar, frames[0].Time)
+	if len(tiles) != res.Missing/res.Frames || tiles[0].Status != store.WxNone {
+		t.Errorf("a place with no radar is not held as such: %+v", tiles)
+	}
+	if _, err := os.Stat(r.rec.TilePath(frames[0].Time, Tile{Z: tiles[0].Z, X: tiles[0].X, Y: tiles[0].Y})); err == nil {
+		t.Errorf("a file for a tile that was not there")
+	}
+	// the next visit does not ask again for what RainViewer said it does not have
+	r.asked = nil
+	res, err = r.rec.RecordOnce(t.Context())
+	if err != nil || r.tilesAsked() != 0 || res.Had == 0 {
+		t.Errorf("%+v %v, asked for %d tiles", res, err, r.tilesAsked())
+	}
+}
+
+func TestATileWithNothingInItIsHeldAsClear(t *testing.T) {
+	if !empty(transparentPNG(t, 0)) {
+		t.Errorf("a wholly transparent picture is not clear")
+	}
+	if empty(transparentPNG(t, 255)) {
+		t.Errorf("a picture with a pixel of rain is clear")
+	}
+	if empty([]byte(png)) {
+		t.Errorf("a picture that will not decode must not be called clear")
 	}
 }
 
@@ -286,4 +316,16 @@ func TestEveryKeepsTheFramesOnTheStep(t *testing.T) {
 	if _, err := ParseIndex(strings.NewReader("<html>")); err == nil {
 		t.Error("not JSON")
 	}
+}
+
+// transparentPNG is a small picture, wholly transparent except for one pixel of the alpha given.
+func transparentPNG(t *testing.T, alpha uint8) []byte {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, 4, 4))
+	img.SetNRGBA(1, 1, color.NRGBA{R: 0, G: 100, B: 255, A: alpha})
+	var b bytes.Buffer
+	if err := gopng.Encode(&b, img); err != nil {
+		t.Fatal(err)
+	}
+	return b.Bytes()
 }

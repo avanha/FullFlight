@@ -309,7 +309,10 @@ the weather an aircraft flew through is gone unless it is kept as it happens. Tw
 For each kept frame it downloads the zoom-7 tiles (the finest RainViewer serves) within two tiles of where each followed
 aircraft was during the minutes that frame stands for (half a step either side). The path comes from the stored positions,
 interpolated across a silence of up to an hour and never beyond; an aircraft on the ground has none. A tile already held is
-not fetched again, and one RainViewer does not have is skipped.
+not fetched again. One RainViewer does not have (a 404: no radar coverage there) is recorded too, with no file, so the map can
+tell it from a place that was never visited, and it is not asked for again; a tile that is a picture with nothing in it is
+marked clear. A download that fails is not recorded, and the next visit asks again. Tiles recorded before this have no such
+mark and count as pictures.
 
 Tiles are files under `weather.dir` (`radar/<frame time>/<z>/<x>/<y>.png`); the `wx_tile` table says what is there. The oldest
 frames are deleted to stay under `weather.max_mib`. The tiles are the picture the map's radar layer shows (RainViewer now serves
@@ -320,7 +323,12 @@ It is polite: one request at a time with a pause between, our User-Agent, and a 
 and holds off for an hour, remembered across a restart. The index must name a RainViewer host over https. If the app is not
 running for more than two hours the radar for that time is lost. The **Past** side of the legend's "Weather radar" row draws them. It shows the frame nearest the
 selected message (or the newest position when none is selected), with a badge saying which frame it is and how far it is from that time (`+10m` after it, `-10m` before it, nothing when it is the same time or the frame was reached with the arrows; with no time chosen it says `Latest`); the arrows on the badge step through the recorded frames, and clicking one of the small ADS-B dots on the track (the ones that show a tooltip) draws the radar for that dot's time, so an ADS-B-only flight can be walked along its track (see the time slider below). It draws only the tiles that were recorded, which is
-the area around the followed aircraft, and leaves the rest blank (where there was no position for more than an hour, none was recorded: nothing says where the aircraft was). When no frame was recorded within 15 minutes of the time
+the area around the followed aircraft, and leaves the rest blank (where there was no position for more than an hour, none was recorded: nothing says where the aircraft was). So that a blank place can be understood, the row has an
+**Off | Dim | Light** switch (shown in Past, before the Live | Past switch as in the satellite row, remembered, Dim to start with): Dim darkens everything that was not recorded, Light
+lightens what was, and both hatch a place RainViewer has no radar for (as over most of the oceans). The shading lies under the radar, so the radar's colours
+are unchanged. Where the pointer is over a blank place, a small box slides out under the radar time badge (top right) saying why ("Radar not recorded here", recorded with
+no rain, or no radar coverage). A place that was recorded shows nothing, and the box goes after three seconds of a still pointer. It floats, so nothing moves when it
+comes and goes, and the tiles take no part in the mouse, so the track and its dots stay clickable. When no frame was recorded within 15 minutes of the time
 wanted it says so, and shows nothing, rather than a frame from another time. The server serves the frames
 (`GET /api/weather/radar`, a frame's `.../{frame}/tiles` and `.../{frame}/{z}/{x}/{y}.png`) from the weather directory, whether
 or not recording is on now. See [the plan](weather-recording-plan.md) for what comes next (a filtered copy of the infrared imagery).
@@ -899,7 +907,7 @@ plan with no callsign, is matched on time alone.
 
 ## Weather radar
 
-"Weather radar" in the map legend (first entry, off until you tick it, and remembered; its **Live | Past** switch chooses this live layer or the recorded one below) lays [RainViewer](https://www.rainviewer.com)'s
+"Weather radar" in the map legend (first entry, off until you tick it, and remembered; its **Live | Past** switch chooses this live layer or the recorded one below; after a reload a ticked row is back on Live, since the flight and time it was showing are not kept) lays [RainViewer](https://www.rainviewer.com)'s
 global radar composite over the map, in the NEXRAD colours (green to red), at 65% opacity. A label under the clock gives the time
 of the frame and its age; the newest frame is fetched when it is switched on and every 5 minutes after. The browser fetches it
 straight from RainViewer (the server is not involved), and the map credits it; see RainViewer's terms for what it may be used

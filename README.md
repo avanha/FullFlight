@@ -142,7 +142,7 @@ Then:
 - **Backfill.** Read adsb.lol's daily archives to fill the track from before an aircraft was followed.
   [Details](docs/details.md#backfilling-a-track-from-adsblols-archive) · [When it fails](docs/details.md#when-it-does-not-work)
 - **Recording the radar.** Off by default: keeps the RainViewer radar tiles around followed aircraft, which RainViewer itself drops after two hours;
-  a map layer draws the recorded radar for the time of the selected message.
+  a map layer draws the recorded radar for the time of the selected message, and can dim or lighten the places it covers (and hatch where RainViewer has no radar).
   [Details](docs/details.md#recording-the-radar) · [Plan](docs/weather-recording-plan.md)
 - **Storage and purging.** Everything is kept by default (tens of MB a month); `-stats` and `-purge-older-than` manage it.
   [Details](docs/details.md#storage-and-purging)

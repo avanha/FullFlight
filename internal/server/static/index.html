@@ -172,6 +172,22 @@
   .wxswitch button:last-child { border-radius: 0 3px 3px 0; border-left: none; }
   body[data-wxradar="live"] .wxswitch[data-kind="radar"] button[data-mode="live"], body[data-wxradar="past"] .wxswitch[data-kind="radar"] button[data-mode="past"],
   body[data-wxsat="live"] .wxswitch[data-kind="sat"] button[data-mode="live"], body[data-wxsat="past"] .wxswitch[data-kind="sat"] button[data-mode="past"] { background: #0a58ca; border-color: #0a58ca; color: #fff; }
+  /* the shading choice and the readout of the tile under the pointer belong to the recorded radar, so they show only in Past */
+  /* in Past the shading choice sits before the Live | Past switch, which keeps its place at the right edge as the satellite row's does */
+  .wxshade { white-space: nowrap; display: none; }
+  body[data-wxradar="past"] .wxshade { display: inline; margin-left: auto; }
+  body[data-wxradar="past"] .wxswitch[data-kind="radar"] { margin-left: 0; }
+  .wxshade button { font: 11px/1.3 system-ui, sans-serif; padding: 0 6px; border: 1px solid #8a94a6; background: #fff; color: #345; cursor: pointer; }
+  .wxshade button:first-child { border-radius: 3px 0 0 3px; }
+  .wxshade button:last-child { border-radius: 0 3px 3px 0; }
+  .wxshade button:not(:first-child) { border-left: none; }
+  .wxshade button.on { background: #0a58ca; border-color: #0a58ca; color: #fff; }
+  /* what the pointer is over, slid out under the recorded radar's badge; it floats, so nothing around it moves */
+  #recbadge { position: relative; }
+  #rechere { position: absolute; top: 100%; right: 0; margin-top: 2px; padding: 2px 8px; border-radius: 4px; white-space: nowrap; pointer-events: none;
+             font: 12px system-ui, sans-serif; background: rgba(255,255,255,.95); border: 1px solid #aaa; color: #345;
+             opacity: 0; transform: translateY(-6px); transition: opacity .12s, transform .12s; }
+  #rechere.show { opacity: 1; transform: none; }
   #recbadge, #satatbadge { pointer-events: auto; }
   #recbadge button, #satatbadge button { border: 1px solid #aaa; background: #fff; border-radius: 3px; cursor: pointer; padding: 0 5px; font-size: 11px; color: #345; }
   #recbadge button:disabled, #satatbadge button:disabled { opacity: .35; cursor: default; }
@@ -264,7 +280,7 @@
 <div id="timebar" hidden title="Drag to see where the aircraft was at a time on this flight; the radar and the satellite follow it. All the way to the right is Live: the newest position and the live radar and satellite."><span id="tbstart"></span><span id="tbtrack"><input type="range" id="tbrange" aria-label="Time on this flight"><span id="tbtime"></span></span><span id="tbendbox"><span id="tbend"></span><span id="tbplus"></span></span></div>
 <div id="wxbadges">
   <div class="wxbadge" id="radarbadge" hidden title="The newest frame of the radar composite on the map. It is refreshed every 5 minutes."></div>
-  <div class="wxbadge" id="recbadge" hidden title="Radar this server recorded near the followed aircraft, for the time of the selected message (or the newest position). The arrows step through the recorded frames."><button id="recprev" title="The recorded frame before this one">&#9664;</button> <span id="rectext"></span> <button id="recnext" title="The recorded frame after this one">&#9654;</button></div>
+  <div class="wxbadge" id="recbadge" hidden title="Radar this server recorded near the followed aircraft, for the time of the selected message (or the newest position). The arrows step through the recorded frames."><button id="recprev" title="The recorded frame before this one">&#9664;</button> <span id="rectext"></span> <button id="recnext" title="The recorded frame after this one">&#9654;</button><span id="rechere"></span></div>
   <div class="wxbadge" id="satatbadge" hidden title="The infrared satellite frame for the time of the selected message (or the newest position), from NASA GIBS's archive of about 90 days. The arrows step ten minutes."><button id="satatprev" title="Ten minutes earlier">&#9664;</button> <span id="satattext"></span> <button id="satatnext" title="Ten minutes later">&#9654;</button></div>
   <div class="wxbadge" id="satbadge" hidden title="The newest infrared satellite frames on the map, from the satellites that see each part of the world. Refreshed every 10 minutes."></div>
 </div>
@@ -498,6 +514,7 @@ satGroup.on('remove', () => {
 // message, or of the newest position when none is selected, and stepped frame by frame with the arrows. It exists only where
 // an aircraft was, so a tile that was not recorded is left blank, never filled from another frame.
 const REC = {listUrl: '/api/weather/radar', refreshMs: 5 * 60000, fitMin: 15, zoom: 7};
+let recNone = new Set(), recClear = new Set();   // the places in the shown frame RainViewer had no tile for, and those whose tile has no rain
 let recFrames = [], recRecording = false, recFailed = false, recIdx = -1, recKeys = new Set(), recFrameShown = null, recAt = null, recAtWhat = null, recSelSeen = null, recSelMs = null, recTimer = null, recSeq = 0;
 const RecordedTiles = L.TileLayer.extend({
   createTile(coords, done) {
@@ -512,6 +529,86 @@ const RecordedTiles = L.TileLayer.extend({
 const recLayer = new RecordedTiles(BLANK_TILE, {opacity: .65, minNativeZoom: REC.zoom, maxNativeZoom: REC.zoom, maxZoom: 18, zIndex: 5,
   attribution: 'Radar &copy; <a href="https://www.rainviewer.com" target="_blank" rel="noopener">RainViewer</a>',
   has: c => recKeys.has(`${c.x}/${c.y}`)});
+// Where the radar was recorded, drawn under it so the radar's colours are not changed: "Dim" darkens everything that was not
+// recorded, "Light" lightens what was, and "Off" draws nothing. A place RainViewer had no tile for (no radar coverage there,
+// as over most of the oceans) is hatched, so it is not taken for clear sky. Each map tile is a canvas, painted from the
+// recorded zoom-7 tiles that fall in it. The choice is remembered.
+const SHADES = ['off', 'dim', 'light'];
+let recShade = 'dim';
+try { const v = localStorage.getItem('recshade'); if (SHADES.includes(v)) recShade = v; } catch (e) { /* default */ }
+const ShadeLayer = L.GridLayer.extend({
+  createTile(coords) {
+    const tile = document.createElement('canvas');
+    tile.width = tile.height = 256;
+    paintShade(tile.getContext('2d'), coords, recShade, recKeys, recNone);
+    return tile;
+  },
+});
+function paintShade(ctx, c, mode, keys, none) {
+  if (!ctx || mode === 'off') return;
+  const s = 2 ** (c.z - REC.zoom), size = 256 * s;   // a recorded tile is size pixels across at this zoom
+  const inside = k => { const [x, y] = k.split('/').map(Number); return [(x - c.x / s) * size, (y - c.y / s) * size]; };
+  const near = set => [...set].map(inside).filter(([px, py]) => px < 256 && py < 256 && px + size > 0 && py + size > 0);
+  if (mode === 'dim') {
+    ctx.fillStyle = 'rgba(20, 30, 50, .16)';
+    ctx.fillRect(0, 0, 256, 256);
+    for (const [px, py] of near(keys)) ctx.clearRect(px, py, size, size);
+  } else {
+    ctx.fillStyle = 'rgba(255, 255, 255, .35)';
+    for (const [px, py] of near(keys)) ctx.fillRect(px, py, size, size);
+  }
+  ctx.strokeStyle = 'rgba(20, 30, 50, .45)';
+  ctx.lineWidth = 1;
+  for (const [px, py] of near(none)) {   // diagonal hatching across the place
+    ctx.save();
+    ctx.beginPath(); ctx.rect(px, py, size, size); ctx.clip();
+    ctx.beginPath();
+    for (let d = -size; d < size; d += 10) { ctx.moveTo(px + d, py + size); ctx.lineTo(px + d + size, py); }
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+const shadeLayer = new ShadeLayer({zIndex: 4, maxZoom: 18, pane: 'tilePane'});
+function recShadeDraw() {
+  const on = map.hasLayer(recLayer);
+  if (on && recShade !== 'off' && !map.hasLayer(shadeLayer)) map.addLayer(shadeLayer);
+  if ((!on || recShade === 'off') && map.hasLayer(shadeLayer)) map.removeLayer(shadeLayer);
+  if (map.hasLayer(shadeLayer)) shadeLayer.redraw();
+}
+function recSetShade(mode) {
+  recShade = mode;
+  try { localStorage.setItem('recshade', mode); } catch (e) { /* not saved: fine */ }
+  document.querySelectorAll('.wxshade button').forEach(b => b.classList.toggle('on', b.dataset.shade === mode));
+  recShadeDraw();
+}
+// What is at a place, for the box that slides out under the radar badge: the pointer moves over the map and this says why a place
+// may be blank. Plain "recorded" is not worth a box. (The tiles take no part: they are canvases that ignore the mouse, so
+// nothing gets in the way of the track.)
+function recHere(latlng) {
+  if (!map.hasLayer(recLayer) || !latlng || typeof latlng.lat !== 'number') return null;
+  const n = 2 ** REC.zoom, wrap = ((latlng.lng + 180) % 360 + 360) % 360 - 180;
+  const x = Math.floor((wrap + 180) / 360 * n), r = latlng.lat * Math.PI / 180;
+  const y = Math.floor((1 - Math.asinh(Math.tan(r)) / Math.PI) / 2 * n);
+  const k = `${x}/${y}`;
+  if (!recFrameShown) return 'No radar frame for this time';
+  return recNone.has(k) ? 'Radar: none to record here (no coverage)'
+       : recClear.has(k) ? 'Radar recorded here: no rain'
+       : recKeys.has(k) ? 'Radar recorded here'
+       : 'Radar not recorded here';
+}
+// It goes by itself after a few seconds without the pointer moving: it floats over the satellite badge below it.
+const HERE_MS = 3000;
+let hereTimer = null;
+function recShowHere(latlng) {
+  const text = recHere(latlng), box = $('#rechere');
+  const show = text !== null && text !== 'Radar recorded here';
+  if (show) box.textContent = text;   // kept while it slides away
+  box.classList.toggle('show', show);
+  clearTimeout(hereTimer);
+  if (show) hereTimer = setTimeout(() => box.classList.toggle('show', false), HERE_MS);
+}
+map.on('mousemove', e => recShowHere(e.latlng));
+map.on('mouseout', () => recShowHere(null));
 // The newest frame nearest a time, and whether it is near enough to stand for it.
 function recNearest(frames, ms) {
   let best = -1;
@@ -545,7 +642,7 @@ async function recUpdate() {
   $('#recprev').disabled = n.idx <= 0; $('#recnext').disabled = n.idx >= recFrames.length - 1;
   recIdx = n.idx;
   if (!n.fits) {   // never show the nearest frame as though it were the time
-    recKeys = new Set(); recFrameShown = null; recLayer.redraw();
+    recKeys = new Set(); recNone = new Set(); recClear = new Set(); recFrameShown = null; recLayer.redraw(); recShadeDraw();
     text.textContent = `No radar recorded near ${recTime(want.ms)} (recorded ${recTime(recFrames[0].ms)} to ${recTime(recFrames.at(-1).ms)})`;
     return;
   }
@@ -556,10 +653,13 @@ async function recUpdate() {
     const d = await api(`${REC.listUrl}/${f.id}/tiles`);
     if (seq !== recSeq) return;   // another frame was asked for meanwhile
     recKeys = new Set(d.tiles.map(([x, y]) => `${x}/${y}`));
+    recNone = new Set((d.none || []).map(([x, y]) => `${x}/${y}`));
+    recClear = new Set((d.clear || []).map(([x, y]) => `${x}/${y}`));
     recFrameShown = f.id;
     recLayer.setUrl(`${REC.listUrl}/${f.id}/{z}/{x}/{y}.png`);
     recFitBounds(d.tiles);
     recLayer.redraw();
+    recShadeDraw();
   } catch (e) { text.textContent = 'Radar unavailable'; }
 }
 // Limit the layer to the box the recorded tiles lie in, so zoomed out it does not walk every tile of the world.
@@ -593,13 +693,15 @@ function recFollow(m) {
 document.querySelector('#recprev').onclick = () => { if (recIdx > 0) { recAt = recFrames[recIdx - 1].ms; recAtWhat = null; viewTimeChanged(); } };
 document.querySelector('#recnext').onclick = () => { if (recIdx >= 0 && recIdx < recFrames.length - 1) { recAt = recFrames[recIdx + 1].ms; recAtWhat = null; viewTimeChanged(); } };
 recLayer.on('add', () => {
+  recShadeDraw();
   recLoad();
   recTimer = setInterval(recLoad, REC.refreshMs);
   try { localStorage.setItem('recradar', '1'); } catch (e) { /* not saved: fine */ }
 });
 recLayer.on('remove', () => {
   clearInterval(recTimer);
-  recFrameShown = null; recKeys = new Set();
+  recFrameShown = null; recKeys = new Set(); recNone = new Set(); recClear = new Set();
+  recShadeDraw(); recShowHere(null);
   $('#recbadge').hidden = true;
   try { localStorage.setItem('recradar', '0'); } catch (e) { /* not saved: fine */ }
 });
@@ -823,8 +925,9 @@ for (const kind of Object.keys(WX)) {
   w.proxy.on('remove', () => { map.removeLayer(w.live); map.removeLayer(w.past); });
 }
 const wxSwitch = (kind, what) => `<span class="wxswitch" data-kind="${kind}"><button type="button" data-mode="live" title="Live: the newest ${what} frame">Live</button><button type="button" data-mode="past" title="Past: the ${what} for the time chosen on the flight">Past</button></span>`;
+const wxShadeSwitch = `<span class="wxshade" title="Shade the map by where radar was recorded: Dim darkens what was not recorded, Light lightens what was. Hatching is a place RainViewer has no radar for."><button type="button" data-shade="off">Off</button><button type="button" data-shade="dim">Dim</button><button type="button" data-shade="light">Light</button></span>`;
 const legend = L.control.layers(null, {
-  ['<span style="font-weight:bold">&#9638;</span> Weather radar' + wxSwitch('radar', 'radar')]: WX.radar.proxy,
+  ['<span style="font-weight:bold">&#9638;</span> Weather radar' + wxShadeSwitch + wxSwitch('radar', 'radar')]: WX.radar.proxy,
   ['<span style="font-weight:bold">&#9729;</span> Satellite (IR)' + wxSwitch('sat', 'infrared')]: WX.sat.proxy,
   '<span style="font-weight:bold">&#9671;</span> Waypoints': wptGroup,
   '<span style="color:#e8590c;font-weight:bold">&#8211; &#8211;</span> Predictions': predGroup,
@@ -839,7 +942,10 @@ const legend = L.control.layers(null, {
 if (legend.getContainer) legend.getContainer().addEventListener('click', e => {
   const b = e.target.closest && e.target.closest('.wxswitch button');
   if (b) wxSetMode(b.parentNode.dataset.kind, b.dataset.mode);
+  const sh = e.target.closest && e.target.closest('.wxshade button');
+  if (sh) { recSetShade(sh.dataset.shade); e.preventDefault(); }
 });
+recSetShade(recShade);   // marks the remembered choice on the switch
 // A bar above the legend boxes folds them away, and the choice is remembered. It is added last, which puts it on top of the stack.
 let legendHidden = false;
 try { legendHidden = localStorage.getItem('legendHidden') === '1'; } catch (e) { /* default: shown */ }
@@ -2757,7 +2863,8 @@ setInterval(tick, 1000);
 for (const kind of Object.keys(WX)) {
   try {
     const w = WX[kind], past = localStorage.getItem(w.pastKey) === '1';
-    if (past || localStorage.getItem(w.key) === '1') { wxSetMode(kind, past ? 'past' : 'live'); map.addLayer(w.proxy); }
+    // a row that was ticked comes back ticked, but always Live: the selected flight and the time chosen on it are not kept either
+    if (past || localStorage.getItem(w.key) === '1') { wxSetMode(kind, 'live'); map.addLayer(w.proxy); }
   } catch (e) { /* default: off */ }
 }
 refresh();

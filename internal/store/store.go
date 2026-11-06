@@ -272,11 +272,26 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := addWxStatus(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("tile status: %w", err)
+	}
 	if err := fillEventTimes(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("event times: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+// addWxStatus adds what a recorded tile turned out to be (see WxPicture) to a database that predates it. It is code and not a
+// numbered migration because those are re-run in full by the tests that wind the version back, and an ALTER cannot be run twice.
+func addWxStatus(db *sql.DB) error {
+	var have int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('wx_tile') WHERE name = 'status'`).Scan(&have); err != nil || have > 0 {
+		return err
+	}
+	_, err := db.Exec(`ALTER TABLE wx_tile ADD COLUMN status INTEGER NOT NULL DEFAULT 0`)
+	return err
 }
 
 // fillEventTimes keeps the time each message counts as in the message row (see EventTime): it adds the columns if the database
