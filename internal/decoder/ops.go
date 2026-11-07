@@ -167,7 +167,10 @@ func parseOps(label, text string) (opsParsed, bool) {
 		}
 		return opsParsed{}, false
 	case "RA", "25":
-		return parseDelta(text)
+		if p, ok := parseDelta(text); ok {
+			return p, true
+		}
+		return parseUnited(text)
 	case "83":
 		return parsePOSRPT83(text)
 	case "99":

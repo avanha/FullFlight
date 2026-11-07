@@ -23,8 +23,12 @@ var (
 	enginePosRe = regexp.MustCompile(`([+-]\d{8})([+-]\d{8})([+-]\d{8})`)
 	apmRe       = regexp.MustCompile(`^APM +(?:(\d+) +)?([A-Z0-9-]{5,6}) +([A-Z]{3}\d{1,4}) +([A-Z]{4})([A-Z]{4})(\d{6})(\d{6}),`)
 	apmHeadRe   = regexp.MustCompile(`^\w{4} *\r?\n`)
-	apmPosRe    = regexp.MustCompile(`[ ,](-?\d{1,2}\.\d{4}),,,\s*\n\s*(-?\d{1,3}\.\d{4}),,,`)
-	apmAltRe    = regexp.MustCompile(`\.\d{3},,,\s*[\d.]+,,,\s*-?[\d.]+,,,\s*(\d{5}),,,`)
+	apmPosRe    = regexp.MustCompile(`[ ,](-?\d{1,2}\.\d{4}),,,\s*(-?\d{1,3}\.\d{4}),,,`) // on one line, or the longitude on the next
+	apmAltRe    = regexp.MustCompile(`-?\d+\.\d{2},,,\s*(\d{5}),,,`)
+	// Mach, total air temperature, altitude, gross weight and the two engines' fuel flow. Mach and the temperature have other
+	// numbers between them in some airlines' reports. That the temperature is the total one and the weight is in pounds is read
+	// from samples (the temperature is warmer than a static one could be at that altitude and speed; the weights suit the types).
+	apmValsRe   = regexp.MustCompile(`,(\.\d{3}),[\d.,\s]*?(-?\d+\.\d{2}),,,\s*(\d{5}),,,\s*(\d{5,6}),,,\s*(\d{3,5}),\s*(\d{3,5}),`)
 	engReportRe = regexp.MustCompile(`^<(\d{3})>[A-Z]{3} ([A-Z0-9-]{5,6}?)([A-Z]{3}\d{1,4}) ER \d{2}(\d{6})(\d{6})([A-Z]{4})([A-Z]{4})`)
 	engRepPosRe = regexp.MustCompile(`(\d{5})\d{7}(-?\d{3}) (-?\d{6}) (-?\d{6,7}) `)
 )
@@ -138,7 +142,16 @@ func parseAPM(t string) (opsParsed, bool) {
 			p = posAt(lat, lon, alt, at)
 		}
 	}
-	return opsParsed{rep: o, pos: p, summary: perfSummary(o, p, at), tail: m[2]}, true
+	var lines []string
+	if v := apmValsRe.FindStringSubmatch(t); v != nil {
+		o.Info["mach"], o.Info["tat_c"], o.Info["gross_lb"] = v[1], v[2], fmt.Sprint(atoi(v[4]))
+		o.Info["fuel_flow"] = v[5] + "/" + v[6]
+		lines = append(lines,
+			fmt.Sprintf("Mach %s, total air temperature %s°C", v[1], v[2]),
+			fmt.Sprintf("Gross weight %s lb", groupThousands(atoi(v[4]))),
+			fmt.Sprintf("Fuel flow %s and %s (one per engine, units as sent)", groupThousands(atoi(v[5])), groupThousands(atoi(v[6]))))
+	}
+	return opsParsed{rep: o, pos: p, summary: perfSummary(o, p, at), extra: lines, tail: m[2]}, true
 }
 
 // The <nnn>XEG reports. After the tag and the registration and flight come a date and time (ddmmyy hhmmss) and the route,

@@ -138,7 +138,11 @@ stores that under the last block); a longer message can also be heard first as a
 is wholly inside a longer one with the same message number, received within three minutes, is folded under the whole message:
 the list shows one row with a "+2 parts" tag, the count at the top counts whole messages, and the map still marks every point
 (clicking a folded point selects the whole message). The API gives `part_of` on the folded message and `parts` on the whole one.
-Blocks with no joined copy are left alone.
+Blocks with no joined copy are put together when the page asks for the messages: a run of blocks from one aircraft and station with the
+same message number, label and numbered one after another (0-9 or A-Z, then round again), each within 90 seconds of the
+last and each but the last nearly full, is joined into one message with a negative `id` and `assembled: true`, read like any other,
+and the blocks fold under it. A skipped block number ends the run (a block we never heard would join unrelated data), and one block alone
+is not joined. The joined message is for reading: it is not stored, and its position is not plotted or used for the track.
 
 **Direction.** Uplink vs downlink is taken from airframes.io when given, else from which end of the link is the aircraft
 (`fromHex`/`toHex`), else tried both ways.
@@ -209,7 +213,10 @@ projection at:
   in a compressed message. The A350's other MIAM reports have a header with the tail, the aircraft's own time, the flight and the
   route, and what raised the report: `A350 report 216: INTEGRATED REFUEL PANEL DOOR OPEN (SIA23 KJFK→WSSS)`. What they say about
   the systems is not decoded, but the flight and route count as sightings of the flight and as route reports ("A350 report"). The
-  XML maintenance report (`<RTR>`) and the takeoff report (`3S06 TAKOFF ...`, with out, off and ETA times) are read the same way.
+  monitoring (`MODA`) and parameter (`PRM`) messages name the parameters they carry (the names are not explained). The XML maintenance
+  report (`<RTR>`) lists every entry: flight deck effects (`FDE`), messages with no effect on the flight deck (`NFDE`) and maintenance
+  messages (`MM`, with the system, the ATA chapter and the priority), each with its text and time, and its one line says how many
+  more there are than the first. The takeoff report (`3S06 TAKOFF ...`, with out, off and ETA times) is read the same way as the header reports.
   MIAM acknowledgements are named, and a block that continues a message too long for one is listed as a data block with the
   undecoded messages.
 - **Delta departure reports**, sent as the aircraft starts to taxi (label 4M, or inside a MIAM message): flight number, origin and
@@ -769,6 +776,11 @@ times in them join the evidence for a flight's route and departure.
   and the route), and `AGFSR`, an in-flight position report with altitude, phase, temperature and wind, drawn on the map as an
   "Airline" position. `4C` is the flight information sent before departure, `4M` the load sheet and `4P` the dangerous goods
   notice.
+- **A380 maintenance reports** (label `H1`, plain fixed-width text, from three aircraft): `A380000150,1,1,TB000000;REP212,81;H01...;H02...;H03...`.
+  The same design as the A350's: the report number, the tail, the aircraft's date and time (`10061126231337020` is the 6th of November 2026
+  at 23:13:37 and flight phase 020), the route and callsign, and what raised it: `A380 report 212: PARK BRAKE ACTIVATED RIGHT BLG
+  (QFA63 YSSY→FAOR)`. They are listed as `maintenance_report`. The data lines after the trigger are not read; the parameter messages
+  (`PRM`) name their parameters.
 - **Ground events** (`49`, `17`): `01ICCL ACA025/311941CYVRZSPD` names an event, the flight, the time and the route. Air Canada,
   United, China Cargo and Zipair send them. The four-letter event codes are shown as sent; their meaning is not known.
 - **787 engine and performance reports** (United and Air Canada, label `H1`): `/ILNGE7X.CLB006UA N249932UAL177 261024000658KDENLIRF…`,
@@ -802,6 +814,23 @@ times in them join the evidence for a flight's route and departure.
   are wider: latitude and longitude in thousandths of a degree, the time, a six digit altitude, the temperature and the wind. The
   flight is "AS" and its number; only the performance report spells the callsign. A later block of a long `ABS` message has no
   header and is not read. Positions agree with ADS-B to the minute.
+  **Performance report numbers** (`APM`, United, Alaska, Air Canada, Avianca): the report also gives the Mach number, the total air
+  temperature (read as total, not static: it is warmer than a static one could be at that Mach and altitude), the gross weight in pounds
+  (the weights suit the types, and match United's own final weights) and the fuel flow of the two engines (units not given, shown as
+  sent). The position is read when the longitude follows the latitude on the same line, as it does for Alaska and United, as well as on
+  the next line. The other numbers of the report are not read: nothing in the message says what they are.
+- **United dispatch messages** (label `RA`, to the aircraft; each starts with an address and a title such as `QUNDCULUA~1TAKEOFF DATA`):
+  `TAKEOFF DATA` (the runway and airport, the aircraft and engines, temperature and altimeter, wind, the runway state, flaps, bleeds and
+  anti-ice, the assumed weight and temperature of a reduced-thrust take-off with its V speeds, the full-thrust speeds beside it, the thrust
+  reduction and acceleration altitudes, the maximum take-off weight and the open MEL/CDL items), `HOWGOZIT` (the cost index and release,
+  the number of waypoints in the plan, the planned arrival and how far it is from the schedule), `DISPATCH RELEASE` (the aircraft, the
+  fleet number and type, the minimum take-off fuel, the alternates and the scheduled departure), `FINAL WEIGHTS` (take-off and zero
+  fuel weights, the centre of gravity, the people on board, the passengers and the crew), `GATE ASSIGN` (the gate, the ramp and
+  operations frequencies, ground power, the planned ground time and the next flight), `TURB SIGMET` (the severity, type, altitudes, the
+  time the flight enters the area and how long it is valid), and `FLIGHT STATUS` and `CABIN FAULT RPT` by their flight and one fact.
+  Messages with a flight and route count as route evidence. The crew list and the release verification (names and employee numbers),
+  and messages between pilot and dispatcher (free text) are not read. Read from one week of one airline's traffic: a value whose
+  meaning is not given in the message (the units of the waypoint fuel column, what the two times beside the departure airport mean) is not shown.
 - **Delta** (read from N501DN, an A350, and a narrow-body that flew from Portland and Los Angeles): the dispatch messages on label `RA`
   (to the aircraft) and `25` (from it), each starting with a class number. `PRE-PUSHBACK MSG` gives the flight (`FLT 0782/02NOV`),
   the route (`A/C 3501 LAX-ATL RLS 1`), the fuel and the open MEL items (deferred defects, as chapter-and-item codes such as

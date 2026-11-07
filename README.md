@@ -73,7 +73,8 @@ Then:
 - **Current flight** is the newest flight worked out for a tail or hex watch, including the next one announced at the gate.
   [Details](docs/details.md#current-flight)
 - **Airline operations messages** (Qantas, Air Canada, United, Alaska, Delta, China Cargo, Avianca and others) are decoded and feed the route and
-  departure time. [Details](docs/details.md#airline-operations-messages)
+  departure time; United's dispatch messages (take-off data, howgozit, release, weights, gate, turbulence) are read, and blocks of a long
+  message with no joined copy are put together for reading. Airbus A350 and A380 maintenance reports show what raised them. [Details](docs/details.md#airline-operations-messages)
 - **FMS plans and weather observations.** A Boeing FMS's plan with the ETA of each waypoint, and the climb, descent and cruise weather
   reports, are read for the route, the positions and the wind. [Plans](docs/details.md#fms-plan-reports) · [Observations](docs/details.md#airline-operations-messages)
 - **Clearances.** Oceanic clearances and Qantas pre-departure clearances are decoded and drawn as their own layer.
@@ -155,8 +156,8 @@ projection, estimated paths, weather overlays, wind barbs, the unified track, ai
 
 Not yet:
 
-- The contents of the A350 engine, fuel and parameter reports (only their headers are read), the compressed engine files
-  (`EXW…`), and putting continuation blocks of a MIAM message back together.
+- The contents of the A350 and A380 engine, fuel and parameter reports (only their headers and the names of their parameters
+  are read; the XML maintenance report is read in full), the compressed engine files (`EXW…`), and the other numbers of the performance reports.
 - Comparing an ADS-C report's predicted ETA with the actual passage of the waypoint, and showing the error.
 - Live updates pushed to the page (it polls; SSE would replace that).
 - Deployment docs: a systemd unit and a reverse proxy example. (HTTP basic auth is built in; see `config.example.yaml`.)
