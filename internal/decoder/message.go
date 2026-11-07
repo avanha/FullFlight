@@ -31,6 +31,7 @@ const (
 	KindWeather    Kind = "weather_report"
 	KindDisconnect Kind = "disconnect"
 	KindPOS        Kind = "pos_report"
+	KindMaint      Kind = "maintenance_report"
 	KindPOSRPT     Kind = "posrpt"
 	KindPOSA1      Kind = "posa1"
 	KindSBPOS      Kind = "sbpos"
@@ -201,6 +202,12 @@ func Decode(m Message) (Result, error) {
 	if r, ok := decodeOps(m); ok {
 		return r, nil
 	}
+	if r, ok := decodeA380(m); ok {
+		return r, nil
+	}
+	if r, ok := decodeCMS(m); ok {
+		return r, nil
+	}
 	if r, ok := decodeWeather(m); ok {
 		return r, nil
 	}
@@ -288,6 +295,7 @@ func Decode(m Message) (Result, error) {
 				for _, txt := range []string{body, inner} {
 					if a, ok := ParseA350(txt); ok {
 						r.Fields["a350"] = a
+						r.Text = a.lines() + "\n\n" + r.Text
 						if r.Identity.Tail == "" {
 							r.Identity.Tail = a.Tail
 						}
@@ -298,6 +306,9 @@ func Decode(m Message) (Result, error) {
 					}
 					if x, ok := ParseRTR(txt); ok {
 						r.Fields["rtr"] = x
+						if l := x.lines(); l != "" {
+							r.Text = l + "\n\n" + r.Text
+						}
 						if r.Identity.Tail == "" {
 							r.Identity.Tail = x.Tail
 						}

@@ -1381,7 +1381,7 @@ func TestDescribeWhatWeCannotDecode(t *testing.T) {
 		{"RA", "up", ".HDQONQF ~6\r\n06:45 TAFOR\r\nTAF WSSS 270500Z 2706/2812 10007KT 9999 FEW015 SCT020=\r\n\r\nTAF WADD 270500Z 2706/2812 13009KT 9999 SCT016=\r\n\r\nTAF WIII 270500Z 2706/2812 34011KT 7000 SCT020\r\nBECMG 2709/2711 20004KT\r\nBECMG 2803/2805 32010KT=\r\n", "text_message", "Forecast (TAF): .HDQONQF ~6 / 06:45 TAFOR / TAF WSSS 270500Z 2706/2812 10007KT 9999 FEW015 SCT020= / TAF WADD 270500Z 2706/281…"},
 		{"H1", "down", "RPT13;PG1;REAL;SW030M2G\r\n1  \r\n2  \r\n3  -1.5;+2.3;312\r\n4  32000\r\n5  -0.1;-0.2;-0.1;-0.1;-0.1\r\n6  +1.8;+2.1;+2.1;+2.1;+2.1\r\n7  0.0;-0.1;-0.1;-0.1;-0.2\r\n8  0.0;+3.5;0.0;0.0;+3.5;0.0\r\n9  0.0;+3.5;0.0;0.0;+3.4;0.", "unknown", "Real-time system report RPT13 (label H1, not decoded)"},
 		{"H1", "down", "CFG422000 1 24OCT26 1309 UA N24993 UAL178 LIRF/KDEN BCG47-45LD-0080 C L\r\nLRU Left 1 General Processor Module\r\nHW\r\nHWPN 182513-002 \r\nHWML 00                            \r\nHWSN 230930339\r\nSW\r\nLOC LS1315765 CCR", "unknown", "Aircraft configuration report (label H1, not decoded)"},
-		{"H1", "down", "A380000524,1,1,TB000000;REP044,03;H0104403400000214.HL762610271026142322081;H02RKSI KLAXAAR202    S0586S0785CMS801901A;H03no threshold is exceeded                                          ;WSCS10;WSCS21;RVD", "unknown", "A380 maintenance report REP044 (label H1, not decoded)"},
+		{"H1", "down", "A380000524,1,1,TB000000;REP044,03;H0104403400000214.HL762610271026142322081;H02RKSI KLAXAAR202    S0586S0785CMS801901A;H03no threshold is exceeded                                          ;WSCS10;WSCS21;RVD", "maintenance_report", "A380 report 044: no threshold is exceeded (AAR202 RKSI→KLAX)"},
 		{"H1", "down", "          HAM53-21CS-2024\r\nSW6 42 CCS HOSTED APPS OSS         BCG5B-CCS0-04K1\r\nSW7 21 PECS OPS                    HAM55-21PE-2014\r\nSW8 24 PDMD AMI                    BCG4B-7870-0014\r\nSW9 24 PDOM OPS        ", "unknown", "Software and hardware status table (label H1, not decoded)"},
 		{"H1", "down", "RESREQ/AK,1158AF6", "unknown", "Acknowledgement (label H1, not decoded)"},
 		{"4C", "up", "-FSQ CA01", "unknown", "Air Canada company message FSQ (no text) (label 4C, not decoded)"},
@@ -1508,5 +1508,51 @@ func TestPreDepartureClearance(t *testing.T) {
 		if r, _ = Decode(Message{Label: "RA", Text: s}); r.Kind == KindPDC {
 			t.Errorf("%q decoded as a clearance", s)
 		}
+	}
+}
+
+// A380 maintenance reports come as plain text; the A350 sends the same sort as XML with several entries. Real messages.
+func TestMaintenanceReports(t *testing.T) {
+	r, err := Decode(Message{Label: "H1", Text: "A380000150,1,1,TB000000;REP212,81;H0121281601205624.VH-OQG10061126231337020;H02YSSY FAORQFA63     S0586S0785T900200101;H03PARK BRAKE ACTIVATED RIGHT BLG                                    ;:"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, ok := r.Fields["a350"].(A350Report)
+	if r.Kind != KindMaint || !ok || a.Type != "A380" || a.Number != "212" || a.Tail != "VH-OQG" || a.Callsign != "QFA63" || a.Origin != "YSSY" || a.Dest != "FAOR" ||
+		a.Trigger != "PARK BRAKE ACTIVATED RIGHT BLG" || !a.Time.Equal(time.Date(2026, 11, 6, 23, 13, 37, 0, time.UTC)) || a.Phase != "020" {
+		t.Fatalf("kind %v a380 = %+v", r.Kind, a)
+	}
+	if want := "A380 report 212: PARK BRAKE ACTIVATED RIGHT BLG (QFA63 YSSY→FAOR)"; r.Summary != want || r.Identity.Tail != "VH-OQG" {
+		t.Errorf("summary = %q, tail %q", r.Summary, r.Identity.Tail)
+	}
+	if !strings.Contains(r.Text, "Aircraft time: 2026-11-06 23:13:37Z") {
+		t.Errorf("text = %q", r.Text)
+	}
+	// a tail with digits in it does not swallow the date
+	r, _ = Decode(Message{Label: "H1", Text: "A380000524,1,1,TB000000;REP044,03;H0104403400000214.HL762610271026142322081;H02RKSI KLAXAAR202    S0586S0785CMS801901A;H03no threshold is exceeded                                          ;WSCS10;WSCS21;RVD"})
+	if a, _ = r.Fields["a350"].(A350Report); a.Tail != "HL7626" || a.Time.Day() != 27 {
+		t.Errorf("a380 with a numeric tail = %+v", a)
+	}
+	// parameter data names what it carries
+	r, _ = Decode(Message{Label: "H1", Text: "A380000131,1,1,TBASW321;PRM;DS1,1,105904;PATIREPR.1,239;PATIREPR.2,238;PABRTEMP.1,45;PABRTEMP.2,48;"})
+	if a, _ = r.Fields["a350"].(A350Report); r.Kind != KindMaint || len(a.Params) != 4 || r.Summary != "A380 parameter data (4 parameters: PATIREPR.1, PATIREPR.2, PABRTEMP.1 and 1 more)" {
+		t.Errorf("prm: kind %v %q %+v", r.Kind, r.Summary, a.Params)
+	}
+
+	// an A350 XML report lists every entry: effects, messages with no effect and maintenance messages with their system
+	x, ok := ParseRTR(`<RTR><HEAD><IDCMS pn="ABF31A6FNCL0004" vers="4.0"/><DA>2026/11/06 04:06:31</DA><ACD MSN="0075" tail="B-LRM" type="A350-900"/><TID>C00000073</TID></HEAD><HEADRTR><FROM>VHHH</FROM><TO>LEMD</TO><FNBR>CPA315    </FNBR></HEADRTR><ITD><CB>A</CB><NFDE><MC>3422X011</MC><MD>NAV-STBY-MAINT message displayed on ground on ISIS 2-on ground</MD></NFDE><MM fo="A" occ="1"><MC>3436F3JM</MC><MD>MMR-1(40RT1) / WRG TO MMR-1(40RT1) PIN AA2</MD><DA>2026/11/06 03:56:17</DA><ATA>3436</ATA><FPH>8</FPH><FCL>1</FCL><PRIO>high</PRIO><STA>1</STA><SYS name="MMR1" bite_id="1085" side="1"/></MM></ITD></RTR>`)
+	if !ok || len(x.Items) != 2 || x.Items[0].Kind != "NFDE" || x.Items[1].Kind != "MM" || x.Items[1].ATA != "3436" || x.Items[1].Priority != "high" || x.Items[1].System != "MMR1" ||
+		!x.Items[1].At.Equal(time.Date(2026, 11, 6, 3, 56, 17, 0, time.UTC)) {
+		t.Fatalf("rtr items = %+v", x.Items)
+	}
+	if want := "A350 maintenance report: NAV-STBY-MAINT message displayed on ground on ISIS 2-on ground and 1 more (CPA315 VHHH→LEMD)"; x.summary() != want {
+		t.Errorf("summary = %q", x.summary())
+	}
+	if !strings.Contains(x.lines(), "MMR-1(40RT1) / WRG TO MMR-1(40RT1) PIN AA2 (system MMR1, ATA 3436, high priority, 03:56:17Z)") {
+		t.Errorf("lines = %q", x.lines())
+	}
+	// an escaped ">" is read as one
+	if x, _ = ParseRTR(`<RTR><ITD><FDE disp="y"><MC>3242H371</MC><MD>&gt; SURV ROW/ROP</MD></FDE></ITD></RTR>`); x.Message != "> SURV ROW/ROP" {
+		t.Errorf("message = %q", x.Message)
 	}
 }
