@@ -821,6 +821,10 @@ type messageJSON struct {
 	Flight         string         `json:"flight,omitempty"`
 	Callsign       string         `json:"callsign,omitempty"`
 	Station        string         `json:"station,omitempty"`
+	Source         string         `json:"source,omitempty"`   // how it reached the station: vdl, satcom, hfdl ...
+	Freq           *float64       `json:"freq,omitempty"`     // MHz
+	MsgNum         string         `json:"msg_num,omitempty"`  // the airline's message number, where the link gives one
+	BlockID        string         `json:"block_id,omitempty"` // the ACARS block id
 	RxCount        int            `json:"rx_count"`
 	Lat            *float64       `json:"lat,omitempty"`
 	Lon            *float64       `json:"lon,omitempty"`
@@ -932,7 +936,7 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, m := range ms {
 		j := messageJSON{PartOf: partOf[m.ID], Undecoded: m.Kind == "unknown" || m.Summary == "MIAM (not decoded)" || strings.HasPrefix(m.Summary, "MIAM data block"), ID: m.ID, T: m.T, Label: m.Label, Kind: m.Kind, Direction: m.Direction, Summary: m.Summary,
-			Detail: m.Detail, Raw: m.Text, Tail: m.Tail, Flight: m.Flight, Callsign: m.Callsign, Station: m.Station,
+			Detail: m.Detail, Raw: m.Text, Tail: m.Tail, Flight: m.Flight, Callsign: m.Callsign, Station: m.Station, Source: m.SourceType, Freq: m.Freq, MsgNum: m.MsgNum, BlockID: m.BlockID,
 			RxCount: m.RxCount, Lat: m.Lat, Lon: m.Lon, AltFt: m.AltFt, PosT: m.PosT, Suspect: m.Suspect, TimeNote: m.TimeNote, TimeUnverified: m.TimeFlag,
 			Mismatch: m.Mismatch, AFTail: m.AFTail, AFFlight: m.AFFlight}
 		if !m.At.IsZero() && !m.At.Equal(m.T) {

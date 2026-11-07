@@ -90,6 +90,7 @@ global.fetch = async (url, opts) => {
   if (opts && opts.method === 'PUT') { lastPut = {url, body: JSON.parse(opts.body)}; return { status: putReply.status, ok: putReply.status < 400, json: async () => putReply.body }; }
   if (opts && opts.method === 'POST') { lastPostBody = JSON.parse(opts.body); return { status: postReply.status, ok: postReply.status < 400, json: async () => postReply.body }; }
   if (url === '/api/weather/radar') { if (radarListFails) throw new Error('offline'); return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(radarList)) }; }
+  if (url === '/api/stations') return { status: 200, ok: true, json: async () => ({stations: [{ident: 'KBFI-1', known: true, lat: 47.53, lon: -122.3, country: 'United States', nearest_airport: 'KBFI', application: 'dumpvdl2', source_type: 'vdl', verdict: 'late', median_s: 5400}]}) };
   if (/^\/api\/weather\/radar\/\d+\/tiles$/.test(url)) return { status: 200, ok: true, json: async () => ({z: 7, tiles: [[100, 60], [101, 60]], none: [[102, 60]], clear: [[101, 60]]}) };
   const body = url.startsWith('/api/watches') ? [watch] : url.startsWith('/api/track') ? pts : url.startsWith('/api/messages') ? msgs : url.startsWith('/api/flights') ? flightData.filter(sg => !/hours=96\b/.test(url) || Date.parse(sg.end) >= Date.now() - 96 * 3600e3) : url.startsWith('/api/plan') ? planData : url.startsWith('/api/airports') ? airportData : null;
   return { status: 200, ok: true, json: async () => JSON.parse(JSON.stringify(body)) };   // a fresh copy each time, like a real response
@@ -1866,6 +1867,37 @@ highlightGroup = null;
     assert.strictEqual(document.querySelector('#satatnext').disabled, true, 'nothing after the newest');
     t.satAtGroup.onMap = false; t.recLayer.onMap = false; t.satAtUpdate();
     assert.strictEqual(satBadge.hidden, true);
+  }
+
+  // ===== 8s4. the message details panel: an icon on a message opens how it was received ==========
+  {
+    const mk = (id, extra) => ({id, t: '2026-10-30T16:10:00Z', kind: 'text_message', summary: 's' + id, raw: 'r', label: 'RA', rx_count: 1, ...extra});
+    t.renderMessages([mk(7001, {kind: 'posrpt', summary: 'Position report KSEA\u2192RCTP 47.393N 122.308W FL023', detail: 'Position report\nlonger text', station: 'KBFI-1', source: 'vdl', freq: 131.55, msg_num: 'M04A', block_id: '7', dir: 'up', rx_count: 3, flight: 'DL782', tail: 'N501DN'}), mk(7002, {station: 'NEW-9'}), mk(7003)]);
+    const btn = id => t.rows.get(id).children.at(-2);
+    const panel = document.querySelector('#msgpanel'), body = () => document.querySelector('#mpbody');
+    const text = () => { const all = []; const walk = n => { if (n.textContent) all.push(n.textContent); (n.children || []).forEach(walk); }; (body().children || []).forEach(walk); return all.join('|'); };
+    assert.strictEqual(btn(7001).className, 'mpbtn', 'a message has the icon');
+    const open = async id => { btn(id).onclick({stopPropagation() {}}); await settle(); };
+    await open(7001);
+    assert.strictEqual(panel.hidden, false, 'the icon opens the panel');
+    const got = text();
+    for (const want of ['Received', 'Name|KBFI-1', 'Location|47.53\u00b0N 122.30\u00b0W, near KBFI, United States', 'dumpvdl2, vdl', 'Timeliness|often delivers late (median 1h30m', 'vdl', '131.550 MHz', '3 times (stored once)',
+      'to the aircraft', 'M04A', 'DL782', 'N501DN']) assert.ok(got.includes(want), `the panel shows ${want}: ${got}`);
+    assert.ok(got.includes('Decoded|posrpt|\u{1F4CB}|Position report KSEA\u2192RCTP 47.393N 122.308W FL023|Position report\nlonger text|Raw text'), 'the decoded text comes before the raw: ' + got);
+    assert.ok(got.includes('Raw text|\u{1F4CB}|r'), 'the raw text is in the panel with the copy icon in its heading: ' + got);
+    assert.ok(fetchLog.includes('/api/stations'), 'the station list is asked for');
+    // a station airframes.io does not list, and a message with none
+    await open(7002);
+    assert.ok(text().includes("not in airframes.io's list") && !text().includes('KBFI-1'), 'an unlisted station: ' + text());
+    await open(7003);
+    assert.ok(text().includes('not recorded'), 'no station recorded: ' + text());
+    // while it is open, choosing another message shows that one; opening a message's notes closes it
+    t.rows.get(7001).onclick(); await settle();
+    assert.ok(text().includes('KBFI-1'), 'the panel follows the message chosen');
+    document.querySelector('#mpclose').onclick();
+    assert.strictEqual(panel.hidden, true, 'and closes');
+    t.rows.get(7002).onclick(); await settle();
+    assert.strictEqual(panel.hidden, true, 'a closed panel is not opened by choosing a message');
   }
 
   // ===== 8t. notes: an icon on each watch, a side panel behind it ====================================

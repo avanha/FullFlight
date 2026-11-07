@@ -64,6 +64,29 @@
   button.copy:hover { background: #e8eefc; border-radius: 3px; }
   h4 { margin: 14px 0 4px; }
   #msgs .msg { padding: 5px 4px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 12px; }
+  #msgs .msg { position: relative; padding-right: 22px; }
+  #msgs .msg .mpbtn { position: absolute; top: 3px; right: 2px; padding: 0 4px; border: none; background: none; color: #678; font-size: 14px; line-height: 1.2; cursor: pointer; }
+  #msgs .msg .mpbtn:hover { color: #0a58ca; }
+  #msgpanel { position: fixed; top: 0; right: 0; bottom: 0; width: 360px; max-width: 100vw; z-index: 2000; display: flex; flex-direction: column; background: #fff;
+              border-left: 1px solid #aaa; box-shadow: -2px 0 8px rgba(0,0,0,.25); font: 14px system-ui, sans-serif; }
+  #msgpanel[hidden] { display: none; }
+  #msgpanel .nphead { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-bottom: 1px solid #ddd; background: #f4f6fa; }
+  #msgpanel #mpclose { border: none; background: none; font-size: 16px; cursor: pointer; }
+  #mpbody { padding: 4px 12px 12px; overflow: auto; flex: 1; }
+  #mpbody h4 { margin: 14px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: #678; }
+  #mpbody dl { display: grid; grid-template-columns: 7.5em 1fr; gap: 3px 10px; margin: 0; font-size: 13px; }
+  #mpbody .mpbox { padding: 6px 8px; background: #f4f6fa; border-left: 3px solid #0a58ca; border-radius: 0 3px 3px 0; }
+  #mpbody dt { color: #678; }
+  #mpbody dd { margin: 0; overflow-wrap: anywhere; }
+  #mpbody .mpkind { margin-left: 8px; padding: 1px 6px; background: #e8ebf1; border-radius: 3px; font-size: 10px; letter-spacing: 0; text-transform: none; color: #567; }
+  #mpbody pre { margin: 0; font: 12px ui-monospace, monospace; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 40vh; overflow: auto; }
+  #mpbody .mpplain pre { padding: 6px 8px; background: #f6f7f9; border: 1px solid #e1e4ea; border-radius: 3px; }   /* text with no fields in it: no bar */
+  #mpbody .mpdec { font-size: 13px; overflow-wrap: anywhere; }
+  #mpbody .mpdec + pre { margin-top: 6px; }
+  #mpbody .mphead { display: flex; align-items: center; min-height: 24px; }
+  /* a fixed box, so the check mark that replaces the icon after a copy does not move anything */
+  #mpbody .mphead button.copy { box-sizing: border-box; flex: none; width: 26px; height: 22px; padding: 0; margin-left: auto; text-align: center; line-height: 20px; font-size: 13px; text-transform: none; }
+  #mpbody .mpnote { margin-top: 12px; font-size: 11px; color: #789; }
   #msgs .msg time { color: #666; font-family: ui-monospace, monospace; margin-right: 6px; }
   #msgs time.rt { border-bottom: 1px dotted #888; cursor: help; }
   #msgs .kind { background: #eef; border-radius: 3px; padding: 0 4px; margin-right: 4px; font-size: 11px; }
@@ -288,6 +311,10 @@
 <div id="notespanel" hidden>
   <div class="nphead"><b id="notestitle"></b><button id="notesclose" title="Close">&#10005;</button></div>
   <div id="notesbody"></div>
+</div>
+<div id="msgpanel" hidden>
+  <div class="nphead"><b id="mptitle"></b><button id="mpclose" title="Close (Esc)">&#10005;</button></div>
+  <div id="mpbody"></div>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="notes.js"></script>
@@ -1034,11 +1061,11 @@ async function copyText(text) {
   return ok;
 }
 
-function copyButton(text) {
+function copyButton(text, what = text) {   // what: how the tooltip names it, for text too long to show
   const b = document.createElement('button');
   b.type = 'button';
   b.className = 'copy';
-  const reset = () => { b.textContent = '\u{1F4CB}'; b.title = `Copy ${text}`; };
+  const reset = () => { b.textContent = '\u{1F4CB}'; b.title = `Copy ${what}`; };
   reset();
   b.onclick = async e => {
     e.stopPropagation();           // do not also select the watch
@@ -1190,6 +1217,7 @@ async function refresh() {
 
 // The side panel of notes for one aircraft; the counts on the watch list follow when notes change.
 function openNotes(w) {
+  $('#msgpanel').hidden = true; msgPanelId = null;
   $('#notestitle').textContent = `Notes \u00b7 ${w.tail || w.hex}${w.type ? ' \u00b7 ' + w.type : ''}`;
   $('#notespanel').hidden = false;
   mountNotes($('#notesbody'), w.hex, {onChange: () => refresh()});
@@ -2239,6 +2267,7 @@ async function showTrack(w, focus) {
     lastData = null; lastTrack = {pts: [], msgs: []}; drawProjection(); markers.clear(); renderMessages([]);
     flightSegs = []; syncFlightSelector();
     $('#notespanel').hidden = true;
+    closeMsgPanel();
     return;
   }
   const seq = ++showSeq;
@@ -2454,6 +2483,94 @@ function flightHeader(i) {
   return d;
 }
 
+// ---- message details panel ------------------------------------------------------------------------------
+// An icon on a message opens a side panel with how it reached us: the station (and where it is, from airframes.io's list, the
+// same one the Stations page uses), the link, the frequency and the message and block numbers. Clicking another message while it is
+// open shows that one. Everything comes off the radio or the network, so it is put in as text, never as HTML.
+let msgPanelId = null, stationInfo = {at: 0, by: new Map()};
+async function stationFor(ident) {
+  if (!ident) return null;
+  if (Date.now() - stationInfo.at > 5 * 60000) {   // the list changes slowly: asked for at most every five minutes
+    try {
+      const d = await api('/api/stations');
+      stationInfo = {at: Date.now(), by: new Map((d.stations || []).map(x => [x.ident, x]))};
+    } catch (e) { stationInfo = {at: Date.now() - 4 * 60000, by: stationInfo.by}; }   // not again for a minute
+  }
+  return stationInfo.by.get(ident) || null;
+}
+const latlonText = (lat, lon) => `${Math.abs(lat).toFixed(2)}\u00b0${lat >= 0 ? 'N' : 'S'} ${Math.abs(lon).toFixed(2)}\u00b0${lon >= 0 ? 'E' : 'W'}`;
+const VERDICTS = {prompt: 'delivers promptly', sometimes: 'sometimes delivers late', late: 'often delivers late', unknown: 'too few timed messages to say how late'};
+function mpSection(title, rows) {
+  const h = document.createElement('h4');
+  h.textContent = title;
+  const dl = document.createElement('dl');
+  dl.className = 'mpbox';   // each group reads as one block
+  for (const [k, v] of rows.filter(r => r[1] != null && r[1] !== '')) {
+    const dt = document.createElement('dt'), dd = document.createElement('dd');
+    dt.textContent = k; dd.textContent = v;
+    dl.append(dt, dd);
+  }
+  return [h, dl];
+}
+async function openMsgPanel(m) {
+  msgPanelId = m.id;
+  $('#notespanel').hidden = true;
+  $('#mptitle').textContent = `Message \u00b7 ${m.kind.replace('_', ' ')}${m.label ? ' \u00b7 label ' + m.label : ''}`;
+  $('#msgpanel').hidden = false;
+  const rt = reportTime(m);
+  const station = await stationFor(m.station);
+  if (msgPanelId !== m.id) return;   // another message was opened while the list was fetched
+  const place = station && station.known ? [station.lat != null ? `${latlonText(station.lat, station.lon)}${station.fuzzed ? ' (approximate)' : ''}` : '',
+    station.nearest_airport ? `near ${station.nearest_airport}` : '', station.country].filter(Boolean).join(', ') : '';
+  const reception = [
+    ['Received', `${fmt(m.t)} (${ago(m.t)})`],
+    rt !== m.t ? ['Report time', `${fmt(rt)}${m.time_note ? ' \u2014 ' + m.time_note : ''}`] : null,
+    ['Link', m.source],
+    ['Frequency', m.freq != null ? `${m.freq.toFixed(3)} MHz` : ''],
+    ['Heard', m.rx_count > 1 ? `${m.rx_count} times (stored once)` : m.rx_count === 1 ? 'once' : ''],
+  ].filter(Boolean);
+  const stationRows = [
+    ['Name', m.station || 'not recorded'],
+    ['Location', place || (m.station ? (stationInfo.by.size ? 'not in airframes.io\'s list' : 'unknown: the list of stations has not been fetched (the Stations page does that)') : '')],
+    ['Receiver', station && station.known ? [station.application, station.source_type].filter(Boolean).join(', ') : ''],
+    ['Timeliness', station && VERDICTS[station.verdict] ? VERDICTS[station.verdict] + (station.verdict === 'late' || station.verdict === 'sometimes' ? ` (median ${dur(station.median_s)} after the aircraft's own time)` : '') : ''],
+  ];
+  const ident = [
+    ['Direction', m.dir === 'up' ? 'to the aircraft' : m.dir === 'down' ? 'from the aircraft' : m.dir],
+    ['Label', m.label], ['Message number', m.msg_num], ['Block', m.block_id],
+    ['Flight', [m.flight, m.callsign].filter(Boolean).join(' \u00b7 ')], ['Aircraft', m.tail],
+  ];
+  const decHead = document.createElement('h4'), kind = document.createElement('span'), decBox = document.createElement('div'), dec = document.createElement('div');
+  decHead.textContent = 'Decoded';
+  kind.className = 'mpkind';   // the kind, as the list shows it in grey
+  kind.textContent = m.kind.replace('_', ' ');
+  decHead.className = 'mphead';
+  decHead.append(kind, copyButton([m.summary, m.detail && m.detail !== m.summary ? m.detail : ''].filter(Boolean).join('\n'), 'the decoded text'));
+  decBox.className = 'mpplain';
+  dec.className = 'mpdec';
+  dec.textContent = m.summary;
+  decBox.append(dec);
+  if (m.detail && m.detail !== m.summary) {   // the longer text the row shows when it is opened
+    const more = document.createElement('pre');
+    more.textContent = m.detail;
+    decBox.append(more);
+  }
+  const rawHead = document.createElement('h4'), rawBox = document.createElement('div'), raw = document.createElement('pre');
+  rawHead.className = 'mphead';   // the copy icon sits at the right of the heading
+  rawHead.textContent = 'Raw text';
+  rawHead.append(copyButton(m.raw, 'the raw text'));
+  rawBox.className = 'mpplain';
+  raw.textContent = m.raw;
+  rawBox.append(raw);
+  const note = document.createElement('div');
+  note.className = 'mpnote';
+  note.textContent = 'Station details are airframes.io\'s; the Stations page has them for every station.';
+  $('#mpbody').replaceChildren(...mpSection('Reception', reception), ...mpSection('Station', stationRows), ...mpSection('Message', ident), decHead, decBox, rawHead, rawBox, note);
+}
+const closeMsgPanel = () => { msgPanelId = null; $('#msgpanel').hidden = true; };
+$('#mpclose').onclick = closeMsgPanel;
+if (document.addEventListener) document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#msgpanel').hidden) closeMsgPanel(); });
+
 function renderMessages(msgs) {
   lastMsgs = msgs;
   rows.clear();
@@ -2519,6 +2636,10 @@ function renderMessages(msgs) {
       w.className = 'warn'; w.textContent = flag; w.title = why;
       d.append(w);
     }
+    const info = document.createElement('button');   // in the top right corner of the row, whatever the text does
+    info.type = 'button'; info.className = 'mpbtn'; info.textContent = '\u24d8'; info.title = 'How this message was received';
+    info.onclick = e => { e.stopPropagation(); openMsgPanel(m); };
+    d.append(info);
     const pre = document.createElement('pre');
     pre.hidden = !expanded.has(m.id);
     pre.textContent = [m.detail && m.detail !== m.summary ? m.detail : '',
@@ -2534,6 +2655,7 @@ function renderMessages(msgs) {
       selectedMsg = m.id;
       recPicked();
       applyHighlight(true);
+      if (!$('#msgpanel').hidden) openMsgPanel(m);   // the panel follows the message chosen
     };
     rows.set(m.id, d);
     return d;

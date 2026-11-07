@@ -459,7 +459,9 @@ func TestMessagesCarryWeatherSpeedAndWaypoints(t *testing.T) {
 	}})
 	st.AddMessage(store.Message{ID: 1, Hex: "780AA4", T: pos.Add(-3 * time.Minute), Label: "BA", Text: "a", Kind: "cpdlc", Summary: "CPDLC position report",
 		Lat: &lat, Lon: &lon, PosT: &pos, WxDir: &wd, WxKt: &wk, WxTemp: &wt, GS: &gs, Trk: &trk, Fixes: string(fl)})
-	st.AddMessage(store.Message{ID: 2, Hex: "780AA4", T: pos, Label: "SA", Text: "b", Kind: "media_advisory", Summary: "Link"}) // no weather
+	mhz := 131.55
+	st.AddMessage(store.Message{ID: 2, Hex: "780AA4", T: pos, Label: "SA", Text: "b", Kind: "media_advisory", Summary: "Link", // no weather
+		Station: "KBFI-1", SourceType: "vdl", Freq: &mhz, MsgNum: "M04A", BlockID: "7"})
 
 	nav := navdata.New()
 	nav.Add("NEXTX", navdata.Point{Lat: -6.0, Lon: 142.7, Kind: "fix"})
@@ -475,6 +477,10 @@ func TestMessagesCarryWeatherSpeedAndWaypoints(t *testing.T) {
 			TempC   *float64 `json:"temp_c"`
 		} `json:"wx"`
 		GS, Trk   *float64
+		Source    string
+		Freq      *float64
+		MsgNum    string `json:"msg_num"`
+		BlockID   string `json:"block_id"`
 		Waypoints []struct {
 			Name, Role, Source string
 			Exact              bool
@@ -493,6 +499,9 @@ func TestMessagesCarryWeatherSpeedAndWaypoints(t *testing.T) {
 	}
 	if b.Wx != nil || b.GS != nil || len(b.Waypoints) != 0 {
 		t.Errorf("a message without them: %+v", b)
+	}
+	if b.Source != "vdl" || b.Freq == nil || *b.Freq != 131.55 || b.MsgNum != "M04A" || b.BlockID != "7" {
+		t.Errorf("how it was received: %+v", b)
 	}
 }
 

@@ -600,6 +600,16 @@ shown at the blurred position and marked approximate; some have no position. air
 our own verdict but is not a reliable guide to lateness, which is why the delivery is measured here. The page only reports;
 nothing in how messages are handled depends on it.
 
+### How a message was received
+
+The **ⓘ** in the top right corner of a message in the list opens a side panel (beside the notes panel; one at a time) with how the
+message reached us. **Reception**: when it arrived (and its report time, when that differs), the link (VHF, satellite, HF), the frequency in MHz and
+how many times it was heard. Reception, Station and Message are shaded blocks with a blue bar at their edge; the decoded and raw text, which have no fields, are plain. **Station**: its name, its location with country and nearest airport, its receiver
+software and its timeliness, whether it delivers late (all from airframes.io's list, the one the Stations page shows, asked for at most
+every five minutes).
+**Message**: the direction, label, message and block numbers, flight and aircraft. **Decoded**: the one-line summary (`Position report KSEA→RCTP 47.393N 122.308W FL023`), with the message's kind (the grey word in the list, `posrpt`) as a small tag beside the heading, and the longer decoded text where there is one. The copy icon at the right of its heading copies the summary and that text. **Raw text**, exactly as received, with the copy icon (the one used elsewhere) at the right of its heading. While the panel is open, choosing another message
+shows that one; Esc or the cross closes it. A station that is not in the list, or a list that has not been fetched yet, is said so.
+
 ## Stats
 
 `/stats.html`, from the hamburger menu, shows how the app is doing, and refreshes itself every 30 seconds.
