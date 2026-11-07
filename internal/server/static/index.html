@@ -2646,7 +2646,8 @@ function renderMessages(msgs) {
       m.mismatch ? 'airframes.io disagrees: ' + m.mismatch : '', m.suspect ? 'position suspect: ' + m.suspect : '',
       m.time_note ? 'time: ' + m.time_note : '',
       `label ${m.label}${m.dir ? ', ' + m.dir : ''}${m.station ? ', ' + m.station : ''}${m.rx_count > 1 ? `, heard ${m.rx_count}x` : ''}`,
-      m.parts && m.parts.length ? `also received as ${m.parts.length} shorter ${m.parts.length === 1 ? 'copy or block' : 'copies or blocks'}: ${m.parts.map(x => fmtTime(x.t)).join(', ')}` : '',
+      m.assembled ? `put together here from the ${m.parts.length} blocks it arrived in: ${m.parts.map(x => fmtTime(x.t)).join(', ')}`
+        : m.parts && m.parts.length ? `also received as ${m.parts.length} shorter ${m.parts.length === 1 ? 'copy or block' : 'copies or blocks'}: ${m.parts.map(x => fmtTime(x.t)).join(', ')}` : '',
       'raw: ' + m.raw].filter(Boolean).join('\n\n');
     d.append(pre);
     d.onclick = () => {

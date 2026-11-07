@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -840,9 +841,10 @@ type messageJSON struct {
 	AFTail         string         `json:"af_tail,omitempty"`
 	AFFlight       string         `json:"af_flight,omitempty"`
 	Route          []routeWpJSON  `json:"route,omitempty"`
-	Airports       []atisAirport  `json:"airports,omitempty"` // the airports a D-ATIS request or reply is for
-	PartOf         int64          `json:"part_of,omitempty"`  // this is part of (or a shorter copy of) that longer message
-	Parts          []partJSON     `json:"parts,omitempty"`    // the parts and shorter copies of this message that arrived as rows of their own
+	Airports       []atisAirport  `json:"airports,omitempty"`  // the airports a D-ATIS request or reply is for
+	PartOf         int64          `json:"part_of,omitempty"`   // this is part of (or a shorter copy of) that longer message
+	Parts          []partJSON     `json:"parts,omitempty"`     // the parts and shorter copies of this message that arrived as rows of their own
+	Assembled      bool           `json:"assembled,omitempty"` // put together here from the blocks it arrived in: no row of its own
 
 	Wx        *wxJSON        `json:"wx,omitempty"`
 	GS        *float64       `json:"gs,omitempty"`  // knots, as the report gave it
@@ -929,13 +931,18 @@ func (s *Server) messages(w http.ResponseWriter, r *http.Request) {
 	res := &waypoints.Resolver{Store: s.Store, Nav: s.Nav}
 	out := make([]messageJSON, 0, len(ms))
 	var segs []flights.Segment // worked out when a message needs them
+	assembled := assembleBlocks(ms)
+	if len(assembled) > 0 {
+		ms = append(ms, assembled...)
+		sort.SliceStable(ms, func(i, j int) bool { return ms[i].T.Before(ms[j].T) })
+	}
 	partOf, parts := foldParts(ms)
 	byID := make(map[int64]store.Message, len(ms))
 	for _, m := range ms {
 		byID[m.ID] = m
 	}
 	for _, m := range ms {
-		j := messageJSON{PartOf: partOf[m.ID], Undecoded: m.Kind == "unknown" || m.Summary == "MIAM (not decoded)" || strings.HasPrefix(m.Summary, "MIAM data block"), ID: m.ID, T: m.T, Label: m.Label, Kind: m.Kind, Direction: m.Direction, Summary: m.Summary,
+		j := messageJSON{Assembled: m.ID < 0, PartOf: partOf[m.ID], Undecoded: m.Kind == "unknown" || m.Summary == "MIAM (not decoded)" || strings.HasPrefix(m.Summary, "MIAM data block"), ID: m.ID, T: m.T, Label: m.Label, Kind: m.Kind, Direction: m.Direction, Summary: m.Summary,
 			Detail: m.Detail, Raw: m.Text, Tail: m.Tail, Flight: m.Flight, Callsign: m.Callsign, Station: m.Station, Source: m.SourceType, Freq: m.Freq, MsgNum: m.MsgNum, BlockID: m.BlockID,
 			RxCount: m.RxCount, Lat: m.Lat, Lon: m.Lon, AltFt: m.AltFt, PosT: m.PosT, Suspect: m.Suspect, TimeNote: m.TimeNote, TimeUnverified: m.TimeFlag,
 			Mismatch: m.Mismatch, AFTail: m.AFTail, AFFlight: m.AFFlight}

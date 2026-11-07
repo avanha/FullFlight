@@ -1233,6 +1233,10 @@ highlightGroup = null;
     assert.ok(!t.rows.get(604).children.some(c => c.className === 'partchip'), 'a message with no parts has no tag');
     assert.ok(row.children.find(c => c.tag === 'pre').textContent.includes('also received as 2 shorter copies or blocks'), 'and the detail says so');
     assert.ok(t.markers.has(601) && t.markers.has(603), 'the map still marks the parts, with their positions');
+    // a message the server put together from blocks says so, not that it was also received as shorter copies
+    await draw(FPTS, [part(601, {part_of: -601}), part(602, {part_of: -601}), part(-601, {t: '2026-10-30T11:03:00Z', assembled: true, parts: [{id: 601, t: '2026-10-30T11:01:00Z', label: 'H1'}, {id: 602, t: '2026-10-30T11:02:00Z', label: 'H1'}]})], true);
+    assert.ok(t.rows.get(-601).children.find(c => c.tag === 'pre').textContent.includes('put together here from the 2 blocks it arrived in'), 'an assembled message says it was put together');
+    await draw(FPTS, FM, true);
     // choosing a part on the map chooses the whole message
     t.pickMessage(601);
     assert.strictEqual(t.selectedMsg, 603);
