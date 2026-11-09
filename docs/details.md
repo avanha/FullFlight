@@ -431,6 +431,11 @@ older ones fainter and flagged with their number and date, and the message list 
 Clicking a heading or a flag shows just that flight and fits the map to it. The plane and the projection appear only for the
 flight in progress. The choice of most recent / all is remembered; a particular flight is not.
 
+With the most recent flight chosen, messages that arrived after its last one (an uplink at the gate, the next flight being set up)
+belong to no flight and are not listed. A line above the list counts them and gives the time of the newest ("2 newer messages than
+this flight's last (latest 16:44:00Z)"). It counts only whole messages that are decoded, and not those airframes.io tagged with
+another flight. It is shown for the most recent flight only: choosing all flights lists them.
+
 ### A flight that broke in two
 
 Sightings of one flight number more than six hours apart are normally two flights. But a long crossing can be silent for longer,

@@ -1332,6 +1332,35 @@ highlightGroup = null;
     forgetOlder();   // so later sections see a page with no month of history
   }
 
+  // ===== 8r5a. messages after the newest flight's last one are counted above the list ================
+  {
+    const hoursAgo = h => new Date(Date.now() - h * 3600e3).toISOString();
+    const m = (id, h, extra = {}) => ({id, t: hoursAgo(h), kind: 'text_message', summary: 'Message to the aircraft: 42 FMC DATA LINK', raw: 'r', label: 'RA', rx_count: 1, ...extra});
+    const REC = seg('DL8858@a', 'DL8858', hoursAgo(10), hoursAgo(6), {latest: true, from: 'LEMD', to: 'KATL'});
+    const PREV = seg('DL8858@0', 'DL8858', hoursAgo(30), hoursAgo(26), {from: 'KATL', to: 'LEMD'});
+    const inside = m(1, 7), later = [m(2, 2), m(3, 1), m(4, 1.5, {part_of: 3}), m(5, 1.2, {kind: 'unknown', undecoded: true}), m(6, 1.1, {elsewhere: {flight: 'DL1'}})];
+    const note = () => byId['#msgs'].children.find(c => c.className === 'newer');
+    await withFlights([PREV, REC], async () => {
+      t.chooseFlight('recent'); await settle();
+      await draw(FPTS, [inside, ...later], true);
+      assert.ok(note(), 'a notice above the list');
+      assert.ok(/^2 newer messages than this flight's last \(latest \d\d:\d\d:\d\dZ\)$/.test(note().textContent), note().textContent);
+      assert.ok(!note().children.length && !/href/.test(note().textContent), 'a plain line, with no link in it');
+      assert.strictEqual(byId['#msgs'].children[0], note(), 'and it comes first');
+      await draw(FPTS, [inside, later[0]], true);
+      assert.ok(/^1 newer message than/.test(note().textContent), 'singular');
+      await draw(FPTS, [inside], true);
+      assert.ok(!note(), 'nothing newer, no notice');
+      // an earlier flight chosen, or all of them: no notice
+      t.chooseFlight('DL8858@0'); await settle();
+      await draw(FPTS, [inside, ...later], true);
+      assert.ok(!note(), 'only the newest flight gets it');
+      t.chooseFlight('all'); await settle();
+      await draw(FPTS, [inside, ...later], true);
+      assert.ok(!note(), 'all flights shows them already');
+    });
+  }
+
   // ===== 8r6. joining a flight to the one before it, by hand ===========================================
   {
     const hoursAgo = h => new Date(Date.now() - h * 3600e3).toISOString();

@@ -93,6 +93,7 @@
   #msgs .warn { color: #b60; cursor: help; margin-left: 4px; }
   #msgs pre { white-space: pre-wrap; word-break: break-all; background: #f6f6f6; padding: 6px; margin: 4px 0 0; font-size: 11px; }
   #msgs .empty { color: #888; padding: 4px; }
+  #msgs .newer { color: #7a5200; background: #fff6e0; border-left: 3px solid #e0a030; padding: 3px 6px; margin-bottom: 4px; font-size: 12px; }
   #msgs .msg { overflow-wrap: anywhere; }
   #msgs .msg.sel { background: #fff3bf; }
   #msgs .msg.hasloc { border-left: 3px solid #d60; }
@@ -2264,7 +2265,7 @@ async function showTrack(w, focus) {
     layer.clearLayers(); wptGroup.clearLayers(); predGroup.clearLayers(); planGroup.clearLayers(); clearanceGroup.clearLayers(); bridgeGroup.clearLayers(); windGroup.clearLayers(); atisGroup.clearLayers(); highlight.clearLayers();
     Object.values(SOURCES).forEach(src => src.group.clearLayers());   // the report dots and each source's track
     trackGroup.clearLayers(); srcLines = []; trackCtx = null;
-    lastData = null; lastTrack = {pts: [], msgs: []}; drawProjection(); markers.clear(); renderMessages([]);
+    lastData = null; lastTrack = {pts: [], msgs: []}; drawProjection(); markers.clear(); newerMsgs = null; renderMessages([]);
     flightSegs = []; syncFlightSelector();
     $('#notespanel').hidden = true;
     closeMsgPanel();
@@ -2296,10 +2297,17 @@ async function showTrack(w, focus) {
   if (seq !== showSeq) return;
   // One flight chosen: only its points and messages are shown.
   const chosen = chosenFlight();
+  newerMsgs = null;
   if (chosen) {
     // (a time just past the end of this flight that is also inside the next one's span belongs to the next: segOf takes the nearest)
     const mine = flightSegs.indexOf(chosen);
     const inFlight = ms => segOf(ms) === mine;
+    // After the newest flight's last message there may be more (an uplink at the gate, the next flight being set up): they are in no
+    // flight, so the list leaves them out, and says how many there are.
+    if (chosen.latest) {
+      const after = msgs.filter(m => !m.part_of && !m.undecoded && !m.elsewhere && !inFlight(Date.parse(reportTime(m))) && Date.parse(reportTime(m)) > chosen.endMs);
+      if (after.length) newerMsgs = {n: after.length, latest: Math.max(...after.map(m => Date.parse(reportTime(m))))};
+    }
     pts = pts.filter(p => inFlight(Date.parse(p.t)));
     msgs = msgs.filter(m => !m.elsewhere && inFlight(Date.parse(reportTime(m))));   // (not one airframes.io tagged with another flight)
   }
@@ -2431,7 +2439,7 @@ function drawPredictions() {
   }
 }
 
-let showUndecoded = false, lastMsgs = [], selectedMsg = null;
+let showUndecoded = false, lastMsgs = [], selectedMsg = null, newerMsgs = null;   // newerMsgs: {n, latest} when messages came after the chosen flight
 // A dot or waypoint on the map was clicked: select its message in the list and bring it into view.
 function pickMessage(id) {
   if (!accOpen.msgs) setAcc('msgs', true);   // choosing a message on the map shows it in the list
@@ -2578,7 +2586,17 @@ function renderMessages(msgs) {
   // A block of a longer message, or a shorter copy of it, is listed under the whole message (the map still marks every one).
   const whole = msgs.filter(m => !m.part_of);
   $('#msgcount').textContent = whole.length ? `(${whole.length})` : '';
-  if (!msgs.length) { box.innerHTML = '<div class="empty">No messages yet.</div>'; return; }
+  let newer = null;
+  if (newerMsgs) {
+    newer = document.createElement('div');
+    newer.className = 'newer';
+    newer.textContent = `${newerMsgs.n} newer message${newerMsgs.n === 1 ? '' : 's'} than this flight's last (latest ${fmtTime(newerMsgs.latest)})`;
+  }
+  if (!msgs.length) {
+    box.innerHTML = '<div class="empty">No messages yet.</div>';
+    if (newer) box.prepend(newer);
+    return;
+  }
   const hidden = whole.filter(m => m.undecoded).length;
   const shown = showUndecoded ? whole : whole.filter(m => !m.undecoded);
   const toggle = document.createElement('div');
@@ -2599,7 +2617,7 @@ function renderMessages(msgs) {
     lastSeg = i;
     return [flightHeader(i), row];
   });
-  box.replaceChildren(...(hidden ? [toggle] : []), ...withHeaders(sorted.map(m => {
+  box.replaceChildren(...(newer ? [newer] : []), ...(hidden ? [toggle] : []), ...withHeaders(sorted.map(m => {
     const d = document.createElement('div');
     d.className = 'msg' + (m.lat != null ? ' hasloc' : '') + (m.elsewhere ? ' elsewhere' : '');
     const t = document.createElement('time');
