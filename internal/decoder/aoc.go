@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
+	"time"
 )
 
 // The airline position report sent as label 83 (seen from United 787s and ZIPAIR), about every 30 minutes:
@@ -18,10 +20,49 @@ import (
 // specification.
 var aocRe = regexp.MustCompile(`^(?:([A-Z0-9]{4})([A-Z0-9]{2}\d{4}))?([A-Z]{4}),([A-Z]{4}),(\d{2})(\d{2})(\d{2}),\s*(-?)\s*(\d*\.\d+),\s*(-?)\s*(\d*\.\d+),\s*(-?\d+),\s*(\d+),\s*(-?)\s*(\d+\.\d+),\s*(\d+)`)
 
-// parseAOC decodes a label-83 airline position report.
+// The position report on label 16 from a Turkish-registered A320 (TC-NCE), every five minutes, with the full date and time:
+//
+//	PC25AG/09NOV26 16:17:00,34974,1648,  90,N 41.667 E 27.006
+//
+// An identifier (two letters and four), the date and time (UTC), the altitude in feet, two numbers whose meaning is not given (the
+// second falls as the flight goes on: 197, 186, 179 ... 145 over an hour), and the position in decimal degrees (a longitude under one
+// degree is written without its zero, ".794"). Read from 121 messages of one aircraft. The track and the altitudes are sound (a climb
+// from Cologne, then FL370 across Bavaria, Austria and Hungary), but no ADS-B was kept for it to check the positions against.
+var pcPosRe = regexp.MustCompile(`^([A-Z0-9]{6})/(\d{2})([A-Z]{3})(\d{2}) (\d\d):(\d\d):(\d\d),\s*(-?\d+),\s*(\d+),\s*(\d+),([NS])\s*(\d*\.\d+)\s+([EW])\s*(\d*\.\d+)\s*$`)
+
+// parsePCPos decodes that report.
+func parsePCPos(body string, r *Result) {
+	m := pcPosRe.FindStringSubmatch(strings.TrimSpace(body))
+	if m == nil {
+		return
+	}
+	t, err := time.Parse("02Jan06 15:04:05", m[2]+m[3]+m[4]+" "+m[5]+":"+m[6]+":"+m[7])
+	if err != nil {
+		return
+	}
+	lat, _ := strconv.ParseFloat(m[12], 64)
+	lon, _ := strconv.ParseFloat(m[14], 64)
+	if lat > 90 || lon > 180 {
+		return
+	}
+	if m[11] == "S" {
+		lat = -lat
+	}
+	if m[13] == "W" {
+		lon = -lon
+	}
+	alt, _ := strconv.ParseFloat(m[8], 64)
+	r.Pos = posAt(lat, lon, &alt, t.UTC())
+	r.Fields["id"] = m[1]
+	r.Fields["at"] = t.UTC().Format("2006-01-02T15:04:05Z07:00")
+	r.Fields["values"] = []string{m[9], m[10]} // unexplained
+}
+
+// parseAOC decodes a label-83 airline position report, or the label-16 one above.
 func parseAOC(body string, r *Result) {
 	m := aocRe.FindStringSubmatch(body)
 	if m == nil {
+		parsePCPos(body, r)
 		return
 	}
 	atof := func(s string) float64 { v, _ := strconv.ParseFloat(s, 64); return v }

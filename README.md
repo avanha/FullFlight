@@ -74,7 +74,7 @@ Then:
   [Details](docs/details.md#current-flight)
 - **Airline operations messages** (Qantas, Air Canada, United, Alaska, Delta, China Cargo, Avianca and others) are decoded and feed the route and
   departure time; United's dispatch messages (take-off data, howgozit, release, weights, gate, turbulence) are read, and blocks of a long
-  message with no joined copy are put together for reading. Airbus A350 and A380 maintenance reports show what raised them. [Details](docs/details.md#airline-operations-messages)
+  message with no joined copy are put together for reading. Airbus A350 and A380 maintenance reports show what raised them, and Air France and KLM's condition monitoring reports give the route and time. [Details](docs/details.md#airline-operations-messages)
 - **FMS plans and weather observations.** A Boeing FMS's plan with the ETA of each waypoint, and the climb, descent and cruise weather
   reports, are read for the route, the positions and the wind. [Plans](docs/details.md#fms-plan-reports) · [Observations](docs/details.md#airline-operations-messages)
 - **Clearances.** Oceanic clearances and Qantas pre-departure clearances are decoded and drawn as their own layer.

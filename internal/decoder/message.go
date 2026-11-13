@@ -149,6 +149,8 @@ func classify(label, body string) (Kind, string, Direction) {
 		k, defLabel = KindPOSRPT, "80"
 	case aocRe.MatchString(body):
 		k, defLabel = KindAOC, "83"
+	case pcPosRe.MatchString(strings.TrimSpace(body)):
+		k, defLabel = KindAOC, "16"
 	case strings.Contains(body, ".AFN/"):
 		k, defLabel = KindAFN, "B0"
 	case strings.Contains(body, ".DIS."):
@@ -218,8 +220,8 @@ func Decode(m Message) (Result, error) {
 		return r, nil
 	}
 	prefix, body := SplitPrefix(m.Text)
-	if strings.HasPrefix(m.Text, "POSA1") || strings.HasPrefix(m.Text, "SB0122BA_") {
-		prefix, body = "", m.Text // the latitude digits after POSA1N look like a message number
+	if strings.HasPrefix(m.Text, "POSA1") || strings.HasPrefix(m.Text, "SB0122BA_") || pcPosRe.MatchString(strings.TrimSpace(m.Text)) {
+		prefix, body = "", m.Text // the latitude digits after POSA1N look like a message number, and PC25AG/ like a flight header
 	}
 	if prefix == "" && m.Label == "MA" && msgNumFlight.MatchString(m.Text) {
 		prefix, body = m.Text[:10], m.Text[10:] // a later block of a long MIAM message: its start is not a frame header

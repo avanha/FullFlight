@@ -805,6 +805,15 @@ times in them join the evidence for a flight's route and departure.
   those with a title say what raised them (`REP035` "APU RUN"). The numbers after are not read. The trajectory reports (`REP191`, `REP291`,
   `TRP KORD KSEA  8 8`) carry a point every three minutes: a time, a position and a heading. The newest is the report's position, and all
   of them are in its detail text. A heading is read; the other numbers of a point (speeds and weights, probably) are not.
+- **Aircraft condition monitoring reports** (label `H1`, Air France, KLM, LATAM, China Cargo, EVA Air, United and Air Canada:
+  `ACM01ACM211BSF-GSQL  AFR98E  LFPGKIAH131126  67TR120825…`): the header gives the report number, the registration, the flight, the
+  route, the date and the time of the event, and so counts as a route report: `KLM condition monitoring report 211 KLM809
+  EHAM→WMKK at 19:38Z`. The two-letter event code (TR, ER, PO, CL, TA...) and the numbers after the header are not explained, and are
+  not read. These reports are held and delivered hours or days late (the median was four hours), and are placed by the time in
+  them. A report from the ground (`EGLLEGLL`) names no route.
+- **Position reports on label 16** (a Turkish-registered A320, `PC25AG/09NOV26 16:17:00,34974,1648,  90,N 41.667 E 27.006`), every five
+  minutes: the full date and time, the altitude in feet and the position, drawn as an "Airline" position. The two numbers between are
+  not explained. The positions were not checked against ADS-B (none was kept for that aircraft), only against each other.
 - **Ground events** (`49`, `17`): `01ICCL ACA025/311941CYVRZSPD` names an event, the flight, the time and the route. Air Canada,
   United, China Cargo and Zipair send them. The four-letter event codes are shown as sent; their meaning is not known.
 - **787 engine and performance reports** (United and Air Canada, label `H1`): `/ILNGE7X.CLB006UA N249932UAL177 261024000658KDENLIRF…`,
@@ -829,6 +838,12 @@ times in them join the evidence for a flight's route and departure.
     become the flight's departure evidence like Air Canada's, and the fuel at takeoff in kg.
   - `PRG/DTLEMD,32L,186,070523,046/FNAVA182…` (label `H1`) is a progress report without a time of its own: the destination,
     runway, ETA and the flight. The numbers 186 and 046 are not understood.
+  - `FLR/PNRC12860AA08/FR26110113190029114106SDAC1:G HYD QTY IND 1000GQ/IDECAM 1` (label `H1`) is an Airbus failure report, listed as
+    `fault_report`: the time, the system and message that raised it, the part number and the ATA chapter (read from the digits after the
+    time; they fit three of four samples). The two digits after them, which look like a flight phase, are not understood.
+  - British Airways' progress report (`PRG/DTEGLL,27L,42,070647,/PR1263,250,330,...`, no flight name, with a `/PR` section) has an ETA
+    that is not UTC: the same value turns up on flights hours apart, and it sits hours from the real time, so it is shown as
+    "ETA 07:06:47 (Aircraft Clock)". Read from two aircraft; what that clock is, we do not know.
 
 - **Alaska Airlines** (read from N956AK and checked against its track). Label `80` movement messages: `1101 OFFRP 1388/31 KBUR/KSEA .N956AK`
   with `/OUT 1744/OFF 1804/…/ETA 2004` (left the gate, wheels up, ETA), `ONRP` (`/ON`), `INRANG` (a new ETA near the destination)

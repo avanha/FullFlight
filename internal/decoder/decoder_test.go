@@ -1249,7 +1249,7 @@ func TestOpsMessages(t *testing.T) {
 		{"80", "\r\nMVA\r\nQFA0007/25.VHOQG.YSSY\r\nAD0213/0233 EA1725 KDFW", "Qantas QF7 departure YSSY→KDFW: out 02:13Z, off 02:33Z, ETA 17:25Z"},
 		{"80", "\r\nMVA\r\nQFA0008/  .VHOQG.    \r\nAD2022                 \r\nSI DR2022", "Qantas QF8 departure: out 20:22Z"},
 		{"RF", ",FDASUB01261101034409,SYD,,SIN,,QF001,261101,0530,388,,VH-OQG,/351247,361,,1,AC2A", "Qantas flight data submitted: QF1 YSSY→WSSS, scheduled 05:30Z"},
-		{"RF", ",FDAACK01261101034415/351247,361,,1,47D1", "Qantas flight data acknowledged"},
+		{"RF", ",FDAACK01261101034415/351247,361,,1,47D1", "Flight data acknowledged"},
 		{"5U", "\r\nWX REQUEST\r\nQFA0001/27\r\nACTUAL\r\nEGLL EHAM LFPG", "Weather request (METAR) for EGLL, EHAM, LFPG"},
 		{"5U", "M75AFJ0880  01 WXRQ   0880/31 NFFN/CYVR .DQ-FAM\n\t/TYP 1/STA KSFO/STA KPDX/STA CYVR", "Weather request NFFN→CYVR for KSFO, KPDX, CYVR"},
 		{"5U", "U06AQF0018\n\tWX REQUEST\n\tQFA0018/25\n\tATIS   \n\tYSSY YMML", "D-ATIS request for YSSY, YMML"},

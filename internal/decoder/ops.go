@@ -61,7 +61,8 @@ func opsFlight(code, digits string) (callsign, flight string) {
 
 // opsAirline names the airline of an ICAO callsign prefix, for those that send operations messages we read.
 func opsAirline(code string) string {
-	return map[string]string{"ACA": "Air Canada", "UAL": "United", "CKK": "China Cargo", "TZP": "Zipair", "QFA": "Qantas", "AVA": "Avianca", "ASA": "Alaska", "EVA": "EVA Air", "DAL": "Delta", "AAL": "American"}[code]
+	return map[string]string{"ACA": "Air Canada", "UAL": "United", "CKK": "China Cargo", "TZP": "Zipair", "QFA": "Qantas", "AVA": "Avianca", "ASA": "Alaska", "EVA": "EVA Air", "DAL": "Delta", "AAL": "American",
+		"AFR": "Air France", "KLM": "KLM", "TAM": "LATAM", "BAW": "British Airways", "AAR": "Asiana", "UAE": "Emirates"}[code]
 }
 
 // hhmm accepts "1921" or "1921Z" and rejects the asterisks a message puts where a time is not yet known.
@@ -130,7 +131,7 @@ func parseOps(label, text string) (opsParsed, bool) {
 		}
 		return parseAlaskaMovement(text)
 	case "RF":
-		return parseQantasFDA(text)
+		return parseFlightDataLink(text)
 	case "5U":
 		if p, ok := parseQantasWX(text); ok {
 			return p, true
@@ -152,6 +153,9 @@ func parseOps(label, text string) (opsParsed, bool) {
 		return parseClearance(text)
 	case "H1":
 		if p, ok := parseACMS(text); ok {
+			return p, true
+		}
+		if p, ok := parseACM(text); ok {
 			return p, true
 		}
 		if p, ok := parseEngine(text); ok {
@@ -218,13 +222,13 @@ func parseQantasMVA(text string) (opsParsed, bool) {
 	return opsParsed{rep: o, summary: s}, true
 }
 
-// Qantas flight data link, label RF. A flight's data is submitted, committed and requested with its route, number and
-// scheduled time; the other messages in the exchange carry numbers only:
+// The A380's flight data link, label RF (seen from Qantas, British Airways, Asiana and Emirates). A flight's data is submitted,
+// committed and requested with its route, number and scheduled time; the other messages in the exchange carry numbers only:
 //
 //	,FDASUB01261025012233,SYD,,DFW,,QF007,261025,0205,388,,VH-OQG,/343940,350,,1,1545
 //	,FDAACK01261025004030/344244,350,,1,B8F2
 //
-// What the numbers mean is not known; they are kept as sent.
+// What the numbers mean is not known; they are kept as sent. Only the messages with a flight number say whose they are.
 var (
 	fdaRouteRe = regexp.MustCompile(`^(?:[A-Z0-9]{10})?,(FDASUB|FDACOM|FSTREQ)\d{2}(\d{12}),([A-Z]{3}),,([A-Z]{3}),,([A-Z0-9]{4,6}),(\d{6}),(\d{4}),(\w+),,([A-Z0-9-]+),/?(.*?),?[0-9A-F]{4}$`)
 	fdaOtherRe = regexp.MustCompile(`^(?:[A-Z0-9]{10})?,(FDAACK|FSTREP|FENIND|FERIND|FDASUB|FDACOM|FSTREQ)\d{2}(\d{12})/?(.*?),?[0-9A-F]{4}$`)
@@ -235,27 +239,38 @@ var fdaWhat = map[string]string{
 	"FDAACK": "flight data acknowledged", "FSTREP": "status reply", "FENIND": "end indication", "FERIND": "error indication",
 }
 
-func parseQantasFDA(text string) (opsParsed, bool) {
+// fdaTitle is what the message is, led by the airline's name where the message gives its flight.
+func fdaTitle(airline, event string) string {
+	if airline == "" {
+		return strings.ToUpper(fdaWhat[event][:1]) + fdaWhat[event][1:]
+	}
+	return airline + " " + fdaWhat[event]
+}
+
+func parseFlightDataLink(text string) (opsParsed, bool) {
 	t := strings.TrimSpace(text)
 	if m := fdaRouteRe.FindStringSubmatch(t); m != nil {
-		o := OpsReport{Airline: "Qantas", Event: m[1], Origin: icaoOf(m[3]), Dest: icaoOf(m[4]), Reg: m[9],
+		o := OpsReport{Event: m[1], Origin: icaoOf(m[3]), Dest: icaoOf(m[4]), Reg: m[9],
 			Info: map[string]string{"scheduled": m[7] + "Z", "date": m[6], "type": m[8]}}
 		if d, err := time.Parse("060102 1504", m[6]+" "+m[7]); err == nil {
 			o.Sched = d.UTC().Format(time.RFC3339)
 		}
 		if len(m[5]) > 2 {
-			o.Callsign, o.Flight = opsFlight(m[5][:2]+"A", m[5][2:])
+			if icao, ok := airlines.ICAO(m[5][:2]); ok {
+				o.Callsign, _ = opsFlight(icao, m[5][2:])
+				o.Airline = opsAirline(icao)
+			}
 			o.Flight = m[5][:2] + strconv.Itoa(atoi(m[5][2:]))
 		}
 		if m[10] != "" {
 			o.Info["data"] = m[10]
 		}
-		s := fmt.Sprintf("Qantas %s: %s %s, scheduled %s", fdaWhat[m[1]], o.Flight, route(o.Origin, o.Dest), hmZ(m[7]))
+		s := fmt.Sprintf("%s: %s %s, scheduled %s", fdaTitle(o.Airline, m[1]), o.Flight, route(o.Origin, o.Dest), hmZ(m[7]))
 		return opsParsed{rep: o, summary: s, uplink: m[1] != "FDAACK"}, true
 	}
 	if m := fdaOtherRe.FindStringSubmatch(t); m != nil {
-		o := OpsReport{Airline: "Qantas", Event: m[1], Info: map[string]string{"data": m[3]}}
-		return opsParsed{rep: o, summary: "Qantas " + fdaWhat[m[1]]}, true
+		o := OpsReport{Event: m[1], Info: map[string]string{"data": m[3]}}
+		return opsParsed{rep: o, summary: fdaTitle("", m[1])}, true
 	}
 	return opsParsed{}, false
 }
