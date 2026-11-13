@@ -785,8 +785,10 @@ times in them join the evidence for a flight's route and departure.
 - **Qantas movements** (labels `80` departure, `81` arrival): `MVA QFA0007/25.VHOQG.YSSY AD0213/0233 EA1725 KDFW` is out of the
   gate 02:13Z, off 02:33Z, ETA 17:25Z at KDFW; `AA2008/2012` is on at 20:08Z, in at 20:12Z. One can arrive hours after the event,
   so the time is placed on the most recent day that is not after the message arrived.
-- **Qantas flight data link** (`RF`): the flight's number, route and scheduled time (`,FDASUB…,SYD,,DFW,,QF007,261025,0205,388,,VH-OQG`)
-  appear in the submit, commit and status-request messages. Acknowledgements and replies carry numbers only, kept as sent.
+- **A380 flight data link** (`RF`, Qantas, British Airways, Asiana and Emirates): the flight's number, route and scheduled time
+  (`,FDASUB…,SYD,,DFW,,QF007,261025,0205,388,,VH-OQG`) appear in the submit, commit and status-request messages, and the airline's name
+  follows from the flight number (`British Airways flight data submitted: BA11 EGLL→WSSS`). Acknowledgements and replies carry numbers
+  only, kept as sent, and do not say whose they are (`Flight data acknowledged`).
 - **Air Canada** (`4T`, `4Q`): `ATD`/`PSHBK` (left the gate), `TDX` (out and off), `ARV`/`TAR` (on and in), `KQ1` (all four times
   and the route), and `AGFSR`, an in-flight position report with altitude, phase, temperature and wind, drawn on the map as an
   "Airline" position. `4C` is the flight information sent before departure, `4M` the load sheet and `4P` the dangerous goods

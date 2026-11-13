@@ -113,3 +113,12 @@ func TestProgress787(t *testing.T) {
 		t.Errorf("%v %q", r.Kind, r.Summary)
 	}
 }
+
+// British Airways' progress report has a /PR section, and its ETA is on the aircraft's own clock: the same value turns
+// up on separate flights hours apart, so it is not labelled UTC.
+func TestProgressBAOwnClock(t *testing.T) {
+	r, _ := Decode(Message{Label: "H1", Text: "PRG/DTEGLL,27L,42,070647,/PR1263,250,330,44,,0,20,,M50,60,,,P20,P0,36090,,1219,248CEBC"})
+	if r.Kind != KindProgress || r.Summary != "Progress report to EGLL runway 27L, ETA 07:06:47 (Aircraft Clock)" {
+		t.Errorf("%v %q", r.Kind, r.Summary)
+	}
+}

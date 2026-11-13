@@ -54,7 +54,13 @@ func decodePlan(m Message) (Result, bool) {
 			}
 		}
 		if len(g.ETA) == 6 {
-			s += fmt.Sprintf(", ETA %s:%s:%sZ", g.ETA[:2], g.ETA[2:4], g.ETA[4:])
+			s += fmt.Sprintf(", ETA %s:%s:%s", g.ETA[:2], g.ETA[2:4], g.ETA[4:])
+			if g.OwnClock {
+				// repeats from flight to flight and sits hours from UTC, so it is not a time we can place
+				s += " (Aircraft Clock)"
+			} else {
+				s += "Z"
+			}
 		}
 		r.Summary, r.Text = s, s
 		return r, true

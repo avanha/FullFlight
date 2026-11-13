@@ -32,6 +32,7 @@ const (
 	KindDisconnect Kind = "disconnect"
 	KindPOS        Kind = "pos_report"
 	KindMaint      Kind = "maintenance_report"
+	KindFault      Kind = "fault_report"
 	KindPOSRPT     Kind = "posrpt"
 	KindPOSA1      Kind = "posa1"
 	KindSBPOS      Kind = "sbpos"
@@ -190,6 +191,9 @@ func Decode(m Message) (Result, error) {
 		m.Text = m.Text[i+4:] // an FMS position report behind a message number and "#M1B" (EVA Air's)
 	}
 	if r, ok := decodePlan(m); ok {
+		return r, nil
+	}
+	if r, ok := decodeFault(m); ok {
 		return r, nil
 	}
 	if r, ok := decodeFMSPage(m); ok {

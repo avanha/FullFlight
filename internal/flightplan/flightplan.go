@@ -39,12 +39,14 @@ type Progress struct {
 	At       time.Time `json:"at,omitempty"` // the report's own time (TS field)
 	To       string    `json:"to,omitempty"`
 	Runway   string    `json:"runway,omitempty"`
-	ETA      string    `json:"eta,omitempty"` // hhmmss UTC
+	ETA      string    `json:"eta,omitempty"`       // hhmmss UTC, except where OwnClock is set
+	OwnClock bool      `json:"own_clock,omitempty"` // British Airways' reports (a /PR section): the times are on the aircraft's own clock
 }
 
 var (
 	planStart = regexp.MustCompile(`FPN/(?:FN[A-Z0-9]+/)?R[IP]:DA:`)
 	prgStart  = regexp.MustCompile(`^PRG/(?:TS\d{6},\d{6}/|DT[A-Z0-9]{4},)`) // Avianca sends it without the TS time
+	prSec     = regexp.MustCompile(`^PR\d+,`)
 	hex4      = regexp.MustCompile(`[0-9A-F]{4}$`)
 	icaoRe    = regexp.MustCompile(`^[A-Z0-9]{4}$`)
 	callRe    = regexp.MustCompile(`^[A-Z0-9]{3,8}$`)
@@ -247,6 +249,10 @@ func ParseProgress(text string) (*Progress, bool) {
 			if len(f) > 3 && len(f[3]) == 6 {
 				p.ETA = f[3]
 			}
+		case prSec.MatchString(sec):
+			p.OwnClock = true
+		case prSec.MatchString(sec):
+			p.OwnClock = true
 		case strings.HasPrefix(sec, "FN") && callRe.MatchString(sec[2:]):
 			p.Callsign = sec[2:]
 		}
