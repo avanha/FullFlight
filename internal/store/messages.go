@@ -611,41 +611,41 @@ func (s *Store) GroundStops(hexAddr string, since, until time.Time) ([]GroundSto
 // opsWindow bounds the messages to look at for a time window: a report can be delivered days after its event.
 const opsWindow = `ts BETWEEN ?2 - 172800 AND ?3 + 604800`
 
-// routeReportsSQL selects (t, origin, dest, source, rx: when it arrived) from the kinds of message that say where a flight is going: a
+// routeReportsSQL selects (t, origin, dest, source, rx: when it counts as arrived, flight: the flight number the message carries, if it has one, arrived: when it reached us) from the kinds of message that say where a flight is going: a
 // REP081 report, another A350 report (or its XML maintenance report, or a takeoff report) that names the route, a 787 ACMF report, an airline (label 83) position report and a filed flight plan (arguments:
 // hex, from, to). An airline report that has only a time of day for its position and arrived over half a day later is left out: which day
 // it was made on is a guess, and a wrong one would give the flight of that day a route it did not fly.
 var routeReportsSQL = `
 	SELECT COALESCE(pos_ts, ts) AS t, COALESCE(json_extract(decoded, '$.fields.rep081.Origin'), '') AS origin,
-		json_extract(decoded, '$.fields.rep081.Dest') AS dest, 'REP081' AS src, ts AS rx
+		json_extract(decoded, '$.fields.rep081.Dest') AS dest, 'REP081' AS src, ts AS rx, flight, ts AS arrived
 	FROM message WHERE hex=?1 AND kind='miam' AND (COALESCE(pos_ts, ts) BETWEEN ?2 AND ?3 OR ts BETWEEN ?2 AND ?3) AND time_flag=0
 	  AND json_extract(decoded, '$.fields.rep081.Dest') IS NOT NULL AND json_extract(decoded, '$.fields.rep081.Dest') != ''
 	UNION ALL
 	SELECT at_ts, COALESCE(json_extract(decoded, '$.fields.a350.Origin'), json_extract(decoded, '$.fields.rtr.Origin'), json_extract(decoded, '$.fields.takeoff.Origin'), ''),
-		COALESCE(json_extract(decoded, '$.fields.a350.Dest'), json_extract(decoded, '$.fields.rtr.Dest'), json_extract(decoded, '$.fields.takeoff.Dest')), 'A350 report', ts
+		COALESCE(json_extract(decoded, '$.fields.a350.Dest'), json_extract(decoded, '$.fields.rtr.Dest'), json_extract(decoded, '$.fields.takeoff.Dest')), 'A350 report', ts, flight, ts
 	FROM message WHERE hex=?1 AND kind='miam' AND (at_ts BETWEEN ?2 AND ?3 OR ts BETWEEN ?2 AND ?3) AND time_flag=0
 	  AND COALESCE(json_extract(decoded, '$.fields.a350.Dest'), json_extract(decoded, '$.fields.rtr.Dest'), json_extract(decoded, '$.fields.takeoff.Dest'), '') != ''
 	UNION ALL
-	SELECT ts, json_extract(decoded, '$.fields.departure.Origin'), json_extract(decoded, '$.fields.departure.Dest'), 'airline report', ts
+	SELECT ts, json_extract(decoded, '$.fields.departure.Origin'), json_extract(decoded, '$.fields.departure.Dest'), 'airline report', ts, flight, ts
 	FROM message WHERE hex=?1 AND kind IN ('departure_report', 'miam') AND ts BETWEEN ?2 AND ?3 AND time_flag=0
 	  AND COALESCE(json_extract(decoded, '$.fields.departure.Dest'), '') != ''
 	UNION ALL
-	SELECT t, origin, dest, 'airline report', t FROM (
-		SELECT at_ts AS t, COALESCE(json_extract(decoded, '$.fields.ops.origin'), '') AS origin, json_extract(decoded, '$.fields.ops.dest') AS dest
+	SELECT t, origin, dest, 'airline report', t, flight, arrived FROM (
+		SELECT at_ts AS t, COALESCE(json_extract(decoded, '$.fields.ops.origin'), '') AS origin, json_extract(decoded, '$.fields.ops.dest') AS dest, COALESCE(NULLIF(json_extract(decoded, '$.fields.ops.flight'), ''), flight) AS flight, ts AS arrived
 		FROM message WHERE hex=?1 AND kind='ops_report' AND ` + opsWindow + ` AND time_flag=0
 		  AND json_valid(decoded) AND COALESCE(json_extract(decoded, '$.fields.ops.dest'), '') != ''
 		  AND NOT (ts - at_ts > 43200 AND at_basis = 'event' AND json_extract(decoded, '$.fields.ops.at') IS NULL AND json_extract(decoded, '$.fields.ops.info.day') IS NULL)) WHERE t BETWEEN ?2 AND ?3
 	UNION ALL
 	SELECT COALESCE(pos_ts, ts), COALESCE(json_extract(decoded, '$.fields.origin'), ''), json_extract(decoded, '$.fields.dest'),
-		CASE kind WHEN 'acmf_report' THEN 'ACMF' ELSE 'airline report' END, COALESCE(pos_ts, ts)
+		CASE kind WHEN 'acmf_report' THEN 'ACMF' ELSE 'airline report' END, COALESCE(pos_ts, ts), flight, ts
 	FROM message WHERE hex=?1 AND kind IN ('acmf_report', 'aoc_position', 'posrpt', 'pos_report', 'sbpos') AND COALESCE(pos_ts, ts) BETWEEN ?2 AND ?3 AND time_flag=0
 	  AND json_extract(decoded, '$.fields.dest') IS NOT NULL AND json_extract(decoded, '$.fields.dest') != ''
 	UNION ALL
-	SELECT ts, COALESCE(json_extract(decoded, '$.fields.plan.from'), ''), json_extract(decoded, '$.fields.plan.to'), 'flight plan', ts
+	SELECT ts, COALESCE(json_extract(decoded, '$.fields.plan.from'), ''), json_extract(decoded, '$.fields.plan.to'), 'flight plan', ts, flight, ts
 	FROM message WHERE hex=?1 AND kind IN ('flight_plan', 'fms_position') AND ts BETWEEN ?2 AND ?3 AND time_flag=0 AND json_valid(decoded)
 	  AND json_extract(decoded, '$.fields.plan.to') IS NOT NULL AND json_extract(decoded, '$.fields.plan.to') != ''
 	UNION ALL
-	SELECT ts, '', json_extract(decoded, '$.fields.progress.to'), 'FMS forecast', ts
+	SELECT ts, '', json_extract(decoded, '$.fields.progress.to'), 'FMS forecast', ts, flight, ts
 	FROM message WHERE hex=?1 AND kind='progress' AND ts BETWEEN ?2 AND ?3 AND time_flag=0 AND json_valid(decoded)
 	  AND json_extract(decoded, '$.fields.fms_page') IS NOT NULL AND COALESCE(json_extract(decoded, '$.fields.progress.to'), '') != ''`
 
@@ -653,13 +653,15 @@ var routeReportsSQL = `
 // reports an aircraft stores and delivers late.
 type RouteReport struct {
 	T, Rx    time.Time
+	Arrived  time.Time // when the message reached us (Rx is that only for the reports that are placed by when they arrived)
 	From, To string
 	Src      string // what kind of report: REP081, A350 report, airline report, ACMF or flight plan
+	Flight   string // the flight number the message itself carries (an airline's operations message names one), else empty
 }
 
 // RouteReports returns the REP081 and flight-plan origin/destination reports in [since, until], oldest first.
 func (s *Store) RouteReports(hexAddr string, since, until time.Time) ([]RouteReport, error) {
-	rows, err := s.db.Query(`SELECT t, origin, dest, rx, src FROM (`+routeReportsSQL+`) ORDER BY t`, hexAddr, ts(since), ts(until))
+	rows, err := s.db.Query(`SELECT t, origin, dest, rx, src, flight, arrived FROM (`+routeReportsSQL+`) ORDER BY t`, hexAddr, ts(since), ts(until))
 	if err != nil {
 		return nil, err
 	}
@@ -667,11 +669,11 @@ func (s *Store) RouteReports(hexAddr string, since, until time.Time) ([]RouteRep
 	var out []RouteReport
 	for rows.Next() {
 		var r RouteReport
-		var t, rx int64
-		if err := rows.Scan(&t, &r.From, &r.To, &rx, &r.Src); err != nil {
+		var t, rx, arrived int64
+		if err := rows.Scan(&t, &r.From, &r.To, &rx, &r.Src, &r.Flight, &arrived); err != nil {
 			return nil, err
 		}
-		r.T, r.Rx = time.Unix(t, 0).UTC(), time.Unix(rx, 0).UTC()
+		r.T, r.Rx, r.Arrived = time.Unix(t, 0).UTC(), time.Unix(rx, 0).UTC(), time.Unix(arrived, 0).UTC()
 		out = append(out, r)
 	}
 	return out, rows.Err()

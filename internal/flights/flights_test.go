@@ -2,6 +2,7 @@ package flights
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -1022,5 +1023,90 @@ func TestAFTagLabelsAnUnnamedFlight(t *testing.T) {
 	}
 	if segs := r.segments(); len(segs) != 1 || segs[0].Flight != "AS421" || segs[0].FlightFromAF {
 		t.Errorf("a sighted flight keeps its number: %s %+v", names(segs), segs)
+	}
+}
+
+// A flight that left London, with reports delivered late that were made on another flight's route.
+func newLondonFlight(t *testing.T) *rig {
+	r := newRig(t)
+	r.said(at(0, 10, 0), "UA900")
+	r.air(at(0, 10, 1), "UAL900", 51.4706, -0.4619, 0, true) // Heathrow
+	r.air(at(0, 10, 2), "UAL900", 51.4706, -0.4619, 0, true)
+	for i, alt := range []float64{2000, 6000, 14000, 30000} {
+		r.air(at(0, 10, 36).Add(time.Duration(i)*5*time.Minute), "UAL900", 51.5-float64(i)*0.1, -0.6-float64(i)*1.5, alt, false)
+	}
+	return r
+}
+
+// United's "final weights" for UA63 reached us a day and a half late, while the aircraft was flying UA900 out of London. A report
+// that names another flight's number and an origin ADS-B did not see it leave is not about this flight.
+func TestARouteReportNamingAnotherFlightIsSetAside(t *testing.T) {
+	r := newLondonFlight(t)
+	r.msg(store.Message{T: at(0, 10, 45), Kind: "ops_report", Flight: "UA63", Callsign: "UAL63",
+		Decoded: `{"fields":{"ops":{"event":"final weights","flight":"UA63","origin":"SBGR","dest":"KIAH"}}}`})
+	segs := r.segments()
+	if len(segs) != 1 || segs[0].Flight != "UA900" {
+		t.Fatalf("%s %+v", names(segs), segs)
+	}
+	if sg := segs[0]; sg.From != "EGLL" || !sg.FromSeen || sg.To != "" {
+		t.Errorf("it left Heathrow, and the report is about UA63: %+v", sg)
+	}
+	ex, err := Explain(r.st, hex, day0.Add(-24*time.Hour), day0.Add(30*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rules(ex.Segments[0].Why), "set-aside") {
+		t.Errorf("Explain should say a report was set aside: %s", rules(ex.Segments[0].Why))
+	}
+	// a different number alone is not enough: callsigns and flight numbers differ (AAL2207 is flight 2511), so a report whose origin
+	// is where it was seen to leave counts
+	{
+		r := newLondonFlight(t)
+		r.msg(store.Message{T: at(0, 10, 45), Kind: "ops_report", Flight: "UA2511",
+			Decoded: `{"fields":{"ops":{"event":"final weights","flight":"UA2511","origin":"EGLL","dest":"KSFO"}}}`})
+		if sg := r.segments()[0]; sg.From != "EGLL" || sg.To != "KSFO" {
+			t.Errorf("another number, but the right origin: %+v", sg)
+		}
+	}
+	// the same report naming this flight's own number, in other forms, counts
+	for _, n := range []string{"UA900", "UAL900", "UA0900"} {
+		r := newLondonFlight(t)
+		r.msg(store.Message{T: at(0, 10, 45), Kind: "ops_report", Flight: n,
+			Decoded: `{"fields":{"ops":{"event":"final weights","flight":"` + n + `","origin":"EGLL","dest":"KSFO"}}}`})
+		if sg := r.segments()[0]; sg.From != "EGLL" || sg.To != "KSFO" || sg.FromSeen {
+			t.Errorf("a report for its own number (%s): %+v", n, sg)
+		}
+	}
+}
+
+// A report the aircraft held and delivered hours late, with only a time of day, can be placed on the wrong day and name the route
+// of an earlier flight. Where ADS-B saw this flight leave somewhere else, it is set aside; one that arrived in good time is not.
+func TestALateReportContradictedByTheTakeoffIsSetAside(t *testing.T) {
+	late := func(r *rig, delay time.Duration, flight string) {
+		pt := at(0, 10, 50)
+		r.msg(store.Message{T: pt.Add(delay), Kind: "aoc_position", Flight: flight, PosT: &pt,
+			Decoded: `{"fields":{"origin":"SBGR","dest":"KIAH"}}`})
+	}
+	r := newLondonFlight(t)
+	late(r, 10*time.Hour, "")
+	if sg := r.segments()[0]; sg.From != "EGLL" || !sg.FromSeen || sg.To != "" {
+		t.Errorf("hours late, from somewhere it did not leave: %+v", sg)
+	}
+	r = newLondonFlight(t)
+	late(r, time.Minute, "")
+	if sg := r.segments()[0]; sg.From != "SBGR" || sg.To != "KIAH" {
+		t.Errorf("on time: the messages are believed: %+v", sg)
+	}
+	r = newLondonFlight(t)
+	late(r, 10*time.Hour, "UA900")
+	if sg := r.segments()[0]; sg.From != "SBGR" || sg.To != "KIAH" {
+		t.Errorf("one that names this flight is a through flight's: %+v", sg)
+	}
+	// a nearby airport is the same place (Gatwick for Heathrow)
+	r = newLondonFlight(t)
+	pt := at(0, 10, 50)
+	r.msg(store.Message{T: pt.Add(10 * time.Hour), Kind: "aoc_position", PosT: &pt, Decoded: `{"fields":{"origin":"EGKK","dest":"KSFO"}}`})
+	if sg := r.segments()[0]; sg.From != "EGKK" || sg.To != "KSFO" {
+		t.Errorf("Gatwick is not far from Heathrow: %+v", sg)
 	}
 }

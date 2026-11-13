@@ -381,6 +381,15 @@ report, UPS's three route messages, and a filed plan. **When it left** is the be
 time, else ADS-B seeing it leave the ground, else a gate time from a departure report. Both are worked out afresh each time, so a
 flight that has only its number at first gains its route and departure time as the reports come in.
 
+A report is set aside, and not counted, when ADS-B contradicts it. An aircraft holds some of its reports and delivers them late
+(N31114's UA63 messages from São Paulo reached us a day and a half after the flight, while it was flying UA900 out of London). If
+ADS-B saw the flight leave an airport, a report that gives an origin more than 100 nm from it is set aside when something else marks
+it as another flight's: it names a different flight number, or it names none and reached us more than three hours after it was made
+(a position report with only a time of day can be placed a day out). A different number alone is not enough, since callsigns and
+flight numbers differ (AAL2207 is flight 2511); nor is a different origin alone, which a through flight's reports give; and a report
+with the flight's own number is always counted. The flight then takes its origin from where ADS-B saw it leave, and its
+destination from where it lands. The explain page lists the reports set aside.
+
 A message about a flight that has not left yet counts from the time that flight is due to leave, not from when it arrived.
 Qantas sends the next flight's data (`FDASUB`, `FDACOM`, with the scheduled time) while the aircraft is still on its way in;
 without this rule QF1's messages cut QF64 in two just before it landed and gave it QF1's route. The same rule keeps such a

@@ -424,6 +424,7 @@ func segments(st *store.Store, hexAddr string, since, until time.Time, tr *trace
 				mine = append(mine, r)
 			}
 		}
+		mine = setAsideContradicted(*s, mine, fixes, tr)
 		c := modalRoute(mine, time.Time{}, time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC))
 		s.From, s.To, s.RouteSource, s.RouteAt = c.From, c.To, c.Src, c.At
 		tr.note("route", "route", s.Start, s.End, "%d route report(s) belong to it; %s > %s is the most reported, by %d", len(mine), s.From, s.To, c.N)
@@ -1128,6 +1129,65 @@ func approach(fixes []store.AirFix, i int, away float64) bool {
 		}
 	}
 	return false
+}
+
+const (
+	farOffNM  = 100.0         // how far apart two airports must be to be two places rather than one city's (EGLL and EGKK, KEWR and KJFK)
+	lateRoute = 3 * time.Hour // a route report this long in reaching us may be about an earlier flight (see setAsideContradicted)
+)
+
+// setAsideContradicted drops the route reports that ADS-B shows cannot be about this flight: those that give an origin far from the
+// airport it was seen to leave, when something else also marks them as another flight's. That is a different flight number (United's
+// "final weights" for UA63, delivered a day and a half late while the aircraft was flying UA900 out of London, would otherwise give
+// UA900 the route of UA63), or, for a report that names no number, being long in reaching us (the aircraft holds its reports and
+// delivers them late, and one with only a time of day can be placed a day out). A different number alone is not enough, since
+// callsigns and flight numbers differ (AAL2207 is flight 2511), nor is an origin alone, which a through flight's reports give for the
+// whole route; a report that names this flight's own number is always kept.
+func setAsideContradicted(s Segment, rs []store.RouteReport, fixes []store.AirFix, tr *trace) []store.RouteReport {
+	left, seen := leftFrom(fixes, s.Start, s.End)
+	if !seen {
+		return rs
+	}
+	var keep []store.RouteReport
+	other, late := map[string]int{}, map[string]int{}
+	for _, r := range rs {
+		named := r.Flight != ""
+		switch {
+		case r.From == "" || !apart(r.From, left) || (named && (!s.Identified || sameOrUnreadable(r.Flight, s.Flight))):
+			keep = append(keep, r)
+		case named:
+			other[r.From+" by "+r.Flight]++
+		case r.Arrived.Sub(r.T) > lateRoute:
+			late[r.From]++
+		default:
+			keep = append(keep, r)
+		}
+	}
+	for o, n := range other {
+		tr.note("route", "set-aside", s.Start, s.End, "%d route report(s) set aside: they give %s as the origin, and ADS-B saw it leave %s", n, o, left)
+	}
+	for o, n := range late {
+		tr.note("route", "set-aside", s.Start, s.End, "%d route report(s) set aside: they were long delayed and give %s as the origin, and ADS-B saw it leave %s", n, o, left)
+	}
+	return keep
+}
+
+// sameOrUnreadable is true unless both are flight numbers we can read and they differ (a number we cannot read is not evidence).
+func sameOrUnreadable(a, b string) bool {
+	if _, ok := parse(a); !ok {
+		return true
+	}
+	if _, ok := parse(b); !ok {
+		return true
+	}
+	return SameFlight(a, b)
+}
+
+// apart is true when both are airports we know and they are far from each other.
+func apart(a, b string) bool {
+	x, ok1 := airports.Lookup(a)
+	y, ok2 := airports.Lookup(b)
+	return ok1 && ok2 && geo.DistNM(x.Lat, x.Lon, y.Lat, y.Lon) > farOffNM
 }
 
 // leftFrom is the airport an aircraft was seen to leave in [from, to]: its first fix there is on the ground within departedNM of
