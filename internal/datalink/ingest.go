@@ -207,10 +207,48 @@ func fixList(res decoder.Result, m *store.Message) string {
 // rewrites the derived columns. Run it after improving the decoder so old
 // messages pick up the change. It returns how many messages it changed.
 func Redecode(st *store.Store) (changed int, err error) {
+	stats, err := RedecodeStats(st)
+	return stats.Changed, err
+}
+
+// RedecodeResult is how much a re-decode did and how long each part took.
+type RedecodeResult struct {
+	Messages int           // messages decoded again
+	Changed  int           // rows rewritten: messages whose decode differed, and flags the settling pass changed
+	Aircraft int           // aircraft whose flags were settled
+	Load     time.Duration // reading every message from the database
+	Decode   time.Duration // decoding them, and rewriting those that changed
+	Settle   time.Duration // the passes over each aircraft's messages (late and suspect flags, learned waypoints)
+}
+
+// Total is the time the whole re-decode took.
+func (s RedecodeResult) Total() time.Duration { return s.Load + s.Decode + s.Settle }
+
+// PerMessage is the average time to decode one message and rewrite it if it changed, not counting the settling that follows.
+func (s RedecodeResult) PerMessage() time.Duration {
+	if s.Messages == 0 {
+		return 0
+	}
+	return s.Decode / time.Duration(s.Messages)
+}
+
+// PerSecond is how many messages the whole re-decode got through each second.
+func (s RedecodeResult) PerSecond() float64 {
+	if s.Total() <= 0 {
+		return 0
+	}
+	return float64(s.Messages) / s.Total().Seconds()
+}
+
+// RedecodeStats does what Redecode does and says how long it took.
+func RedecodeStats(st *store.Store) (stats RedecodeResult, err error) {
+	start := time.Now()
 	all, err := st.AllMessages()
 	if err != nil {
-		return 0, err
+		return stats, err
 	}
+	stats.Messages, stats.Load = len(all), time.Since(start)
+	start = time.Now()
 	for _, old := range all {
 		m := old
 		// Not the stored direction: that may itself have been a guess.
@@ -221,31 +259,39 @@ func Redecode(st *store.Store) (changed int, err error) {
 			continue
 		}
 		if err := st.UpdateDecoded(m); err != nil {
-			return changed, err
+			stats.Decode = time.Since(start)
+			return stats, err
 		}
-		changed++
+		stats.Changed++
 	}
+	stats.Decode = time.Since(start)
 	// With everything re-decoded, settle the suspect flags against full neighbourhoods.
+	start = time.Now()
 	hexes := map[string]bool{}
 	for _, m := range all {
 		hexes[m.Hex] = true
 	}
+	stats.Aircraft = len(hexes)
 	for h := range hexes {
 		late, err := MarkLate(st, h, time.Time{})
 		if err != nil {
-			return changed, err
+			stats.Settle = time.Since(start)
+			return stats, err
 		}
-		changed += late
+		stats.Changed += late
 		n, err := Recheck(st, h, time.Time{})
 		if err != nil {
-			return changed, err
+			stats.Settle = time.Since(start)
+			return stats, err
 		}
-		changed += n
+		stats.Changed += n
 		if _, err := waypoints.Learn(st, h, time.Time{}); err != nil {
-			return changed, err
+			stats.Settle = time.Since(start)
+			return stats, err
 		}
 	}
-	return changed, nil
+	stats.Settle = time.Since(start)
+	return stats, nil
 }
 
 func sameFloat(a, b *float64) bool {

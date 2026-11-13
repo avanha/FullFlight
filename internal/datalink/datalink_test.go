@@ -1033,3 +1033,28 @@ func TestSentLate(t *testing.T) {
 		}
 	}
 }
+
+// A re-decode says how many messages it went through, and how long each part took.
+func TestRedecodeStatsSayHowMuchWasDoneAndHowLong(t *testing.T) {
+	st := newStore(t)
+	f := fixture(t, "cpdlc_position")
+	st.AddMessage(store.Message{ID: 1, Hex: "780AB8", T: f.Received, Label: f.Label, Text: f.Text, Kind: "cpdlc", Summary: "CPDLC downlink: POSITION REPORT"})
+	st.AddMessage(store.Message{ID: 2, Hex: "780AB8", T: f.Received.Add(time.Hour), Label: "SA", Text: "0ES124056VS"})
+	st.AddMessage(store.Message{ID: 3, Hex: "A63DFF", T: f.Received.Add(2 * time.Hour), Label: "SA", Text: "0ES124056VS"})
+	s, err := RedecodeStats(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Messages != 3 || s.Aircraft != 2 || s.Changed < 3 {
+		t.Errorf("%+v", s)
+	}
+	if s.Total() != s.Load+s.Decode+s.Settle || s.Total() <= 0 || s.PerMessage() <= 0 || s.PerMessage() > s.Decode || s.PerSecond() <= 0 {
+		t.Errorf("times: total %v, per message %v, per second %v", s.Total(), s.PerMessage(), s.PerSecond())
+	}
+	if s, _ = RedecodeStats(st); s.Changed != 0 {
+		t.Errorf("a second pass changed %d", s.Changed)
+	}
+	if (RedecodeResult{}).PerMessage() != 0 || (RedecodeResult{}).PerSecond() != 0 {
+		t.Error("nothing decoded, nothing averaged")
+	}
+}

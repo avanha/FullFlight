@@ -109,12 +109,14 @@ func main() {
 		return
 	}
 	if *redecode {
-		n, err := datalink.Redecode(st)
+		stats, err := datalink.RedecodeStats(st)
 		if err != nil {
-			log.Error("redecode", "err", err)
+			log.Error("redecode", "err", err, "messages", stats.Messages, "changed", stats.Changed, "after", stats.Total().Round(time.Millisecond))
 			os.Exit(1)
 		}
-		log.Info("redecoded", "changed", n)
+		log.Info("redecoded", "messages", stats.Messages, "changed", stats.Changed, "aircraft", stats.Aircraft,
+			"load", stats.Load.Round(time.Millisecond), "decode", stats.Decode.Round(time.Millisecond), "settle", stats.Settle.Round(time.Millisecond),
+			"total", stats.Total().Round(time.Millisecond), "per_message", stats.PerMessage().Round(time.Microsecond), "messages_per_second", int(stats.PerSecond()))
 		return
 	}
 

@@ -148,7 +148,8 @@ is not joined. The joined message is for reading: it is not stored, and its posi
 (`fromHex`/`toHex`), else tried both ways.
 
 After improving the decoder, run `bin/fullflight -config config.yaml -redecode` to re-decode every stored message from its raw
-text (idempotent).
+text (idempotent). It ends with a line saying how many messages it read, how many changed, and how long it took (load, decode,
+settle, per message and per second).
 
 ### Satellite headers (UPS, Delta)
 
