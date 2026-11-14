@@ -40,7 +40,7 @@ func TestAirbusACMSReports(t *testing.T) {
 	if o.Reg != "N900UW" || o.Callsign != "AAL669" || o.Flight != "AA669" || o.Origin != "KRSW" || o.Dest != "KORD" || o.Info["day"] != "07" || o.Info["month"] != "NOV" || r.Identity.Tail != "N900UW" {
 		t.Fatalf("report 001: %+v", o)
 	}
-	if want := "A321 report 001 AAL669 KRSW→KORD"; r.Summary != want {
+	if want := "A321 report 001 AAL669 KRSW→KORD at 02:05Z on 07 NOV"; r.Summary != want {
 		t.Errorf("summary %q", r.Summary)
 	}
 
@@ -71,5 +71,17 @@ func TestA380MaintenanceSystemReport(t *testing.T) {
 	}
 	if !strings.Contains(r.Text, "CDS CAPT MFD DU FAULT (DU-MFD,CAPT(4WK1)) [cockpit items, system CDS, 2026-11-05 05:50:23Z, code 3160F3JD]") {
 		t.Errorf("text %q", r.Text)
+	}
+}
+
+// British Airways' A320 report 019 was written on 12 November and delivered two days later; its time is what places it.
+func TestA320ReportKeepsItsTime(t *testing.T) {
+	r, _ := Decode(Message{Label: "H1", Text: "A320,187073,1,1,TB000000/REP019,85,01,1/CCG-TTNO,NOV12,140932,EDDB,EGLL,0979/C0TFC050BA030101/C106,26701,8100,42,0010,0,0100,42,X/CE-300,37967,248,782,6217,318,F22A03/EC5"})
+	o, _ := r.Fields["ops"].(OpsReport)
+	if o.Reg != "G-TTNO" || o.Origin != "EDDB" || o.Info["day"] != "12" || o.Info["time"] != "14:09Z" {
+		t.Fatalf("%+v", o)
+	}
+	if want := "A320 report 019 EDDB→EGLL at 14:09Z on 12 NOV"; r.Summary != want {
+		t.Errorf("summary %q", r.Summary)
 	}
 }

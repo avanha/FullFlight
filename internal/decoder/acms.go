@@ -79,7 +79,7 @@ func parseACMS(text string) (opsParsed, bool) {
 		o.Callsign = m[6]
 	} else if m := acmsRteRe.FindStringSubmatch(t); m != nil {
 		tail = m[1]
-		o.Info["day"], o.Info["month"] = m[3], m[2]
+		o.Info["day"], o.Info["month"], o.Info["time"] = m[3], m[2], hmZ(m[4][:4])
 		o.Origin, o.Dest = icaoOf(strings.TrimSpace(m[5])), m[6]
 		if a := acmsAirline.FindStringSubmatch(t); a != nil && m[7] != "" {
 			o.Callsign, o.Flight = opsFlight(a[1], m[7])
@@ -112,6 +112,9 @@ func parseACMS(text string) (opsParsed, bool) {
 	}
 	if r := route(o.Origin, o.Dest); r != "" {
 		s += " " + r
+	}
+	if o.Info["time"] != "" { // these are held and delivered days late: say when it was written
+		s += fmt.Sprintf(" at %s on %s %s", o.Info["time"], o.Info["day"], o.Info["month"])
 	}
 	return opsParsed{rep: o, summary: s, extra: lines, tail: tail}, true
 }
