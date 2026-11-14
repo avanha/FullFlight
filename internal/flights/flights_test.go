@@ -1110,3 +1110,27 @@ func TestALateReportContradictedByTheTakeoffIsSetAside(t *testing.T) {
 		t.Errorf("Gatwick is not far from Heathrow: %+v", sg)
 	}
 }
+
+// G-TTNO left Heathrow as BAW82DM, a callsign that is no flight number we can read, while the messages it sent on the ground still
+// carried BA0979, the flight before. The tag would have named the flight BA979; ADS-B says it was calling itself something else.
+func TestAFTagIsNotUsedWhenADSBCallsItSomethingElse(t *testing.T) {
+	r := newRig(t)
+	for i := 0; i < 8; i++ {
+		r.air(at(0, 6, 30).Add(time.Duration(i)*5*time.Minute), "BAW82DM", 51.4706+float64(i)*0.05, -0.4619-float64(i)*0.3, float64(i)*4000, i < 2)
+	}
+	for i := 0; i < 3; i++ {
+		tm := at(0, 6, 35).Add(time.Duration(i) * 5 * time.Minute)
+		r.msg(store.Message{T: tm, Kind: "progress", AFFlight: "BA0979"})
+	}
+	segs := r.segments()
+	if len(segs) != 1 || segs[0].FlightFromAF || segs[0].Identified {
+		t.Fatalf("the stale tag must not name the flight: %s %+v", names(segs), segs)
+	}
+	ex, err := Explain(r.st, hex, day0.Add(-24*time.Hour), day0.Add(30*24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(rules(ex.Segments[0].Why), "tag-contradicted") {
+		t.Errorf("Explain should say the tag was set aside: %s", rules(ex.Segments[0].Why))
+	}
+}

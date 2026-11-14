@@ -518,6 +518,10 @@ func segments(st *store.Store, hexAddr string, since, until time.Time, tr *trace
 	for i := range segs {
 		if sg := &segs[i]; !sg.Identified {
 			if id, n, ok := taggedFlight(st, hexAddr, sg.Start, sg.End); ok {
+				if cs := unreadableCallsign(ev, sg.Start, sg.End); cs != "" {
+					tr.note("label", "tag-contradicted", sg.Start, sg.End, "airframes.io tagged %d of its messages %s, but ADS-B called it %s: the tag is a number carried over from an earlier flight, so the flight is left unnamed", n, id.display, cs)
+					continue
+				}
 				sg.Flight, sg.Callsign, sg.FlightFromAF = id.iata, id.icao, true
 				if sg.Flight == "" {
 					sg.Flight = id.display
@@ -535,6 +539,21 @@ func segments(st *store.Store, hexAddr string, since, until time.Time, tr *trace
 		segs[n-1].Latest = true
 	}
 	return segs, nil
+}
+
+// unreadableCallsign is the ADS-B callsign seen in [from, to] that is not a flight number we can read (British Airways' BAW82DM), or "".
+// The aircraft is calling itself something, so a number airframes.io took from its messages is not to be trusted: the messages
+// of a flight often still carry the number of the one before.
+func unreadableCallsign(ev []store.Evidence, from, to time.Time) string {
+	for _, e := range ev {
+		if e.Src != "ADS-B" || e.T.Before(from) || e.T.After(to) || strings.Trim(e.ID, "@ ") == "" {
+			continue
+		}
+		if _, ok := parse(e.ID); !ok {
+			return e.ID
+		}
+	}
+	return ""
 }
 
 // taggedFlight is the one flight number airframes.io tagged the messages in [from, to] with, if there are at least TagMin sound ones

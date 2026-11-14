@@ -368,6 +368,9 @@ A flight is a run of sightings of one flight number (callsigns on ADS-B and flig
   the flight is two, each with its own route and departure, even though the number is the same (UPS65 Hong Kong to Anchorage,
   then on to Louisville). The cut is half way through the stop, so the arrival's chatter stays with the first leg and the
   clearance for the next goes with the second. A stop ADS-B did not see both ends of is not split.
+- **A flight no sighting named** is labelled with the number airframes.io tagged its messages with, unless ADS-B called the aircraft
+  something we cannot read as a flight number (British Airways' `BAW82DM`): the messages of a flight often still carry the number of the
+  one before, and the label would be that one. The flight is then left unnamed, and Explain says why.
 - **Strays** (one-off numbers) are folded away.
 - **Positions** attach to the flight they fall in or within an hour of. Positions that name no flight but cluster are shown as an
   *unidentified* flight rather than lost.
@@ -807,6 +810,8 @@ times in them join the evidence for a flight's route and departure.
   those with a title say what raised them (`REP035` "APU RUN"). The numbers after are not read. The trajectory reports (`REP191`, `REP291`,
   `TRP KORD KSEA  8 8`) carry a point every three minutes: a time, a position and a heading. The newest is the report's position, and all
   of them are in its detail text. A heading is read; the other numbers of a point (speeds and weights, probably) are not.
+  British Airways' A320s send the same report (`CCG-TTNO,NOV12,140932,EDDB,EGLL,0979`, checked against ADS-B: the aircraft was where it
+  says at that time); its time places it, because the station may hold it for two days, and the summary says when it was written.
 - **Aircraft condition monitoring reports** (label `H1`, Air France, KLM, LATAM, China Cargo, EVA Air, United and Air Canada:
   `ACM01ACM211BSF-GSQL  AFR98E  LFPGKIAH131126  67TR120825…`): the header gives the report number, the registration, the flight, the
   route, the date and the time of the event, and so counts as a route report: `KLM condition monitoring report 211 KLM809
