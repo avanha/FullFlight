@@ -412,7 +412,7 @@ also sit 16 pixels to the side.
 
 ### D-ATIS requests
 
-A D-ATIS request, or a Qantas request for METARs or TAFs (`Weather request (METAR)`, which are treated the same way), carries no position, so it is marked on the track with a violet diamond where the aircraft probably was, between
+A D-ATIS request, or a Qantas or Cathay Pacific request for METARs or TAFs (`Weather request (METAR)`, which are treated the same way), carries no position, so it is marked on the track with a violet diamond where the aircraft probably was, between
 the fixes either side of it (the legend entry "D-ATIS, METAR and TAF requests" switches them off). Click a diamond, or choose the message in the
 list, to select it: the airports it asked about then get a violet ring and a draggable label, and the map zooms out to take them
 in if they are out of view (once for each message picked, not at every refresh). The airports are shown only for the selected
@@ -805,6 +805,8 @@ times in them join the evidence for a flight's route and departure.
   the flight and the route, and each item: its class (cockpit or cabin), the component, the system, the time and the code, with what
   the flight deck is told where it is told anything (`CDS CAPT MFD DU FAULT`). One line says the first and how many more. Listed as
   `maintenance_report`.
+- **Cathay Pacific weather requests** (label `5U`, `M71ACX0198YBBN YBTL YBCS WABB-SA`): the message number, the flight, the airports, and the
+  product: `SA` a METAR, `FT` a TAF. Listed as `Weather request (METAR) for YBBN, YBTL, YBCS, WABB`, and marked on the map like Qantas's.
 - **A320 family ACMS reports** (label `H1`, American and United A321s: `A321,050415,1,1,TB000000/REP001,00,00,4/CCN900UW,NOV01,125824,KCLT,KBOS,0436/...`):
   most give the tail, the day and time, the route and the flight number, and so count as route reports ("American 436 ... KCLT→KBOS");
   those with a title say what raised them (`REP035` "APU RUN"). The numbers after are not read. The trajectory reports (`REP191`, `REP291`,

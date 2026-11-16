@@ -62,7 +62,7 @@ func opsFlight(code, digits string) (callsign, flight string) {
 // opsAirline names the airline of an ICAO callsign prefix, for those that send operations messages we read.
 func opsAirline(code string) string {
 	return map[string]string{"ACA": "Air Canada", "UAL": "United", "CKK": "China Cargo", "TZP": "Zipair", "QFA": "Qantas", "AVA": "Avianca", "ASA": "Alaska", "EVA": "EVA Air", "DAL": "Delta", "AAL": "American",
-		"AFR": "Air France", "KLM": "KLM", "TAM": "LATAM", "BAW": "British Airways", "AAR": "Asiana", "UAE": "Emirates"}[code]
+		"CPA": "Cathay Pacific", "AFR": "Air France", "KLM": "KLM", "TAM": "LATAM", "BAW": "British Airways", "AAR": "Asiana", "UAE": "Emirates"}[code]
 }
 
 // hhmm accepts "1921" or "1921Z" and rejects the asterisks a message puts where a time is not yet known.
@@ -134,6 +134,9 @@ func parseOps(label, text string) (opsParsed, bool) {
 		return parseFlightDataLink(text)
 	case "5U":
 		if p, ok := parseQantasWX(text); ok {
+			return p, true
+		}
+		if p, ok := parseCathayWX(text); ok {
 			return p, true
 		}
 		return parseWXRQ(text)
@@ -281,7 +284,13 @@ func parseFlightDataLink(text string) (opsParsed, bool) {
 //	WX REQUEST / QFA0064/31 / TAFOR  / YSSY            a forecast
 var qfWxRe = regexp.MustCompile(`WX REQUEST ([A-Z]{3})(\d{4})/(\d{2})? ?(\w+) ([A-Z]{4}(?: [A-Z]{4})*)$`)
 
-var wxWord = map[string]string{"TAFOR": "TAF", "ACTUAL": "METAR"}
+var wxWord = map[string]string{"TAFOR": "TAF", "ACTUAL": "METAR", "SA": "METAR", "FT": "TAF"}
+
+// Cathay Pacific's weather request, label 5U: the message number, the flight and the airports asked about, then the product: SA is a
+// surface observation (METAR) and FT a forecast (TAF), as the airline telex codes have them.
+//
+//	M71ACX0198YBBN YBTL YBCS WABB-SA
+var cxWxRe = regexp.MustCompile(`^M\d{2}A(CX)(\d{4})([A-Z]{4}(?: [A-Z]{4})*)-(SA|FT)$`)
 
 // Fiji Airways and Delta's weather request, label 5U: "01 WXRQ   0811/24 KLAX/NFFN .DQ-FAM / /TYP 1/STA NFFN/STA NSFA".
 var wxrqRe = regexp.MustCompile(`WXRQ +(\d{4})/(\d{2}) ([A-Z]{4})/([A-Z]{4}) +\.([A-Z0-9-]+)((?: ?/?TYP \d+)?(?: ?/STA [A-Z]{4})*)`)
@@ -302,6 +311,16 @@ func parseWXRQ(text string) (opsParsed, bool) {
 		s += " for " + strings.Join(stations, ", ")
 	}
 	return opsParsed{rep: o, summary: s}, true
+}
+
+func parseCathayWX(text string) (opsParsed, bool) {
+	m := cxWxRe.FindStringSubmatch(spaces.ReplaceAllString(strings.TrimSpace(text), " "))
+	if m == nil {
+		return opsParsed{}, false
+	}
+	o := OpsReport{Airline: opsAirline("CPA"), Event: "WX " + m[4], Info: map[string]string{"airports": m[3]}}
+	o.Callsign, o.Flight = opsFlight(m[1], m[2])
+	return opsParsed{rep: o, summary: fmt.Sprintf("Weather request (%s) for %s", wxWord[m[4]], strings.Join(strings.Split(m[3], " "), ", "))}, true
 }
 
 func parseQantasWX(text string) (opsParsed, bool) {

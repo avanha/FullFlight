@@ -1252,6 +1252,8 @@ func TestOpsMessages(t *testing.T) {
 		{"RF", ",FDAACK01261101034415/351247,361,,1,47D1", "Flight data acknowledged"},
 		{"5U", "\r\nWX REQUEST\r\nQFA0001/27\r\nACTUAL\r\nEGLL EHAM LFPG", "Weather request (METAR) for EGLL, EHAM, LFPG"},
 		{"5U", "M75AFJ0880  01 WXRQ   0880/31 NFFN/CYVR .DQ-FAM\n\t/TYP 1/STA KSFO/STA KPDX/STA CYVR", "Weather request NFFN→CYVR for KSFO, KPDX, CYVR"},
+		{"5U", "M71ACX0198YBBN YBTL YBCS WABB-SA", "Weather request (METAR) for YBBN, YBTL, YBCS, WABB"},
+		{"5U", "M40ACX0161YSSY YBBN YMML YBCS-FT", "Weather request (TAF) for YSSY, YBBN, YMML, YBCS"},
 		{"5U", "U06AQF0018\n\tWX REQUEST\n\tQFA0018/25\n\tATIS   \n\tYSSY YMML", "D-ATIS request for YSSY, YMML"},
 		{"4T", "ATD AC0025/31/31 YVR 1921Z", "Air Canada AC25 left the gate at CYVR: out 19:21Z"},
 		{"4T", "AGFSR AC0025/31/31/YVRPVG/2218Z/833/5847.5N15356.8W/340/CRUISE/0593/0199/M41/214017/0295/***/493/1921/1940/****/****", "Air Canada AC25 position report CYVR→ZSPD: 58.792N 153.947W, FL340, cruise"},
