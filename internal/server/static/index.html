@@ -2450,6 +2450,8 @@ function pickMessage(id) {
   applyHighlight(false);
   const row = rows.get(id);
   if (row && row.scrollIntoView) row.scrollIntoView({block: 'nearest'});
+  const whole = lastMsgs.find(x => x.id === id);
+  if (whole && !$('#msgpanel').hidden) openMsgPanel(whole);   // the details panel follows a message chosen on the map too
 }
 const expanded = new Set();   // message ids whose details are open; survives refreshes
 const rows = new Map();       // message id -> its row
@@ -2494,7 +2496,7 @@ function flightHeader(i) {
 // ---- message details panel ------------------------------------------------------------------------------
 // An icon on a message opens a side panel with how it reached us: the station (and where it is, from airframes.io's list, the
 // same one the Stations page uses), the link, the frequency and the message and block numbers. Clicking another message while it is
-// open shows that one. Everything comes off the radio or the network, so it is put in as text, never as HTML.
+// open shows that one, whether it was chosen in the list or on the map. Everything comes off the radio or the network, so it is put in as text, never as HTML.
 let msgPanelId = null, stationInfo = {at: 0, by: new Map()};
 async function stationFor(ident) {
   if (!ident) return null;
@@ -2515,7 +2517,12 @@ function mpSection(title, rows) {
   dl.className = 'mpbox';   // each group reads as one block
   for (const [k, v] of rows.filter(r => r[1] != null && r[1] !== '')) {
     const dt = document.createElement('dt'), dd = document.createElement('dd');
-    dt.textContent = k; dd.textContent = v;
+    dt.textContent = k;
+    if (v && v.href) {   // a link to another page: the Stations page selects the station named in the address
+      const a = document.createElement('a');
+      a.textContent = v.text; a.href = v.href; a.target = '_blank'; a.rel = 'noopener';
+      dd.append(a);
+    } else dd.textContent = v;
     dl.append(dt, dd);
   }
   return [h, dl];
@@ -2538,7 +2545,7 @@ async function openMsgPanel(m) {
     ['Heard', m.rx_count > 1 ? `${m.rx_count} times (stored once)` : m.rx_count === 1 ? 'once' : ''],
   ].filter(Boolean);
   const stationRows = [
-    ['Name', m.station || 'not recorded'],
+    ['Name', m.station ? {text: m.station, href: '/stations.html#' + encodeURIComponent(m.station)} : 'not recorded'],
     ['Location', place || (m.station ? (stationInfo.by.size ? 'not in airframes.io\'s list' : 'unknown: the list of stations has not been fetched (the Stations page does that)') : '')],
     ['Receiver', station && station.known ? [station.application, station.source_type].filter(Boolean).join(', ') : ''],
     ['Timeliness', station && VERDICTS[station.verdict] ? VERDICTS[station.verdict] + (station.verdict === 'late' || station.verdict === 'sometimes' ? ` (median ${dur(station.median_s)} after the aircraft's own time)` : '') : ''],

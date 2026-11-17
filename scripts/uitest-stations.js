@@ -50,7 +50,7 @@ function newWorld(setup) {
   if (setup) setup(w);
   const ctx = {document: w.document, fetch: w.fetch, L,
     localStorage: {getItem: k => (k in w.stored ? w.stored[k] : null), setItem: (k, v) => { w.stored[k] = String(v); }, removeItem: k => { delete w.stored[k]; }},
-    window: {matchMedia: () => ({matches: w.narrow}), addEventListener: (ev, fn) => { if (ev === 'resize') w.resize = fn; }}, Date, Math, Set, Map, JSON, Object, String, Promise, console, Number};
+    location: {hash: w.hash || ''}, window: {matchMedia: () => ({matches: w.narrow}), addEventListener: (ev, fn) => { if (ev === 'resize') w.resize = fn; }}, Date, Math, Set, Map, JSON, Object, String, Promise, console, Number};
   vm.createContext(ctx);
   vm.runInContext(src, ctx);
   w.ctx = ctx;
@@ -185,5 +185,12 @@ const names = w => rows(w).map(tr => tr.children[0].textContent);
   // the window is widened past the point where they stack: the same share applies to the columns
   w.narrow = false; w.resize();
   assert.strictEqual(w.byId['#split'].style.gridTemplateColumns, '50% 8px minmax(0, 1fr)'); assert.strictEqual(w.byId['#split'].style.gridTemplateRows, '');
+  // a link from the map page's message panel ends in #NAME: that station is selected, and brought into view
+  w = newWorld(x => { x.hash = '#' + encodeURIComponent('SK-KLAX-VDLM2'); }); await w.settle();
+  assert.deepStrictEqual(rows(w).map(tr => tr.className), ['', '', 'sel', '', ''], 'the linked station is selected');
+  assert.strictEqual(rows(w)[2].scrolled, true, 'and scrolled to');
+  assert.strictEqual(JSON.stringify(w.map.views.at(-1)[0]), '[33.9,-118.4]', 'and the map goes to it');
+  w = newWorld(x => { x.hash = '#NO-SUCH'; }); await w.settle();
+  assert.ok(rows(w).every(tr => tr.className === ''), 'an unknown station selects nothing');
   console.log('stations page checks passed');
 })().catch(e => { console.error('FAILED:', e.message); if (process.env.UITEST_STACK) console.error(e.stack.split('\n').slice(1, 4).join('\n')); process.exit(1); });

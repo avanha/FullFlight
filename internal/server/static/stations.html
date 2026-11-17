@@ -182,8 +182,14 @@ function select(ident, pan) {
   const s = stations.find(x => x.ident === ident), m = dots.get(ident);
   if (pan && map && m) { map.setView(m.getLatLng(), Math.max(map.getZoom ? map.getZoom() : 4, 5)); m.openTooltip(); }
   const row = [...$('#rows').children].find(r => r.className === 'sel');
-  if (!pan && row && row.scrollIntoView) row.scrollIntoView({block: 'nearest'});
+  if (row && row.scrollIntoView) row.scrollIntoView({block: 'nearest'});
   return s;
+}
+
+// A link from a message's details panel on the map page ends in #NAME: that station is selected once the list is in.
+function selectFromAddress() {
+  const id = decodeURIComponent(((typeof location !== 'undefined' && location.hash) || '').replace(/^#/, ''));
+  if (id && stations.some(s => s.ident === id)) select(id, true);
 }
 
 // ---- the divider between the table and the map: dragged, or moved with the arrow keys; kept for next time ----
@@ -256,7 +262,7 @@ $('#refresh').onclick = async () => {
 
 initMap();
 applySplit();
-load(true);
+load(true).then(selectFromAddress);
 </script>
 </body>
 </html>

@@ -1919,6 +1919,8 @@ highlightGroup = null;
     assert.ok(got.includes('Decoded|posrpt|\u{1F4CB}|Position report KSEA\u2192RCTP 47.393N 122.308W FL023|Position report\nlonger text|Raw text'), 'the decoded text comes before the raw: ' + got);
     assert.ok(got.includes('Raw text|\u{1F4CB}|r'), 'the raw text is in the panel with the copy icon in its heading: ' + got);
     assert.ok(fetchLog.includes('/api/stations'), 'the station list is asked for');
+    const link = body().children.flatMap(function w(n) { return [n, ...(n.children || []).flatMap(w)]; }).find(n => n.tag === 'a' && n.textContent === 'KBFI-1');
+    assert.ok(link && link.href === '/stations.html#KBFI-1', 'the station name links to its entry on the Stations page');
     // a station airframes.io does not list, and a message with none
     await open(7002);
     assert.ok(text().includes("not in airframes.io's list") && !text().includes('KBFI-1'), 'an unlisted station: ' + text());
@@ -1927,8 +1929,13 @@ highlightGroup = null;
     // while it is open, choosing another message shows that one; opening a message's notes closes it
     t.rows.get(7001).onclick(); await settle();
     assert.ok(text().includes('KBFI-1'), 'the panel follows the message chosen');
+    // the same when it is chosen on the map
+    t.pickMessage(7002); await settle();
+    assert.ok(text().includes('NEW-9') && !text().includes('KBFI-1'), 'the panel follows a message picked on the map: ' + text());
     document.querySelector('#mpclose').onclick();
     assert.strictEqual(panel.hidden, true, 'and closes');
+    t.pickMessage(7001); await settle();
+    assert.strictEqual(panel.hidden, true, 'a closed panel is not opened by picking one on the map');
     t.rows.get(7002).onclick(); await settle();
     assert.strictEqual(panel.hidden, true, 'a closed panel is not opened by choosing a message');
   }
