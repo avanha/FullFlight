@@ -1283,6 +1283,23 @@ highlightGroup = null;
     assert.strictEqual(pdots.length, 3);
     assert.ok(lines(pdots[1].tooltip).includes('departure clearance QFA63 cleared to FAOR'), lines(pdots[1].tooltip).join(' | '));
     assert.strictEqual(calls.circles.filter(c => c.o.color === '#0f766e').length, 3, 'the oceanic one keeps its colour');
+
+    // G-XLEI flew BA3G London to Miami and, nine hours after it landed, BA6R back. The clearance for the first, sent in the air at
+    // 11:18Z, is not the second's, even though the second began within twelve hours of it
+    const ms = x => Date.parse(x);
+    const back = {startMs: ms('2026-11-16T22:30:00Z'), endMs: ms('2026-11-17T07:20:00Z'), flight: 'BA6R'};
+    const out = {id: 4, t: '2026-11-16T11:18:35Z', kind: 'clearance', callsign: 'BAW3G', to: 'KMIA', detail: 'NAT C', points: [pt('RESNO', 56, -20), pt('LOMSI', 55, -50)], missing: []};
+    const own = {...out, id: 5, t: '2026-11-17T01:00:00Z', callsign: 'BAW6R', to: 'EGLL'};
+    t.drawClearances([out], back, NOW_MS);
+    assert.strictEqual(t.clearanceGroup.items.length, 0, 'the last flight\'s clearance is not drawn on this one');
+    t.drawClearances([out, own], back, NOW_MS);
+    assert.strictEqual(t.clearanceGroup.items.length, 3, 'its own is: one line and two dots');
+    t.drawClearances([out], {startMs: ms('2026-11-16T11:30:00Z'), endMs: ms('2026-11-16T20:00:00Z'), flight: 'BA3G'}, NOW_MS);
+    assert.strictEqual(t.clearanceGroup.items.length, 3, 'and the first flight keeps its own');
+    t.drawClearances([{...out, id: 6, t: '2026-11-16T09:00:00Z'}], {...back, flight: 'BA3G', startMs: ms('2026-11-16T11:30:00Z')}, NOW_MS);
+    assert.strictEqual(t.clearanceGroup.items.length, 0, 'an oceanic clearance from before the flight left is not its');
+    t.drawClearances([{...pdc, t: '2026-11-17T04:00:00Z', callsign: 'BAW6R'}], {startMs: ms('2026-11-17T08:00:00Z'), endMs: ms('2026-11-17T12:00:00Z'), flight: 'BA6R'}, NOW_MS);
+    assert.strictEqual(t.clearanceGroup.items.length, 4, 'a pre-departure clearance still comes hours before');
   }
 
   // ===== 8r5. flights older than the window are listed, and fetched one at a time ====================

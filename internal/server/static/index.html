@@ -1637,15 +1637,19 @@ function choosePlan(plans, chosen, nowMs = Date.now()) {
 // A clearance is a route the aircraft was cleared to fly, drawn apart from the filed plan, which stays the flight's route: the
 // oceanic clearance gives the route over the ocean (only its own fixes), the pre-departure clearance the one from the gate (the
 // origin and the fixes it names, stopping short of the destination). Those that arrived during the flight shown (or in the last two days).
+// An oceanic clearance is sent in the air, so one that arrived well before the flight began is the last flight's. A pre-departure
+// clearance is issued at the gate, hours ahead. Either must be for the flight's own number: a clearance for the flight before, sent
+// to the same aircraft, is not drawn on this one.
+const OCEANIC_LEAD = 3600000, PDC_LEAD = 12 * 3600000;
 const isClearance = p => p.kind === 'clearance' || p.kind === 'pdc';
 const CLEARANCE_COLOR = '#0f766e', PDC_COLOR = '#b45309';
 function drawClearances(plans, chosen, nowMs = Date.now()) {
   clearanceGroup.clearLayers();
-  const lo = chosen ? chosen.startMs - 12 * 3600000 : nowMs - 48 * 3600000;
   const hi = chosen ? chosen.endMs + FLIGHT_TOL : nowMs + 5 * 60000;
   for (const c of plans || []) {
     const t = Date.parse(c.t);
-    if (!isClearance(c) || t < lo || t > hi || !c.points || c.points.length < 2) continue;
+    const lo = chosen ? chosen.startMs - (c.kind === 'pdc' ? PDC_LEAD : OCEANIC_LEAD) : nowMs - 48 * 3600000;
+    if (!isClearance(c) || t < lo || t > hi || !c.points || c.points.length < 2 || !planIsForFlight(c, chosen)) continue;
     const pdc = c.kind === 'pdc', color = pdc ? PDC_COLOR : CLEARANCE_COLOR;
     L.polyline(c.points.map(p => ll(p.lat, p.lon)), {color, weight: 3, dashArray: '2 7', opacity: .8, interactive: false}).addTo(clearanceGroup);
     const head = `${c.callsign ? c.callsign + ' ' : ''}cleared to ${c.to}`;

@@ -918,7 +918,9 @@ A request for an oceanic clearance (`/EGGX.OC1/RCL 030 UAL26-ATSIX/1316 M085F370
 the centre's reply (`CLA`: the destination, the track, the route from the entry fix, and the level and Mach to hold) are decoded
 as `oceanic_clearance`. The cleared route is drawn as its own layer, "Clearances (oceanic, departure)" in the legend (dashed teal,
 a dot on each fix, the track, level and entry in the hover). It is only the route over the ocean, so it is not treated as the
-flight's plan, and a filed plan stays the route that is projected along. Fixes given by coordinates (`62N020W`) are placed as
+flight's plan, and a filed plan stays the route that is projected along. A flight shows the clearances sent for its own number: an oceanic one
+that arrived in the air (up to an hour before the flight's first sighting), and a pre-departure one up to twelve hours ahead; the last flight's
+clearance is not drawn on the next one, however soon it began. Fixes given by coordinates (`62N020W`) are placed as
 written; named ones from what we have learned of them or the navigation database. Seen so far: one clearance and two requests, so
 a form that does not fit is left undecoded. Free text from the crew that mentions a route (a `7B` message) is shown as text and
 not plotted.
