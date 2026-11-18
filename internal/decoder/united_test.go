@@ -101,3 +101,20 @@ func TestPerformanceReportNumbers(t *testing.T) {
 		t.Errorf("alaska: %+v %+v", o, r.Pos)
 	}
 }
+
+func TestUnitedHowgozitRequest(t *testing.T) {
+	for _, c := range []struct{ text, flight, summary, suffix string }{
+		{"/R3 HOWGOZIT REQ   / EGLL KDEN 17 121020 0026 17 EGLL", "UA26", "United 26 howgozit request EGLL→KDEN, asked at 12:10Z on day 17", ""},
+		{"/R3 HOWGOZIT REQ   / KEWR EGLL 16 023005 0904 16 KEWR", "UA904", "United 904 howgozit request KEWR→EGLL, asked at 02:30Z on day 16", ""},
+		{"/R3 HOWGOZIT REQ   / KSFO WSSS 15 200727 001D 15 KSFO", "UA1", "United 1 howgozit request KSFO→WSSS, asked at 20:07Z on day 15", "D"},
+	} {
+		r, err := Decode(Message{Label: "5Z", Text: c.text})
+		o, _ := r.Fields["ops"].(OpsReport)
+		if err != nil || r.Kind != KindOps || r.Dir != Downlink || o.Event != "howgozit request" || o.Flight != c.flight || o.Info["suffix"] != c.suffix || r.Summary != c.summary {
+			t.Errorf("%q: %v %+v %q", c.text, r.Kind, o, r.Summary)
+		}
+	}
+	if r, _ := Decode(Message{Label: "5Z", Text: "/R3 HOWGOZIT REQ   / KEWR EGLL 16 023005"}); r.Kind == KindOps {
+		t.Errorf("a request cut short was read: %q", r.Summary)
+	}
+}

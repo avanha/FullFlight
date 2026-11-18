@@ -28,6 +28,34 @@ var (
 	unitedSent   = regexp.MustCompile(`SENT: *(\d\d:\d\d(?::\d\d)?)Z?`)
 )
 
+// The aircraft's request for a howgozit, on label 5Z (down from the aircraft):
+//
+//	/R3 HOWGOZIT REQ   / EGLL KDEN 17 121020 0026 17 EGLL
+//
+// the route, the day and time (HHMMSS) it was asked, the flight number (zero-padded, sometimes with a letter after it) and the day
+// and origin again. Read from United's traffic: the flight numbers agree with the routes (UA26 London to Denver, UA904 Newark to London);
+// the letter that follows one (001D) is not understood. Dispatch answers with the howgozit above.
+var unitedHowReqRe = regexp.MustCompile(`^/R3 HOWGOZIT REQ\s*/ ([A-Z]{4}) ([A-Z]{4}) (\d\d) (\d{6}) (\d{3})([0-9A-Z]) (\d\d) ([A-Z]{4})\s*$`)
+
+func parseUnitedHowgozitRequest(text string) (opsParsed, bool) {
+	m := unitedHowReqRe.FindStringSubmatch(strings.TrimSpace(text))
+	if m == nil || m[2] == m[1] {
+		return opsParsed{}, false
+	}
+	o := OpsReport{Airline: "United", Event: "howgozit request", Origin: m[1], Dest: m[2], Info: map[string]string{"day": m[3], "time": hmZ(m[4][:4])}}
+	if m[6] >= "0" && m[6] <= "9" {
+		o.Callsign, o.Flight = opsFlight("UAL", m[5]+m[6])
+	} else {
+		o.Callsign, o.Flight = opsFlight("UAL", m[5])
+		o.Info["suffix"] = m[6]
+	}
+	s := "United"
+	if o.Flight != "" {
+		s += " " + strings.TrimPrefix(o.Flight, "UA")
+	}
+	return opsParsed{rep: o, summary: fmt.Sprintf("%s howgozit request %s, asked at %s on day %s", s, route(o.Origin, o.Dest), o.Info["time"], m[3])}, true
+}
+
 func parseUnited(text string) (opsParsed, bool) {
 	t := html.UnescapeString(strings.NewReplacer("\r", "", "\x07", "", "\t", "").Replace(strings.TrimSpace(text)))
 	// lines with their indentation trimmed: a message sent the other way round arrives indented

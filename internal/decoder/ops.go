@@ -178,6 +178,8 @@ func parseOps(label, text string) (opsParsed, bool) {
 			return p, true
 		}
 		return parseUnited(text)
+	case "5Z":
+		return parseUnitedHowgozitRequest(text)
 	case "83":
 		return parsePOSRPT83(text)
 	case "99":

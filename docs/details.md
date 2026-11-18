@@ -878,6 +878,9 @@ times in them join the evidence for a flight's route and departure.
   fuel weights, the centre of gravity, the people on board, the passengers and the crew), `GATE ASSIGN` (the gate, the ramp and
   operations frequencies, ground power, the planned ground time and the next flight), `TURB SIGMET` (the severity, type, altitudes, the
   time the flight enters the area and how long it is valid), and `FLIGHT STATUS` and `CABIN FAULT RPT` by their flight and one fact.
+  The aircraft's request for a howgozit (label `5Z`, down: `/R3 HOWGOZIT REQ / EGLL KDEN 17 121020 0026 17 EGLL`) gives the route, the
+  day and time it was asked, and the flight number (zero-padded; a letter after it, as in `001D`, is not understood). The other requests on
+  that label (`GATE REQ`, `LDG DATA REQ`, `EXP TIME`, `DISP MSG`) are not read.
   Messages with a flight and route count as route evidence. The crew list and the release verification (names and employee numbers),
   and messages between pilot and dispatcher (free text) are not read. Read from one week of one airline's traffic: a value whose
   meaning is not given in the message (the units of the waypoint fuel column, what the two times beside the departure airport mean) is not shown.
