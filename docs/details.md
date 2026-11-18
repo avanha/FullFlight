@@ -921,7 +921,8 @@ a dot on each fix, the track, level and entry in the hover). It is only the rout
 flight's plan, and a filed plan stays the route that is projected along. A flight shows the clearances sent for its own number: an oceanic one
 that arrived in the air (up to an hour before the flight's first sighting), and a pre-departure one up to twelve hours ahead; the last flight's
 clearance is not drawn on the next one, however soon it began. Fixes given by coordinates (`62N020W`) are placed as
-written; named ones from what we have learned of them or the navigation database. Seen so far: one clearance and two requests, so
+written; named ones from what we have learned of them or the navigation database. Off the organised tracks the clearance says
+`RANDOM ROUTE` where a track would be; those words are shown as the track, not read as fixes. Seen so far: one clearance and two requests, so
 a form that does not fit is left undecoded. Free text from the crew that mentions a route (a `7B` message) is shown as text and
 not plotted.
 

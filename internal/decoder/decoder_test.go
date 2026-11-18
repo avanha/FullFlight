@@ -1455,6 +1455,15 @@ func TestOceanicClearance(t *testing.T) {
 	if want := "Oceanic clearance UAL26 to KDEN: NAT B, ATSIX 62N020W 63N030W 63N040W 62N050W PIDSO (entry ATSIX 13:16Z, FL370 M0.85)"; r.Summary != want {
 		t.Errorf("summary %q", r.Summary)
 	}
+	// a random route has no track: RANDOM ROUTE are not fixes (the fix database knows a ROUTE, far from the Atlantic)
+	r, err = Decode(Message{Label: "B2", Text: "/PIKCLYA.OC1/CLA 1033 261117 EGGX\r\nCLRNCE 147\r\nBAW3G CLRD TO KMIA VIA\r\nRESNO\r\nRANDOM ROUTE\r\n55N020W 5430N030W\r\n5230N040W 48N050W NICSO\r\nFM RESNO/1132 MNTN F360\r\nM084\r\nEND OF MESSAGE75C3"})
+	c, _ = r.Fields["clearance"].(Clearance)
+	if err != nil || r.Kind != KindClearance || c.Track != "RANDOM ROUTE" || len(c.Route.Fixes) != 5 || c.Route.Fixes[0].Name != "55N020W" || !c.Route.Fixes[1].HasPos {
+		t.Fatalf("random route: %v %+v", r.Kind, c)
+	}
+	if want := "Oceanic clearance BAW3G to KMIA: RANDOM ROUTE, 55N020W 5430N030W 5230N040W 48N050W NICSO (entry RESNO 11:32Z, FL360 M0.84)"; r.Summary != want {
+		t.Errorf("summary %q", r.Summary)
+	}
 	// something else on the same address, or a clearance that does not fit the form, is left alone
 	for _, s := range []string{"/EGGX.OC1/RCL 030 nonsense", "/EGGX.OC1/CLA 1217 261027 EGGX CLRNCE 173 UAL26 CLRD TO KDEN MNTN F370 M085 END OF MESSAGE0000"} {
 		if r, _ = Decode(Message{Label: "A9", Dir: Uplink, Text: s}); r.Kind == KindClearance {

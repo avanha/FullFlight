@@ -18,6 +18,8 @@ import (
 //	  / NAT B / ATSIX 62N020W 63N030W 63N040W / 62N050W PIDSO / FM ATSIX/1316          the destination, how it enters, the track and the route
 //	  MNTN F370 M085 / END OF MESSAGE                                                  from the entry fix, and the level and Mach to hold
 //
+// Off the organised tracks the "track" is the words RANDOM ROUTE, then latitude/longitude points; they are not fixes.
+//
 // Read from samples, not a specification: one clearance and two requests. A form that does not fit is left undecoded.
 type Clearance struct {
 	What      string           `json:"what"` // request or clearance
@@ -37,7 +39,7 @@ type Clearance struct {
 var (
 	ocAddrRe = regexp.MustCompile(`^/([A-Z0-9]{4,7})\.OC1/(.*)$`)
 	ocReqRe  = regexp.MustCompile(`^RCL (\d+) ([A-Z0-9]+)-([A-Z0-9]+)/(\d{4}) M(\d{3})F(\d{3})$`)
-	ocClaRe  = regexp.MustCompile(`^CLA (\d{4}) (\d{6}) ([A-Z]{4}) CLRNCE (\d+) ([A-Z0-9]+) CLRD TO ([A-Z]{4}) VIA ([A-Z0-9]+)(?: (NAT [A-Z]))? (.+?) FM ([A-Z0-9]+)/(\d{4}) MNTN F(\d{3}) M(\d{3}) END OF MESSAGE$`)
+	ocClaRe  = regexp.MustCompile(`^CLA (\d{4}) (\d{6}) ([A-Z]{4}) CLRNCE (\d+) ([A-Z0-9]+) CLRD TO ([A-Z]{4}) VIA ([A-Z0-9]+)(?: (NAT [A-Z]|RANDOM ROUTE))? (.+?) FM ([A-Z0-9]+)/(\d{4}) MNTN F(\d{3}) M(\d{3}) END OF MESSAGE$`)
 	ocCrcRe  = regexp.MustCompile(`[0-9A-F]{4}$`)
 	ocLLRe   = regexp.MustCompile(`^(\d{2})(\d{2})?([NS])(\d{3})(\d{2})?([EW])$`)
 )
