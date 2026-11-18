@@ -623,6 +623,14 @@ is hours long never delivers promptly. The verdict is **late** for half or more 
 and **?** for fewer than five timed messages (CPDLC, AFN logons and ATIS requests carry no time, so a station that only delivers
 those cannot be judged).
 
+The delay is not always the station's. Within one station, lateness often depends on the kind of message: in what we hold, satellite
+(Inmarsat) stations deliver nothing late, while on VHF half the airline operations messages and a third of the MIAM and maintenance
+reports are, and one station passes MIAM reports on in seconds and holds its operations messages for hours. An aircraft may queue
+what is not urgent until it has a cheaper link than SATCOM, and a station may deliver in batches; the messages do not say which. So
+the delivery chip's hover also lists the delay by kind of message (kinds with at least five timed messages), a ◐ beside the chip
+marks a station where some kinds are mostly late (half or more) and others nearly never (one in ten or fewer), and selecting a
+station shows the same list above the table, with a note when it is of that sort.
+
 Click a heading to sort; the filters take the link, the verdict, a name, and "on the map only". The divider between the table and
 the map can be dragged (or moved with the arrow keys), is remembered, and a double-click puts it back. On a narrow window the map
 goes under the table.

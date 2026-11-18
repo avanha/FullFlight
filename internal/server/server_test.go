@@ -1983,6 +1983,12 @@ func TestStationsScreen(t *testing.T) {
 		Application   string         `json:"application"`
 		FlaggedReason string         `json:"flagged_reason"`
 		Transports    map[string]int `json:"transports"`
+		Kinds         []struct {
+			Kind     string  `json:"kind"`
+			Timed    int     `json:"timed"`
+			Late     int     `json:"late"`
+			LateFrac float64 `json:"late_frac"`
+		} `json:"kinds"`
 	}
 	var body struct {
 		Fetched  *time.Time
@@ -2010,6 +2016,9 @@ func TestStationsScreen(t *testing.T) {
 	late := by()["EB-LZIB"]
 	if late.Verdict != "late" || late.Timed != 8 || late.Late != 8 || late.LateFrac != 1 || late.MedianS != 86400 || late.ShortestS != 86400 || late.Known || body.Stations[0].Ident != "EB-LZIB" {
 		t.Errorf("%+v", late)
+	}
+	if k := late.Kinds; len(k) == 0 || k[0].Timed != 8 || k[0].Late != 8 || k[0].LateFrac != 1 || k[0].Kind == "" {
+		t.Errorf("late by kind: %+v", late.Kinds)
 	}
 	if by()["KBFI-1"].Verdict != "prompt" || by()["NEW-1"].Verdict != "unknown" || by()["NEW-1"].Transports["acars"] != 1 {
 		t.Errorf("%+v %+v", by()["KBFI-1"], by()["NEW-1"])

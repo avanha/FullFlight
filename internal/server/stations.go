@@ -30,13 +30,14 @@ type stationJSON struct {
 	Last       time.Time      `json:"last"`
 	Transports map[string]int `json:"transports"`
 
-	Timed     int     `json:"timed"` // messages carrying the aircraft's own time
-	Late      int     `json:"late"`  // of them, more than an hour after it
-	LateFrac  float64 `json:"late_frac"`
-	MedianS   int64   `json:"median_s"`
-	P90S      int64   `json:"p90_s"`
-	ShortestS int64   `json:"shortest_s"`
-	Verdict   string  `json:"verdict"` // "late", "sometimes", "prompt" or "unknown" (too few timed messages)
+	Timed     int            `json:"timed"` // messages carrying the aircraft's own time
+	Late      int            `json:"late"`  // of them, more than an hour after it
+	LateFrac  float64        `json:"late_frac"`
+	MedianS   int64          `json:"median_s"`
+	P90S      int64          `json:"p90_s"`
+	ShortestS int64          `json:"shortest_s"`
+	Verdict   string         `json:"verdict"`         // "late", "sometimes", "prompt" or "unknown" (too few timed messages)
+	Kinds     []kindLateness `json:"kinds,omitempty"` // the same by kind of message, the most numerous first
 
 	// what airframes.io says, when its list has been fetched and has the station
 	Known          bool      `json:"known"`
@@ -52,6 +53,15 @@ type stationJSON struct {
 	AFMessages     int64     `json:"af_messages,omitempty"`
 	AFLastReport   time.Time `json:"af_last_report,omitzero"`
 	NearestAirport string    `json:"nearest_airport,omitempty"`
+}
+
+// kindLateness is how late one kind of message arrives through a station: an aircraft may hold some kinds until it has a cheaper link.
+type kindLateness struct {
+	Kind     string  `json:"kind"`
+	Timed    int     `json:"timed"`
+	Late     int     `json:"late"`
+	LateFrac float64 `json:"late_frac"`
+	MedianS  int64   `json:"median_s"`
 }
 
 type stationsJSON struct {
@@ -91,6 +101,15 @@ func (s *Server) stationsBody() (stationsJSON, error) {
 			j.LateFrac = float64(st.Lateness.Late) / float64(st.Lateness.Timed)
 			j.MedianS, j.P90S, j.ShortestS = int64(st.Lateness.Median.Seconds()), int64(st.Lateness.P90.Seconds()), int64(st.Lateness.Shortest.Seconds())
 		}
+		for k, l := range st.ByKind {
+			j.Kinds = append(j.Kinds, kindLateness{Kind: k, Timed: l.Timed, Late: l.Late, LateFrac: float64(l.Late) / float64(l.Timed), MedianS: int64(l.Median.Seconds())})
+		}
+		sort.Slice(j.Kinds, func(a, b int) bool {
+			if j.Kinds[a].Timed != j.Kinds[b].Timed {
+				return j.Kinds[a].Timed > j.Kinds[b].Timed
+			}
+			return j.Kinds[a].Kind < j.Kinds[b].Kind
+		})
 		if i := st.Info; i != nil {
 			j.Known, j.Lat, j.Lon, j.Fuzzed = true, i.Lat, i.Lon, i.Fuzzed
 			j.Country, j.CountryCode, j.Application, j.SourceType = i.CountryName, i.CountryCode, i.Application, i.SourceType

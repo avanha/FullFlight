@@ -50,6 +50,7 @@
   <span id="count" style="margin-left:auto;color:#555"></span>
 </header>
 <div id="err"></div>
+<div id="bykind" hidden></div>
 <div id="split">
   <div id="tablewrap">
     <table>
@@ -65,6 +66,7 @@
   <span class="chip sometimes" style="margin-left:12px">sometimes</span>some do
   <span class="chip prompt" style="margin-left:12px">prompt</span>none do
   <span class="chip unknown" style="margin-left:12px">?</span>fewer than 5 messages carry the aircraft's own time.
+  <span class="sel-mark" style="margin-left:12px">◐</span>only some kinds of message arrive late through it (select the station to see which).
   A position marked ~ is approximate (the station asked airframes.io to blur it).</div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
@@ -122,9 +124,44 @@ function drawHeads() {
   }));
 }
 
+// The kinds of message as the page names them; one a station delivers late while it passes others on time is one the aircraft held back
+// (queued for a cheaper link) or the station batches.
+const KIND = {ops_report: 'airline operations', miam: 'MIAM reports', maintenance_report: 'maintenance reports', acmf_report: 'ACMF reports', aoc_position: 'airline position reports',
+  pos_report: 'POS reports', posrpt: 'POSRPT reports', adsc: 'ADS-C', cpdlc: 'CPDLC', fms_position: 'FMS reports', fault_report: 'fault reports', clearance: 'clearances', sbpos: 'position reports'};
+const kindName = k => KIND[k] || k.replace(/_/g, ' ');
+const MIN_KIND = 5;   // timed messages of a kind before it is told apart from the others
+const kindsOf = s => (s.kinds || []).filter(k => k.timed >= MIN_KIND);
+const kindClass = k => k.late_frac >= 0.5 ? 'late' : k.late > 0 ? 'sometimes' : 'prompt';
+// some kinds of message arrive late through this station and others do not
+function selective(s) {
+  const ks = kindsOf(s);
+  return ks.some(k => k.late_frac >= 0.5) && ks.some(k => k.late_frac <= 0.1);
+}
+const kindText = k => `${kindName(k.kind)} ${Math.round(100 * k.late_frac)}% late (${k.late} of ${k.timed}, median ${lag(k.median_s)})`;
+
 function verdictTip(s) {
   if (s.verdict === 'unknown') return `${s.timed} of its ${s.messages} messages carry the aircraft's own time: too few to say how late it is`;
-  return `${s.late} of ${s.timed} messages with the aircraft's own time arrived over an hour late; median ${lag(s.median_s)}, 90% within ${lag(s.p90_s)}, shortest ${lag(s.shortest_s)}`;
+  let t = `${s.late} of ${s.timed} messages with the aircraft's own time arrived over an hour late; median ${lag(s.median_s)}, 90% within ${lag(s.p90_s)}, shortest ${lag(s.shortest_s)}`;
+  if (kindsOf(s).length > 1) t += '\nBy kind: ' + kindsOf(s).map(kindText).join('; ');
+  return t;
+}
+
+// under the filters: how the selected station does by kind of message
+function drawKinds() {
+  const el = $('#bykind'), s = stations.find(x => x.ident === selected), ks = s ? kindsOf(s) : [];
+  el.hidden = ks.length < 1;
+  if (el.hidden) { el.replaceChildren(); return; }
+  const head = document.createElement('b');
+  head.textContent = `${s.ident}, by kind of message: `;
+  const parts = ks.map(k => { const sp = document.createElement('span'); sp.className = `k ${kindClass(k)}`; sp.textContent = kindText(k); return sp; });
+  const nodes = [head, ...parts];
+  if (selective(s)) {
+    const n = document.createElement('div');
+    n.className = 'note';
+    n.textContent = 'Only some kinds arrive late here, so the delay is not the station alone: the aircraft may hold those messages until it has a cheaper link, or the station may send them in batches.';
+    nodes.push(n);
+  }
+  el.replaceChildren(...nodes);
 }
 
 function drawRows(list) {
@@ -138,6 +175,7 @@ function drawRows(list) {
         const chip = document.createElement('span');
         chip.className = `chip ${s.verdict}`; chip.textContent = VERDICT[s.verdict]; chip.title = verdictTip(s);
         td.append(chip);
+        if (selective(s)) { const m = document.createElement('span'); m.className = 'sel-mark'; m.textContent = ' ◐'; m.title = 'only some kinds of message arrive late through this station: ' + kindsOf(s).map(kindText).join('; '); td.append(m); }
         if (s.flagged) { const f = document.createElement('span'); f.className = 'flag'; f.textContent = ' ⚑'; f.title = `airframes.io flags this station: ${s.flagged_reason || 'no reason given'}`; td.append(f); }
       } else {
         td.textContent = text(s);
@@ -178,7 +216,7 @@ function drawMap(list, fit) {
 function select(ident, pan) {
   selected = ident;
   const list = shown();
-  drawRows(list); drawMap(list, false);
+  drawRows(list); drawMap(list, false); drawKinds();
   const s = stations.find(x => x.ident === ident), m = dots.get(ident);
   if (pan && map && m) { map.setView(m.getLatLng(), Math.max(map.getZoom ? map.getZoom() : 4, 5)); m.openTooltip(); }
   const row = [...$('#rows').children].find(r => r.className === 'sel');
@@ -225,7 +263,7 @@ if (typeof window !== 'undefined' && window.addEventListener) window.addEventLis
 
 function render(fit) {
   const list = shown();
-  drawHeads(); drawRows(list); drawMap(list, fit);
+  drawHeads(); drawRows(list); drawMap(list, fit); drawKinds();
   const onMap = list.filter(s => s.lat != null).length;
   $('#count').textContent = `${list.length} of ${stations.length} stations${onMap < list.length ? ` · ${onMap} with a position` : ''}`;
 }

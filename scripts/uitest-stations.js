@@ -18,10 +18,11 @@ const NOW = Date.now();
 const iso = ms => new Date(ms).toISOString();
 const station = (o) => ({ident: 'X', messages: 1, aircraft: 1, first: iso(NOW - 864e5), last: iso(NOW - 3600e3), transports: {vdl: 1}, timed: 0, late: 0, late_frac: 0, median_s: 0, p90_s: 0, shortest_s: 0,
   verdict: 'unknown', known: false, ...o});
-const LATE = station({ident: 'EB-LZIB', messages: 235, aircraft: 3, timed: 108, late: 108, late_frac: 1, median_s: 106000, p90_s: 190000, shortest_s: 37749, verdict: 'late', known: true, lat: 48.1486, lon: 17.10775,
+const LATE = station({ident: 'EB-LZIB', messages: 235, aircraft: 3, timed: 108, late: 108, late_frac: 1, median_s: 106000, p90_s: 190000, shortest_s: 37749, verdict: 'late', kinds: [{kind: 'miam', timed: 108, late: 108, late_frac: 1, median_s: 106000}], known: true, lat: 48.1486, lon: 17.10775,
   fuzzed: true, country: 'Slovakia', country_code: 'SK', application: 'dumpvdl2', source_type: 'vdl', flagged: true, flagged_reason: 'Rate anomaly detected', nearest_airport: 'LZIB'});
 const PROMPT = station({ident: 'AM-LSZH-VDL2', messages: 90, aircraft: 2, timed: 38, late: 0, late_frac: 0, median_s: 4, p90_s: 9, shortest_s: 2, verdict: 'prompt', known: true, lat: 47.4, lon: 8.5, country: 'Switzerland', application: 'dumpvdl2', source_type: 'vdl'});
-const SOME = station({ident: 'SK-KLAX-VDLM2', messages: 150, timed: 66, late: 17, late_frac: 17 / 66, median_s: 12, p90_s: 20000, shortest_s: 8, verdict: 'sometimes', known: true, lat: 33.9, lon: -118.4, country: 'United States', application: 'dumpvdl2', source_type: 'vdl'});
+const SOME = station({ident: 'SK-KLAX-VDLM2', messages: 150, timed: 66, late: 17, late_frac: 17 / 66, median_s: 12, p90_s: 20000, shortest_s: 8, verdict: 'sometimes',
+  kinds: [{kind: 'miam', timed: 40, late: 0, late_frac: 0, median_s: 6}, {kind: 'ops_report', timed: 20, late: 17, late_frac: 0.85, median_s: 40000}, {kind: 'posrpt', timed: 3, late: 0, late_frac: 0, median_s: 5}], known: true, lat: 33.9, lon: -118.4, country: 'United States', application: 'dumpvdl2', source_type: 'vdl'});
 const SAT = station({ident: 'TBG-CBAND-APAC', messages: 400, aircraft: 5, transports: {'aero-acars': 400}, timed: 365, late: 0, late_frac: 0, median_s: 20, p90_s: 40, shortest_s: 3, verdict: 'prompt', known: true,
   lat: -32.2, lon: 147, country: 'Australia', application: 'jaero-c-band-acars', source_type: 'aero-acars', flagged: true});
 const NEW = station({ident: 'NEW-1', messages: 2, transports: {acars: 2}, timed: 0});   // nothing known about it, and nothing timed
@@ -190,6 +191,25 @@ const names = w => rows(w).map(tr => tr.children[0].textContent);
   assert.deepStrictEqual(rows(w).map(tr => tr.className), ['', '', 'sel', '', ''], 'the linked station is selected');
   assert.strictEqual(rows(w)[2].scrolled, true, 'and scrolled to');
   assert.strictEqual(JSON.stringify(w.map.views.at(-1)[0]), '[33.9,-118.4]', 'and the map goes to it');
+  // a station that delivers some kinds of message late and others on time is marked, and says which when selected
+  w = newWorld(); await w.settle();
+  assert.strictEqual(w.byId['#bykind'].hidden, true, 'nothing selected: no strip');
+  const mark = r => r.children[10].children.find(c => c.className === 'sel-mark');
+  assert.ok(mark(rows(w)[2]) && /ops report|airline operations 85% late/.test(mark(rows(w)[2]).title), 'the selective station is marked');
+  assert.ok(!mark(rows(w)[1]), 'a station that is late in every kind is not marked selective');
+  assert.ok(!mark(rows(w)[3]), 'nor is a prompt one');
+  assert.ok(/By kind: MIAM reports 0% late \(0 of 40.*airline operations 85% late \(17 of 20/.test(rows(w)[2].children[10].children[0].title), rows(w)[2].children[10].children[0].title);
+  assert.ok(!/POSRPT/.test(rows(w)[2].children[10].children[0].title), 'a kind with fewer than five timed messages is left out');
+  rows(w)[2].onclick();
+  assert.strictEqual(w.byId['#bykind'].hidden, false);
+  const strip = w.byId['#bykind'].children;
+  assert.strictEqual(strip[0].textContent, 'SK-KLAX-VDLM2, by kind of message: ');
+  assert.deepStrictEqual(strip.slice(1, 3).map(c => c.className), ['k prompt', 'k late']);
+  assert.ok(/not the station alone/.test(strip[3].textContent), 'it says why that matters');
+  rows(w)[1].onclick();
+  assert.strictEqual(w.byId['#bykind'].children.length, 2, 'a station late in every kind has no note');
+  rows(w)[4].onclick();
+  assert.strictEqual(w.byId['#bykind'].hidden, true, 'a station with no timed kinds has no strip');
   w = newWorld(x => { x.hash = '#NO-SUCH'; }); await w.settle();
   assert.ok(rows(w).every(tr => tr.className === ''), 'an unknown station selects nothing');
   console.log('stations page checks passed');

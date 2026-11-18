@@ -81,7 +81,8 @@ type StationStats struct {
 	Last       time.Time
 	Transports map[string]int // by source type
 	Lateness   Lateness
-	Info       *StationInfo // nil if the list has not been fetched, or does not have it
+	ByKind     map[string]Lateness // the same for each kind of message: one station can hold back its operations reports and pass the rest on time
+	Info       *StationInfo        // nil if the list has not been fetched, or does not have it
 }
 
 // Stations returns every station any of our messages came through, with its counts and lateness and airframes.io's details.
@@ -126,26 +127,36 @@ func (s *Store) Stations() ([]StationStats, error) {
 	rows.Close()
 
 	// the lags: how long after the time the aircraft put in a message it reached us
-	if rows, err = s.db.Query(`SELECT station, ts - at_ts FROM message WHERE station <> '' AND time_flag = 0 AND at_basis = '` + AtEvent + `'`); err != nil {
+	if rows, err = s.db.Query(`SELECT station, kind, ts - at_ts FROM message WHERE station <> '' AND time_flag = 0 AND at_basis = '` + AtEvent + `'`); err != nil {
 		return nil, err
 	}
 	lags := map[string][]time.Duration{}
+	kindLags := map[string]map[string][]time.Duration{}
 	for rows.Next() {
-		var ident string
+		var ident, kind string
 		var lag int64
-		if err := rows.Scan(&ident, &lag); err != nil {
+		if err := rows.Scan(&ident, &kind, &lag); err != nil {
 			rows.Close()
 			return nil, err
 		}
 		if lag < 0 {
 			lag = 0 // stamped before the aircraft's own time: a clock a little out, not a message from the future
 		}
-		lags[ident] = append(lags[ident], time.Duration(lag)*time.Second)
+		d := time.Duration(lag) * time.Second
+		lags[ident] = append(lags[ident], d)
+		if kindLags[ident] == nil {
+			kindLags[ident] = map[string][]time.Duration{}
+		}
+		kindLags[ident][kind] = append(kindLags[ident][kind], d)
 	}
 	rows.Close()
 	for ident, l := range lags {
 		if st := by[ident]; st != nil {
 			st.Lateness = lateness(l)
+			st.ByKind = map[string]Lateness{}
+			for k, kl := range kindLags[ident] {
+				st.ByKind[k] = lateness(kl)
+			}
 		}
 	}
 

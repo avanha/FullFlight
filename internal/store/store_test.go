@@ -1266,6 +1266,12 @@ func TestStationStatsAndLateness(t *testing.T) {
 		add("LATE-1", "vdl", "780AA4", at.Add(time.Duration(10+2*i)*time.Hour), "miam", a350(at), nil)
 	}
 	add("LATE-1", "vdl", "780AB8", sent.Add(-time.Minute), "miam", a350(sent), nil) // stamped before the time inside it: counts as no lag
+	// a station that holds back one kind of message: A350 reports on time, position reports five hours late
+	for i := 0; i < 5; i++ {
+		at := sent.Add(time.Duration(i) * time.Minute)
+		add("MIXED-1", "vdl", "780AA4", at.Add(3*time.Second), "miam", a350(at), nil)
+		add("MIXED-1", "vdl", "780AA4", at.Add(5*time.Hour), "acmf_report", "", &at)
+	}
 	// a station with nothing that carries the aircraft's time
 	add("QUIET-1", "aero-acars", "780AA4", sent, "datis_request", "", nil)
 	add("QUIET-1", "aero-acars", "780AB8", sent.Add(time.Minute), "cpdlc", "", nil)
@@ -1273,7 +1279,7 @@ func TestStationStatsAndLateness(t *testing.T) {
 		Flagged: true, FlaggedReason: "Rate anomaly detected", MessagesCount: 235660243, NearestAirport: "LZIB", LastReportAt: sent}}, sent.Add(time.Hour))
 
 	sts, err := s.Stations()
-	if err != nil || len(sts) != 3 {
+	if err != nil || len(sts) != 4 {
 		t.Fatalf("%+v %v", sts, err)
 	}
 	by := map[string]StationStats{}
@@ -1290,6 +1296,9 @@ func TestStationStatsAndLateness(t *testing.T) {
 	}
 	if l.Info == nil || !l.Info.Flagged || l.Info.FlaggedReason != "Rate anomaly detected" || *l.Info.Lat != 48.1 || !l.Info.Fuzzed || l.Info.MessagesCount != 235660243 || !l.Info.LastReportAt.Equal(sent) {
 		t.Errorf("late info: %+v", l.Info)
+	}
+	if x := by["MIXED-1"]; x.ByKind["miam"].Timed != 5 || x.ByKind["miam"].Late != 0 || x.ByKind["acmf_report"].Timed != 5 || x.ByKind["acmf_report"].Late != 5 || x.Lateness.Late != 5 {
+		t.Errorf("mixed: %+v", x.ByKind)
 	}
 	q := by["QUIET-1"]
 	if q.Messages != 2 || q.Lateness.Timed != 0 || q.Transports["aero-acars"] != 2 {
