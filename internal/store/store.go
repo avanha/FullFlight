@@ -251,6 +251,9 @@ var migrations = []string{
 		ts   INTEGER NOT NULL,
 		PRIMARY KEY (name, lat, lon)
 	 ) WITHOUT ROWID;`,
+	// The positions a message carries, by time, so that judging one against its neighbours (Neighbors) reads a few index entries and
+	// not every message of the aircraft; a re-decode did that for each positioned message and took most of its time.
+	`CREATE INDEX IF NOT EXISTS message_hex_pos ON message (hex, pos_ts, lat, lon, time_flag) WHERE lat IS NOT NULL;`,
 }
 
 // Open opens (creating if needed) the database at path. Use ":memory:" in tests.

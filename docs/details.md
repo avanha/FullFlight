@@ -150,6 +150,8 @@ is not joined. The joined message is for reading: it is not stored, and its posi
 After improving the decoder, run `bin/fullflight -config config.yaml -redecode` to re-decode every stored message from its raw
 text (idempotent). It ends with a line saying how many messages it read, how many changed, and how long it took (load, decode,
 settle, per message and per second).
+Each position is judged against the fixes either side of it, which reads an index of the positions messages carry; before that index
+existed the re-decode of 47,000 messages took 100 seconds, nearly all of it in that lookup, and with it 5.
 
 ### Satellite headers (UPS, Delta)
 
