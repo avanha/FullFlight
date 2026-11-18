@@ -143,6 +143,24 @@ func TestAirframesEndpoint(t *testing.T) {
 	if code != 200 || !strings.Contains(body, `"hex":"780AB8"`) || !strings.Contains(body, `"tail":"B-LRM"`) {
 		t.Errorf("%d %s", code, body)
 	}
+	// where it is registered: Cathay's address is in China's block, its registration says Hong Kong; a UK aircraft reads by its address
+	st.RecordAirframe(store.Airframe{Hex: "406B22", Tail: "G-XLEI", Source: "airframes.io", LastSeen: time.Unix(1793000000, 0)})
+	_, body = do(t, "GET", ts.URL+"/api/airframes", "")
+	if !strings.Contains(body, `"country":"Hong Kong","country_code":"HK"`) || !strings.Contains(body, `"country":"United Kingdom","country_code":"GB"`) {
+		t.Errorf("country: %s", body)
+	}
+	// who flew it: an airline callsign in its messages; none for the one that has not had one
+	if strings.Contains(body, `"operator"`) {
+		t.Errorf("operator before any callsign: %s", body)
+	}
+	st.AddMessage(store.Message{ID: 1, Hex: "406B22", T: time.Unix(1792990000, 0), Label: "H1", Text: "x", Callsign: "BAW3G", Kind: "ops_report"})
+	st.AddMessage(store.Message{ID: 2, Hex: "406B22", T: time.Unix(1792990100, 0), Label: "H1", Text: "y", Callsign: "G-XLEI", Kind: "ops_report"})
+	ts2 := httptest.NewServer((&Server{Store: st}).Handler()) // the first server keeps what it found for a few minutes
+	defer ts2.Close()
+	_, body = do(t, "GET", ts2.URL+"/api/airframes", "")
+	if !strings.Contains(body, `"operator":"British Airways","operator_code":"BAW"`) || strings.Count(body, `"operator"`) != 1 {
+		t.Errorf("operator: %s", body)
+	}
 }
 
 // The airframes page shows each aircraft's last flight: the number and callsign, the route and when it left.

@@ -824,3 +824,11 @@ func (s *Store) AirFixes(hexAddr string, since, until time.Time) ([]AirFix, erro
 	}
 	return out, rows.Err()
 }
+
+// LastAirlineCallsign is the newest callsign of an airline flight (three letters and a number: BAW3G, UAL26) any message of the aircraft
+// carried, or "" if none did.
+func (s *Store) LastAirlineCallsign(hexAddr string) string {
+	var cs string
+	s.db.QueryRow(`SELECT callsign FROM message WHERE hex=? AND callsign GLOB '[A-Z][A-Z][A-Z][0-9]*' ORDER BY ts DESC LIMIT 1`, hexAddr).Scan(&cs)
+	return cs
+}

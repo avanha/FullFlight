@@ -24,3 +24,19 @@ func TestForms(t *testing.T) {
 		}
 	}
 }
+
+func TestAirlineNames(t *testing.T) {
+	for _, icao := range icaoByIATA {
+		if n, ok := Name(icao); !ok || n == "" {
+			t.Errorf("%s has no name", icao)
+		}
+	}
+	if n, ok := Name("baw"); !ok || n != "British Airways" {
+		t.Errorf("baw: %q %v", n, ok)
+	}
+	for in, want := range map[string]string{"BAW3G": "BAW", "UAL26": "UAL", "cpa105": "CPA", "UPS59D": "UPS", "N575UP": "", "G-XLEI": "", "BAW": "", "": "", "AB1": ""} {
+		if got, ok := OfCallsign(in); got != want || ok != (want != "") {
+			t.Errorf("OfCallsign(%q) = %q %v, want %q", in, got, ok, want)
+		}
+	}
+}

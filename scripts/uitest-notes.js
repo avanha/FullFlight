@@ -165,14 +165,14 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   w = newWorld();
   const iso = h => new Date(w.clock - h * 3600e3).toISOString();
   w.airframes = [
-    {hex: '780AB8', tail: 'B-LRM', tails: [{tail: 'B-LRM'}, {tail: 'B-OLD'}], type: 'A359', last_flight: {flight: 'CX840', callsign: 'CPA840', from: 'VHHH', to: 'KJFK', from_name: 'Hong Kong Intl', to_name: 'John F Kennedy Intl', departed: '2026-10-30T09:12:00Z', departed_how: 'takeoff', start: '2026-10-30T09:00:00Z', end: '2026-10-30T10:00:00Z'}, last_seen: iso(2), last_adsb: iso(2), last_datalink: iso(40), first_seen: iso(500), watched: true, notes: 2, last_note: 'Second note about the bird strike', messages: 400, positions: 100},
-    {hex: '780AA4', tail: 'B-LRD', tails: [{tail: 'B-LRD'}], type: 'A359', last_seen: iso(30), first_seen: iso(400), notes: 0, messages: 500, positions: 50},
-    {hex: 'ABB601', notes: 1, last_note: 'Seen once at Denver', messages: 0, positions: 0},    // known only from a note: no tail, never seen
+    {hex: '780AB8', tail: 'B-LRM', country: 'Hong Kong', country_code: 'HK', operator: 'Cathay Pacific', operator_code: 'CPA', tails: [{tail: 'B-LRM'}, {tail: 'B-OLD'}], type: 'A359', last_flight: {flight: 'CX840', callsign: 'CPA840', from: 'VHHH', to: 'KJFK', from_name: 'Hong Kong Intl', to_name: 'John F Kennedy Intl', departed: '2026-10-30T09:12:00Z', departed_how: 'takeoff', start: '2026-10-30T09:00:00Z', end: '2026-10-30T10:00:00Z'}, last_seen: iso(2), last_adsb: iso(2), last_datalink: iso(40), first_seen: iso(500), watched: true, notes: 2, last_note: 'Second note about the bird strike', messages: 400, positions: 100},
+    {hex: '780AA4', tail: 'B-LRD', country: 'Hong Kong', country_code: 'HK', tails: [{tail: 'B-LRD'}], type: 'A359', last_seen: iso(30), first_seen: iso(400), notes: 0, messages: 500, positions: 50},
+    {hex: 'ABB601', country: 'United States', country_code: 'US', notes: 1, last_note: 'Seen once at Denver', messages: 0, positions: 0},    // known only from a note: no tail, never seen
   ];
   w.ctx.Date = Date;
   Object.assign(w.ctx, {Date: class extends Date { static now() { return w.clock; } }});
   const q = id => w.document.querySelector(id);
-  q('#notespanel').hidden = true; q('#empty').hidden = true; q('#sort').value = 'seen';   // as the page's markup has them
+  q('#notespanel').hidden = true; q('#empty').hidden = true;   // as the page's markup has them
   vm.runInContext(pageSrc, w.ctx);
   await tick();
   const rows = () => q('#rows').children;
@@ -183,22 +183,22 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   assert.deepStrictEqual(rows().map(r => cell(r, 1).textContent), ['780AB8', '780AA4', 'ABB601']);
   let r0 = rows()[0];
   assert.strictEqual(text(cell(r0, 0)), 'B-LRMalso B-OLD', 'current registration, and the others it has had');
-  assert.strictEqual(cell(r0, 2).textContent, 'A359');
-  assert.strictEqual(text(cell(r0, 3)), 'CX840 VHHH \u2192 KJFKtook off 2026-10-30 09:12Z', 'the last flight, and when it left');
-  assert.strictEqual(cell(r0, 3).title, 'Callsign CPA840\nHong Kong Intl \u2192 John F Kennedy Intl\nFlight from 2026-10-30 09:00Z to 2026-10-30 10:00Z');
-  assert.strictEqual(cell(rows()[1], 3).textContent, '', 'no flight known');
-  assert.strictEqual(cell(r0, 4).textContent, '2h ago');
-  assert.strictEqual(cell(r0, 4).title, 'Last heard 2026-10-30 10:00Z\nADS-B: 2026-10-30 10:00Z\nDatalink: 2026-10-28 20:00Z', 'ADS-B and datalink times in the tooltip');
-  assert.strictEqual(cell(rows()[2], 4).textContent, 'never heard');
-  assert.strictEqual(cell(r0, 6).textContent, 'watching');
-  assert.strictEqual(cell(r0, 7).children[0].textContent, '\u{1F4DD} 2 notes');
-  assert.strictEqual(cell(r0, 7).children[1].textContent, 'Second note about the bird strike', 'a preview of the newest note');
-  assert.strictEqual(text(cell(rows()[1], 7).children[0]), '\u{1F4DD} add a note');
-  assert.ok(cell(rows()[1], 7).children[0].className.includes('empty'));
-  assert.strictEqual(cell(rows()[1], 6).textContent, '', 'not watching');
+  assert.strictEqual(cell(r0, 3).textContent, 'A359');
+  assert.strictEqual(text(cell(r0, 5)), 'CX840 VHHH \u2192 KJFKtook off 2026-10-30 09:12Z', 'the last flight, and when it left');
+  assert.strictEqual(cell(r0, 5).title, 'Callsign CPA840\nHong Kong Intl \u2192 John F Kennedy Intl\nFlight from 2026-10-30 09:00Z to 2026-10-30 10:00Z');
+  assert.strictEqual(cell(rows()[1], 5).textContent, '', 'no flight known');
+  assert.strictEqual(cell(r0, 6).textContent, '2h ago');
+  assert.strictEqual(cell(r0, 6).title, 'Last heard 2026-10-30 10:00Z\nADS-B: 2026-10-30 10:00Z\nDatalink: 2026-10-28 20:00Z', 'ADS-B and datalink times in the tooltip');
+  assert.strictEqual(cell(rows()[2], 6).textContent, 'never heard');
+  assert.strictEqual(cell(r0, 8).textContent, 'watching');
+  assert.strictEqual(cell(r0, 9).children[0].textContent, '\u{1F4DD} 2 notes');
+  assert.strictEqual(cell(r0, 9).children[1].textContent, 'Second note about the bird strike', 'a preview of the newest note');
+  assert.strictEqual(text(cell(rows()[1], 9).children[0]), '\u{1F4DD} add a note');
+  assert.ok(cell(rows()[1], 9).children[0].className.includes('empty'));
+  assert.strictEqual(cell(rows()[1], 8).textContent, '', 'not watching');
   assert.strictEqual(text(cell(rows()[2], 0)), '—', 'no registration known');
-  assert.strictEqual(cell(rows()[2], 4).textContent, 'never heard');
-  assert.strictEqual(cell(rows()[2], 7).children[0].textContent, '\u{1F4DD} 1 note', 'singular');
+  assert.strictEqual(cell(rows()[2], 6).textContent, 'never heard');
+  assert.strictEqual(cell(rows()[2], 9).children[0].textContent, '\u{1F4DD} 1 note', 'singular');
 
   // search: registration (any it has had), hex, type, note text
   const search = async s => { q('#q').value = s; q('#q').oninput(); return rows().map(r => cell(r, 1).textContent); };
@@ -216,16 +216,47 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   q('#onlynotes').checked = true; q('#onlynotes').onchange();
   assert.deepStrictEqual(rows().map(r => cell(r, 1).textContent), ['780AB8', 'ABB601']);
   q('#onlynotes').checked = false; q('#onlynotes').onchange();
-  // sort
-  q('#sort').value = 'tail'; q('#sort').onchange();
-  assert.deepStrictEqual(rows().map(r => cell(r, 1).textContent), ['780AA4', '780AB8', 'ABB601'], 'by registration, those without last');
-  q('#sort').value = 'notes'; q('#sort').onchange();
-  assert.deepStrictEqual(rows().map(r => cell(r, 1).textContent), ['780AB8', 'ABB601', '780AA4'], 'most notes first');
-  q('#sort').value = 'seen'; q('#sort').onchange();
+  // sort: by clicking a heading. The first click on a text column goes a to z, on a number or a date biggest first; again reverses it.
+  const heads = () => q('#heads').children, head = k => heads().find(h => h.textContent === k);
+  const order = () => rows().map(r => cell(r, 1).textContent);
+  assert.deepStrictEqual(heads().map(h => h.textContent), ['Registration', 'Hex', 'Country', 'Type', 'Operator', 'Last flight', 'Last seen', 'First seen', '', 'Notes']);
+  assert.ok(head('Last seen').className.includes('on') && !head('Last seen').className.includes('up'), 'the order in use is marked');
+  assert.strictEqual(heads()[8].onclick, undefined, 'the watch column does not sort');
+  assert.strictEqual(text(cell(rows()[0], 2)), 'Hong Kong', 'the country of registration');
+  assert.strictEqual(cell(rows()[0], 2).title, "Country of registration, from the aircraft's ICAO address (HK)");
+  head('Registration').onclick();
+  assert.deepStrictEqual(order(), ['780AA4', '780AB8', 'ABB601'], 'by registration, those without last');
+  assert.ok(head('Registration').className.includes('up'), 'ascending is marked');
+  head('Registration').onclick();
+  assert.deepStrictEqual(order(), ['780AB8', '780AA4', 'ABB601'], 'again: z to a, and still those without last');
+  assert.strictEqual(cell(rows()[0], 4).textContent, 'Cathay Pacific');
+  assert.strictEqual(cell(rows()[0], 4).title, 'The airline of the last flight we saw it on (callsign CPA…): who flew it, not necessarily who owns it');
+  assert.strictEqual(cell(rows()[1], 4).textContent, '', 'no airline known');
+  head('Operator').onclick();
+  assert.deepStrictEqual(order(), ['780AB8', '780AA4', 'ABB601'], 'by airline: those with none last');
+  head('Operator').onclick();
+  assert.deepStrictEqual(order(), ['780AB8', '780AA4', 'ABB601'], 'reversed, and still those with none last');
+  head('Country').onclick();
+  assert.deepStrictEqual(order(), ['780AB8', '780AA4', 'ABB601'], 'by country: Hong Kong, Hong Kong, United States (the later seen first among equals)');
+  head('Country').onclick();
+  assert.deepStrictEqual(order(), ['ABB601', '780AB8', '780AA4'], 'reversed');
+  head('Hex').onclick();
+  assert.deepStrictEqual(order(), ['780AA4', '780AB8', 'ABB601']);
+  head('Notes').onclick();
+  assert.deepStrictEqual(order(), ['780AB8', 'ABB601', '780AA4'], 'most notes first');
+  head('First seen').onclick();
+  assert.deepStrictEqual(order(), ['780AA4', '780AB8', 'ABB601'], 'the most recently first seen first, and one never seen last');
+  head('Last seen').onclick();
+  assert.deepStrictEqual(order(), ['780AB8', '780AA4', 'ABB601'], 'back to the newest first');
+  q('#q').value = 'hong kong'; q('#q').oninput();
+  assert.deepStrictEqual(order(), ['780AB8', '780AA4'], 'the search reads the country');
+  q('#q').value = 'cathay'; q('#q').oninput();
+  assert.deepStrictEqual(order(), ['780AB8'], 'and the airline');
+  q('#q').value = ''; q('#q').oninput();
 
   // opening an airframe's notes: the panel, the component, and the table following changes
   assert.strictEqual(q('#notespanel').hidden, true);
-  cell(rows()[1], 7).children[0].onclick();               // B-LRD, which has none
+  cell(rows()[1], 9).children[0].onclick();               // B-LRD, which has none
   await tick();
   assert.strictEqual(q('#notespanel').hidden, false);
   assert.strictEqual(q('#notestitle').textContent, 'Notes · B-LRD · A359');
@@ -241,8 +272,8 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   await withClass(body, 'notebtn2')[0].onclick(); await tick(); await tick();
   assert.ok(listCalls() > l0, 'the table reloads after a change');
   assert.strictEqual(q('#count').textContent, '3 of 3 airframes · 3 with notes');
-  assert.strictEqual(cell(rows()[1], 7).children[0].textContent, '\u{1F4DD} 1 note');
-  assert.strictEqual(cell(rows()[1], 7).children[1].textContent, 'Flown by the trainee crew');
+  assert.strictEqual(cell(rows()[1], 9).children[0].textContent, '\u{1F4DD} 1 note');
+  assert.strictEqual(cell(rows()[1], 9).children[1].textContent, 'Flown by the trainee crew');
   // closing
   q('#notesclose').onclick();
   assert.strictEqual(q('#notespanel').hidden, true);
@@ -251,7 +282,7 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   assert.ok(w.intervals.some(([, ms]) => ms === 30000));
 
   // starting a watch from the page: only those not already watched have the button
-  const watchBtn = r => r.children[6].children.find(c => c.className === 'watchbtn');
+  const watchBtn = r => r.children[8].children.find(c => c.className === 'watchbtn');
   assert.strictEqual(watchBtn(rows()[0]), undefined, 'already watched: no button');
   assert.ok(watchBtn(rows()[1]) && watchBtn(rows()[2]));
   w.refuseWatch = 'too many watches';
@@ -263,7 +294,7 @@ const tick = () => new Promise(r => setTimeout(r, 5));
   const posts = () => w.calls.filter(c => c[0] === 'POST' && c[1] === '/api/watches');
   assert.deepStrictEqual(posts().pop().slice(2), [{input: 'tail:B-LRD', hex: '780AA4'}], 'by registration, with the hex it already knows');
   assert.strictEqual(q('#err').textContent, '');
-  assert.strictEqual(rows()[1].children[6].textContent, 'watching', 'the row updates');
+  assert.strictEqual(rows()[1].children[8].textContent, 'watching', 'the row updates');
   assert.strictEqual(watchBtn(rows()[1]), undefined);
   // an airframe known only by its hex is watched by hex
   await watchBtn(rows()[2]).onclick(); await tick();

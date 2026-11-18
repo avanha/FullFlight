@@ -291,11 +291,28 @@ is fetched by your browser, which sends its own.
 ## Airframes and notes
 
 `/airframes.html`, from the hamburger menu at the top right of the map's left panel, lists every aircraft we know of (searchable,
-sortable, filterable to those with notes): its current registration and any earlier ones, hex, type, when first and last heard
+sortable, filterable to those with notes): its current registration and any earlier ones, hex, **country of registration**, type, **operator**, when first and last heard
 from, whether it is on a watch, its **last flight** (`SQ23 KJFK → WSSS`, with when it left or was last heard on that flight;
 hover for the callsign and airport names), and a preview of its newest note. An aircraft known only from a watch or a note is
 listed too. One that is not being watched has a **Watch** button that starts a watch by registration (the usual 36 hours; by hex
 for an airframe with no registration); a refusal is shown at the top.
+
+Click a heading to sort by it (registration, hex, country, type, last flight, last or first heard from, notes); a second click reverses
+it, and an aircraft with nothing known for that column goes last either way. Text columns sort a to z first, dates and the note count
+newest or most first. The search reads the country too.
+
+The **operator** is the airline that last flew it, from the three-letter start of the callsign of its last flight (`BAW3G` is British
+Airways, `UAL26` United), or from the newest airline callsign in its messages when it has not flown in the last week. It is who flew
+the aircraft, not who owns it: a leased aircraft, or one on a wet lease or flying for a cargo partner, shows the airline whose flight it
+was. There is no registry of owners behind it, so an aircraft we have no airline callsign for (a private one, or one only seen on the
+ground) shows nothing, and an airline missing from our table of names (`internal/airlines/names.go`) shows its code.
+
+The **country** is the state the aircraft's ICAO address was allocated to (Annex 10's table of address blocks, kept in
+`internal/regs/blocks.go`), which is its state of registry, so it comes with no lookup and for an aircraft we never saw a registration
+for. Two things it cannot tell apart: Hong Kong and Macao register their own aircraft out of China's block (Cathay's B-LRM is 780AB8), so
+where we have the registration, `B-H`, `B-K`, `B-L` read Hong Kong and `B-M` Macao, and one known only by its address reads China; and
+the UK's territories (Bermuda, the Cayman Islands, the Isle of Man, Guernsey) read as the United Kingdom. An address in no block, or one
+held for ICAO, shows no country. Checked against the 43 registrations in one database: all agree with their registration's prefix.
 
 You can write any number of **notes** about an airframe (`This was the plane Yen took from SEA to HKG on 2026-10-27`), each with
 its own date, and edit or delete them later. They attach to the hex, so they stay with the aircraft when its registration

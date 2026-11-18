@@ -52,7 +52,9 @@ type Server struct {
 	usageVal store.Usage
 
 	flightMu    sync.Mutex
-	flightCache map[string]cachedFlights // hex -> its recent flights, worked out once for everything that shows them
+	opMu        sync.Mutex
+	opCache     map[string]cachedOperator // hex -> the airline last seen flying it, kept a few minutes
+	flightCache map[string]cachedFlights  // hex -> its recent flights, worked out once for everything that shows them
 }
 
 func (s *Server) Handler() http.Handler {
@@ -551,6 +553,10 @@ type airframeJSON struct {
 	Hex          string          `json:"hex"`
 	Tail         string          `json:"tail,omitempty"` // the registration it was last seen with
 	Tails        []tailSeenJSON  `json:"tails,omitempty"`
+	Country      string          `json:"country,omitempty"`       // where it is registered: the state its address was allocated to (Hong Kong by its registration)
+	CountryCode  string          `json:"country_code,omitempty"`  // that state's ISO 3166 code
+	Operator     string          `json:"operator,omitempty"`      // the airline that last flew it: by the callsign of its last flight, so a leased aircraft shows who flew it, not who owns it
+	OperatorCode string          `json:"operator_code,omitempty"` // that airline's ICAO designator
 	Type         string          `json:"type,omitempty"`
 	FirstSeen    time.Time       `json:"first_seen,omitzero"`
 	LastSeen     time.Time       `json:"last_seen,omitzero"` // the newest ADS-B position or datalink message
@@ -670,9 +676,57 @@ func (s *Server) airframes(w http.ResponseWriter, r *http.Request) {
 		} else if t, ok := regs.TailForHex(a.Hex); ok {
 			j.Tail = t // never seen with a registration, but its address gives it away
 		}
+		j.Country, j.CountryCode, _ = regs.CountryFor(a.Hex, j.Tail)
+		j.OperatorCode, j.Operator = s.operatorOf(a.Hex, j.LastFlight)
 		out = append(out, j)
 	}
 	writeJSON(w, 200, out)
+}
+
+type cachedOperator struct {
+	at         time.Time
+	code, name string
+}
+
+// operatorOf names the airline an aircraft was last seen flying for, from the callsign of its last flight or, when that has none or
+// the aircraft has not flown for a week, from the newest airline callsign in its messages. It is whoever flew it, not who owns it, and is
+// the code alone when the airline is not in our table.
+func (s *Server) operatorOf(hex string, last *lastFlightJSON) (code, name string) {
+	if last != nil {
+		if c, ok := airlines.OfCallsign(last.Callsign); ok {
+			code = c
+		} else if c, ok := airlines.OfCallsign(last.Flight); ok {
+			code = c
+		} else if icao, _ := airlines.Forms(last.Flight); icao != "" {
+			code, _ = airlines.OfCallsign(icao)
+		}
+	}
+	if code == "" {
+		now := s.now()
+		s.opMu.Lock()
+		c, ok := s.opCache[hex]
+		s.opMu.Unlock()
+		if !ok || now.Sub(c.at) > 5*time.Minute || now.Before(c.at) {
+			c.at, c.code = now, ""
+			if cs := s.Store.LastAirlineCallsign(hex); cs != "" {
+				c.code, _ = airlines.OfCallsign(cs)
+			}
+			s.opMu.Lock()
+			if s.opCache == nil {
+				s.opCache = map[string]cachedOperator{}
+			}
+			s.opCache[hex] = c
+			s.opMu.Unlock()
+		}
+		code = c.code
+	}
+	if code == "" {
+		return "", ""
+	}
+	if n, ok := airlines.Name(code); ok {
+		return code, n
+	}
+	return code, code
 }
 
 // preview is the start of a note, for a hover.

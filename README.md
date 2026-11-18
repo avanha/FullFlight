@@ -137,7 +137,7 @@ Then:
 
 ### Other screens and tools
 
-- **Airframes and notes.** Every aircraft we know of, with notes that never expire. [Details](docs/details.md#airframes-and-notes)
+- **Airframes and notes.** Every aircraft we know of, sortable, with its country of registration and operator, and notes that never expire. [Details](docs/details.md#airframes-and-notes)
 - **Stations.** Which receivers delivered our messages, and how late (overall and by kind of message); the ⓘ on a message opens a side panel with how it was received (station and where it is, link, frequency). [Details](docs/details.md#stations)
 - **Stats.** What we hold, how many requests we have made to each service, and how big things are. [Details](docs/details.md#stats)
 - **Backfill.** Read adsb.lol's daily archives to fill the track from before an aircraft was followed.

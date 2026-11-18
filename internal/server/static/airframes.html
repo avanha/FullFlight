@@ -15,6 +15,10 @@
   main { padding: 0 16px 24px; overflow-x: auto; }
   table { border-collapse: collapse; width: 100%; margin-top: 8px; }
   th { text-align: left; font-size: 12px; color: #555; padding: 6px 8px; border-bottom: 2px solid #ccc; white-space: nowrap; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { color: #000; }
+  th.on { color: #000; }
+  th.on::after { content: " \25BC"; font-size: 9px; } th.on.up::after { content: " \25B2"; }
   td { padding: 7px 8px; border-bottom: 1px solid #eee; vertical-align: top; }
   td.hex { font-family: ui-monospace, monospace; }
   td small { display: block; color: #777; }
@@ -36,17 +40,14 @@
 <header>
   <a href="/">&larr; Map</a>
   <h2>Airframes</h2>
-  <input id="q" type="search" placeholder="Search registration, hex, type or note" autocomplete="off">
+  <input id="q" type="search" placeholder="Search registration, hex, country, type, airline or note" autocomplete="off">
   <label><input id="onlynotes" type="checkbox"> only with notes</label>
-  <label>Sort <select id="sort">
-    <option value="seen">last seen</option><option value="tail">registration</option><option value="notes">notes first</option>
-  </select></label>
   <span id="err"></span>
   <span id="count"></span>
 </header>
 <main>
   <table>
-    <thead><tr><th>Registration</th><th>Hex</th><th>Type</th><th>Last flight</th><th>Last seen</th><th>First seen</th><th></th><th>Notes</th></tr></thead>
+    <thead><tr id="heads"></tr></thead>
     <tbody id="rows"></tbody>
   </table>
   <div id="empty" hidden></div>
@@ -60,7 +61,7 @@
 <script>
 // ---- the airframes page ----------------------------------------------------------------
 const $ = s => document.querySelector(s);
-let all = [], openHex = null;
+let all = [], openHex = null, sortKey = 'seen', sortDown = true;
 const fmt = t => new Date(t).toISOString().slice(0, 16).replace('T', ' ') + 'Z';
 function ago(t) {
   const s = Math.max(0, Math.round((Date.now() - new Date(t)) / 1000));
@@ -77,19 +78,40 @@ async function load() {
   render();
 }
 
+// The columns: key, heading, whether a click sorts by it, what it sorts by, and whether that is a number (the first click on a number
+// column sorts the biggest first, on a text one a to z). An airframe with nothing known for it goes last, whichever way it sorts.
+const seenMs = a => (a.last_seen ? Date.parse(a.last_seen) : 0);
+const COLUMNS = [
+  ['tail', 'Registration', true, a => a.tail || ''], ['hex', 'Hex', true, a => a.hex], ['country', 'Country', true, a => a.country || ''],
+  ['type', 'Type', true, a => a.type || ''], ['operator', 'Operator', true, a => a.operator || ''], ['flight', 'Last flight', true, a => (a.last_flight && a.last_flight.flight) || ''],
+  ['seen', 'Last seen', true, seenMs, true], ['first', 'First seen', true, a => (a.first_seen ? Date.parse(a.first_seen) : 0), true], ['watch', '', false],
+  ['notes', 'Notes', true, a => a.notes, true],
+];
+
+function drawHeads() {
+  $('#heads').replaceChildren(...COLUMNS.map(([key, label, sortable]) => {
+    const th = el('th', sortable ? 'sortable' + (key === sortKey ? ' on' + (sortDown ? '' : ' up') : '') : '', label);
+    if (sortable) th.onclick = () => {
+      if (sortKey === key) sortDown = !sortDown; else { sortKey = key; sortDown = !!COLUMNS.find(c => c[0] === key)[4]; }
+      render();
+    };
+    return th;
+  }));
+}
+
 // The airframes to show, after the search and the "only with notes" filter, in the chosen order.
 function visible() {
   const q = $('#q').value.trim().toLowerCase();
   const onlyNotes = $('#onlynotes').checked;
-  const hay = a => [a.hex, a.tail, a.type, a.last_note, ...(a.tails || []).map(t => t.tail), ...(a.last_flight ? [a.last_flight.flight, a.last_flight.callsign, a.last_flight.from, a.last_flight.to] : [])].filter(Boolean).join(' ').toLowerCase();
+  const hay = a => [a.hex, a.tail, a.country, a.type, a.operator, a.operator_code, a.last_note, ...(a.tails || []).map(t => t.tail), ...(a.last_flight ? [a.last_flight.flight, a.last_flight.callsign, a.last_flight.from, a.last_flight.to] : [])].filter(Boolean).join(' ').toLowerCase();
   const list = all.filter(a => (!onlyNotes || a.notes > 0) && (!q || hay(a).includes(q)));
-  const seen = a => (a.last_seen ? Date.parse(a.last_seen) : 0);
-  const order = {
-    seen: (a, b) => seen(b) - seen(a) || a.hex.localeCompare(b.hex),
-    tail: (a, b) => (a.tail || '￿').localeCompare(b.tail || '￿') || a.hex.localeCompare(b.hex),
-    notes: (a, b) => b.notes - a.notes || seen(b) - seen(a),
-  }[$('#sort').value];
-  return list.sort(order);
+  const get = COLUMNS.find(c => c[0] === sortKey)[3];
+  const empty = v => v === '' || v === 0 && sortKey !== 'notes';   // nothing known: last, whichever way it goes
+  return list.sort((a, b) => {
+    const x = get(a), y = get(b);
+    if (empty(x) !== empty(y)) return empty(x) ? 1 : -1;
+    return (x < y ? -1 : x > y ? 1 : 0) * (sortDown ? -1 : 1) || seenMs(b) - seenMs(a) || a.hex.localeCompare(b.hex);
+  });
 }
 
 // The aircraft's last flight: "SQ23 KJFK \u2192 WSSS", and under it when it left (or, failing that, when it was last heard on it).
@@ -138,6 +160,20 @@ function noteCell(a) {
   return td;
 }
 
+// The country of registration: the state its address was allocated to, or by the registration where that is finer (Hong Kong).
+function countryCell(a) {
+  const td = el('td', '', a.country || '');
+  if (a.country) td.title = `Country of registration, from the aircraft's ICAO address${a.country_code ? ' (' + a.country_code + ')' : ''}`;
+  return td;
+}
+
+// The airline that last flew it, from its callsign: who flew it, which for a leased aircraft is not who owns it.
+function operatorCell(a) {
+  const td = el('td', '', a.operator || '');
+  if (a.operator) td.title = `The airline of the last flight we saw it on (callsign ${a.operator_code}…): who flew it, not necessarily who owns it`;
+  return td;
+}
+
 function row(a) {
   const tr = el('tr', a.hex === openHex ? 'open' : '');
   const reg = el('td');
@@ -157,11 +193,12 @@ function row(a) {
     b.onclick = () => startWatch(a, b);
     watching.append(b);
   }
-  tr.append(reg, el('td', 'hex', a.hex), el('td', '', a.type || ''), flightCell(a), seen, first, watching, noteCell(a));
+  tr.append(reg, el('td', 'hex', a.hex), countryCell(a), el('td', '', a.type || ''), operatorCell(a), flightCell(a), seen, first, watching, noteCell(a));
   return tr;
 }
 
 function render() {
+  drawHeads();
   const list = visible();
   $('#rows').replaceChildren(...list.map(row));
   const withNotes = all.filter(a => a.notes > 0).length;
@@ -182,7 +219,6 @@ function openNotes(a) {
 $('#notesclose').onclick = () => { $('#notespanel').hidden = true; openHex = null; render(); };
 $('#q').oninput = render;
 $('#onlynotes').onchange = render;
-$('#sort').onchange = render;
 load();
 setInterval(load, 30000);
 </script>
