@@ -211,6 +211,13 @@ projection at:
 - **Airline position reports** (label 83, e.g. `M78AZG0001PHNL,RJAA,302314, 28.71, 173.77,40000,258,- 84.1, 62503`), about every
   30 minutes from United and ZIPAIR 787s: message number and flight (optional), origin, destination, DDHHMM, position in signed
   decimal degrees, altitude, the direction the wind blows from, and the wind along the track (positive a tailwind).
+- **British Airways position reports** (label 15, `FST01EGLLKMIAN514642W00050960191380  15 P11C029076265269159  19011015`), every
+  five or ten minutes from its Airbus: origin and destination, the position in decimal degrees, the flight level, two numbers that sum to a
+  constant over the flight and so look like the fuel left and used (shown as numbers: their units are not known), the ground speed, the
+  estimated arrival (UTC) and the time of the report. The A380's adds the temperature and some groups of digits not understood; the
+  short-haul layout has one group that looks like a wind and is not shown. The position, level and ground speed were checked against
+  ADS-B for a flight of each; the time is a time of day, so a report held over a day by a station could be placed on the wrong day
+  (it would then be flagged suspect against ADS-B). A dozen on the ground, with no position, are left undecoded.
 - **A350 REP081** names the flight's origin and destination (`VHHH YSSY`). It comes from Cathay and Singapore and carries one
   position, or on newer software several a minute apart (the newest is the report's position, the rest are in its detail), often
   in a compressed message. The A350's other MIAM reports have a header with the tail, the aircraft's own time, the flight and the

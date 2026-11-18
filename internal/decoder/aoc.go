@@ -58,10 +58,85 @@ func parsePCPos(body string, r *Result) {
 	r.Fields["values"] = []string{m[9], m[10]} // unexplained
 }
 
+// The position report on label 15 from British Airways' Airbus, every five or ten minutes, in two layouts. The A380's (G-XLEI):
+//
+//	FST01EGLLKMIAN514642W00050960191380  15 P11C029076265269159  19011015
+//
+// and a shorter one (a short-haul Airbus, EGLL to Hamburg):
+//
+//	FST01EGLLEDDHN53721E0087707112  28  24     21261      379  20242011
+//
+// Both give the origin and destination, the position in decimal degrees (N51.4642 W000.5096; the short one has three decimals of
+// latitude), the flight level (019), two numbers of four columns each that sum to a constant over the flight (1380 and 15 at the start,
+// 1223 and 171 fifty minutes on: the fuel left, then the fuel used, by the way they run), the ground speed in knots, then the estimated
+// arrival (HHMM) and the time of the report (HHMM). The A380's adds the temperature (P11, M46) and C and five groups of three digits
+// of which the ground speed is the last. The short one has a group of five digits, which looks like a wind (212 degrees, 61 knots).
+// The position, level and ground speed were checked against ADS-B for one flight of each; the groups left unnamed and the units of the
+// fuel are not understood.
+var (
+	fstRe      = regexp.MustCompile(`^FST\d\d([A-Z]{4})([A-Z]{4})([NS])(\d{2})(\d{3,4})([EW])(\d{3})(\d{4})([ \d]{3})([ \d]{4})([ \d]{4})(.*?)\s+(\d{2})(\d{2})(\d{2})(\d{2})\s*$`)
+	fstA380Re  = regexp.MustCompile(`^\s*([PM]\d+)C(\d{3})(\d{3})(\d{3})(\d{3})(\d{3})$`)
+	fstShortRe = regexp.MustCompile(`^\s*(\d{5})\s+(\d{3})$`)
+)
+
+func parseFST(body string, r *Result) {
+	m := fstRe.FindStringSubmatch(strings.TrimSpace(body))
+	if m == nil {
+		return
+	}
+	atof := func(s string) float64 { v, _ := strconv.ParseFloat(s, 64); return v }
+	atoi := func(s string) int { v, _ := strconv.Atoi(strings.TrimSpace(s)); return v }
+	lat, lon := atof(m[4]+"."+m[5]), atof(m[7]+"."+m[8])
+	hh, mm := atoi(m[15]), atoi(m[16])
+	if lat > 90 || lon > 180 || hh > 23 || mm > 59 || atoi(m[13]) > 23 || atoi(m[14]) > 59 {
+		return
+	}
+	var gs, text string
+	fields := map[string]any{}
+	if t := fstA380Re.FindStringSubmatch(m[12]); t != nil {
+		temp := atoi(t[1][1:])
+		if t[1][0] == 'M' {
+			temp = -temp
+		}
+		gs = t[6]
+		fields["temp_c"] = temp
+		fields["values"] = []string{t[2], t[3], t[4], t[5]} // unexplained
+		text = fmt.Sprintf(", %d°C", temp)
+	} else if t := fstShortRe.FindStringSubmatch(m[12]); t != nil {
+		gs = t[2]
+		fields["values"] = []string{t[1]} // unexplained
+	} else {
+		return
+	}
+	if m[3] == "S" {
+		lat = -lat
+	}
+	if m[6] == "W" {
+		lon = -lon
+	}
+	alt := atof(strings.TrimSpace(m[9])) * 100
+	r.Pos = &Pos{Lat: lat, Lon: lon, AltFt: &alt, Secs: float64(hh*3600 + mm*60), Basis: BasisDay}
+	for k, v := range fields {
+		r.Fields[k] = v
+	}
+	r.Fields["origin"], r.Fields["dest"] = m[1], m[2]
+	r.Fields["fuel_left"], r.Fields["fuel_used"] = atoi(m[10]), atoi(m[11]) // units not known
+	r.Fields["gs_kt"] = atoi(gs)
+	r.Fields["eta"] = m[13] + ":" + m[14] + "Z"
+	g := atof(gs)
+	r.GS = &g
+	r.Text = fmt.Sprintf("Position %s at FL%s%s, ground speed %s kt; estimated arrival %s:%sZ at %s\nFuel left %d, used %d (units not known)",
+		latlon(lat, lon), strings.TrimSpace(m[9]), text, gs, m[13], m[14], m[2], atoi(m[10]), atoi(m[11]))
+}
+
 // parseAOC decodes a label-83 airline position report, or the label-16 one above.
 func parseAOC(body string, r *Result) {
 	m := aocRe.FindStringSubmatch(body)
 	if m == nil {
+		if strings.HasPrefix(body, "FST") {
+			parseFST(body, r)
+			return
+		}
 		parsePCPos(body, r)
 		return
 	}

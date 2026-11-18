@@ -1,6 +1,9 @@
 package decoder
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Real aircraft condition monitoring reports (Air France, KLM, Air Canada), a position report from TC-NCE, and A380 flight data link
 // messages from a British Airways aircraft.
@@ -73,5 +76,48 @@ func TestFlightDataLinkIsNotQantasEverywhere(t *testing.T) {
 	r, _ = Decode(Message{Label: "RF", Text: ",FDASUB01261101034409,LHR,,SIN,,BA0011,261101,0530,388,,G-XLEI,/351247,361,,1,AC2A"})
 	if want := "British Airways flight data submitted: BA11 EGLL→WSSS, scheduled 05:30Z"; r.Summary != want {
 		t.Errorf("summary %q, want %q", r.Summary, want)
+	}
+}
+
+func TestBAFSTPositionReport(t *testing.T) {
+	// G-XLEI after take-off from Heathrow: ADS-B had it at 51.4643, -0.5118 at 10:15:13, 1925 ft, 161 kt
+	r, err := Decode(Message{Label: "15", Text: "FST01EGLLKMIAN514642W00050960191380  15 P11C029076265269159  19011015"})
+	if err != nil || r.Kind != KindAOC || r.Pos == nil || r.Pos.Basis != BasisDay || r.Pos.Secs != 10*3600+15*60 {
+		t.Fatalf("fst: %v %+v %v", r.Kind, r.Pos, err)
+	}
+	near(t, "lat", r.Pos.Lat, 51.4642, 1e-6)
+	near(t, "lon", r.Pos.Lon, -0.5096, 1e-6)
+	near(t, "alt", *r.Pos.AltFt, 1900, 0)
+	if r.GS == nil || *r.GS != 159 || r.Fields["eta"] != "19:01Z" || r.Fields["temp_c"] != 11 || r.Fields["fuel_left"] != 1380 || r.Fields["fuel_used"] != 15 {
+		t.Errorf("fields %+v gs %v", r.Fields, r.GS)
+	}
+	if want := "Airline position report EGLL→KMIA 51.464N 0.510W FL019"; !strings.HasPrefix(r.Summary, want) {
+		t.Errorf("summary %q", r.Summary)
+	}
+	// cruise, and the other direction with the fuel fields a different width
+	r, _ = Decode(Message{Label: "15", Text: "FST01EGLLKMIAN537277W00912193401223 171 M46C021063295297470  19041105"})
+	if r.Pos == nil || *r.Pos.AltFt != 34000 || *r.GS != 470 || r.Fields["temp_c"] != -46 || r.Pos.Lon > -9.12 {
+		t.Errorf("cruise: %+v %+v", r.Pos, r.Fields)
+	}
+	r, _ = Decode(Message{Label: "15", Text: "FST01KMIAEGLLN511570W0010349102 183 883  M2C042055013019285  05340525"})
+	if r.Pos == nil || *r.Pos.AltFt != 10200 || r.Fields["fuel_left"] != 183 || r.Fields["fuel_used"] != 883 || r.Fields["eta"] != "05:34Z" {
+		t.Errorf("descent: %+v %+v", r.Pos, r.Fields)
+	}
+	if r, _ = Decode(Message{Label: "15", Text: "FST01EGLLKMIAN914642W00050960191380  15 P11C029076265269159  19011015"}); r.Pos != nil {
+		t.Errorf("latitude over 90 was placed")
+	}
+}
+
+func TestBAFSTShortLayout(t *testing.T) {
+	// a short-haul Airbus, 14 November: ADS-B had 52.899 N 4.827 E at 19:52:04, 462 kt, a minute after this report
+	r, _ := Decode(Message{Label: "15", Text: "FST01EGLLEDDHN52879E0046590370  34  18     26223      464  20261951"})
+	if r.Kind != KindAOC || r.Pos == nil || r.Pos.Secs != 19*3600+51*60 || r.GS == nil || *r.GS != 464 || r.Fields["eta"] != "20:26Z" || r.Fields["fuel_left"] != 34 || r.Fields["fuel_used"] != 18 {
+		t.Fatalf("short fst: %v %+v %+v", r.Kind, r.Pos, r.Fields)
+	}
+	near(t, "lat", r.Pos.Lat, 52.879, 1e-6)
+	near(t, "lon", r.Pos.Lon, 4.659, 1e-6)
+	near(t, "alt", *r.Pos.AltFt, 37000, 0)
+	if r, _ = Decode(Message{Label: "15", Text: "FST01EGLLEDDHN52879E0046590370  34  18     26223      46  20261951"}); r.Pos != nil {
+		t.Errorf("a ground speed cut short was read")
 	}
 }
