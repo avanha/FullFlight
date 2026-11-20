@@ -121,3 +121,28 @@ func TestBAFSTShortLayout(t *testing.T) {
 		t.Errorf("a ground speed cut short was read")
 	}
 }
+
+func TestSystemReportHeaders(t *testing.T) {
+	// N76269, which flew Denver to Los Cabos on 19 November; N37253 is the other aircraft that sends them
+	for _, c := range []struct{ text, summary, tail string }{
+		{"PNMN76269191118501718118504520KDENMMSDCLMB3WB09888636888284CLMB101\r\n100001100151", "PNMN system report KDEN→MMSD, climb", "N76269"},
+		{"PNMN76269191119 31916197804520KDENMMSDCRS 3WB09888636888284SCRS221", "PNMN system report KDEN→MMSD, cruise", "N76269"},
+		{"PNMN7626917111242 269 87503070KMSPKORDDESC3WB0988863688", "PNMN system report KMSP→KORD, descent", "N76269"},
+		{"HYDN37253191126KPITKLAX19291200100000000000004G94100 -16.5 37.22 3\r\n7.59", "HYDN system report KPIT→KLAX", "N37253"},
+		{"TKON76269KORDKMSP17110343 376 1225  85  1071025814536012141TOFF3W0", "TKON system report KORD→KMSP, takeoff at 03:43Z on 17/11", "N76269"},
+		{"CAB4G941N3725311200121 707145122120KSANKLAXCLMB7000CLMB-----------\r\n-0811-4143001100  1764  3328--.", "CAB system report KSAN→KLAX, climb at 01:21Z on 20/11", "N37253"},
+		{"PNM4G941N37253111915254055105223740KSFOKPHXTOFF888807890591LBTL251", "PNM system report KSFO→KPHX, takeoff at 15:25Z on 19/11", "N37253"},
+		{"PNM4G941N37253111905303105195811950KLAXKSFOCRS 888807890591LBTL171", "PNM system report KLAX→KSFO, cruise at 05:30Z on 19/11", "N37253"},
+		{"CAB3WB09N76269111712 73843 83503070KMSPCLMB7000CLMB-------:::::::5", "CAB system report at KMSP, climb at 12:07Z on 17/11", "N76269"},
+		{"CRZN76269KORDKMSP17110413 829-2250-475 32002074614120012141SCR23W0", "CRZN system report KORD→KMSP, cruise at 04:13Z on 17/11", "N76269"},
+	} {
+		r, err := Decode(Message{Label: "H1", Text: c.text})
+		if err != nil || r.Kind != KindOps || r.Summary != c.summary || r.Identity.Tail != c.tail {
+			t.Errorf("%q: %v %q %+v %v", c.summary, r.Kind, r.Summary, r.Identity, err)
+		}
+	}
+	// a header with no route is left as it was
+	if r, _ := Decode(Message{Label: "H1", Text: "HYDN76269191126  0452 1100"}); r.Kind == KindOps {
+		t.Errorf("no route: %q", r.Summary)
+	}
+}

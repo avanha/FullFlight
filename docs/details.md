@@ -913,6 +913,10 @@ times in them join the evidence for a flight's route and departure.
   The aircraft's request for a howgozit (label `5Z`, down: `/R3 HOWGOZIT REQ / EGLL KDEN 17 121020 0026 17 EGLL`) gives the route, the
   day and time it was asked, and the flight number (zero-padded; a letter after it, as in `001D`, is not understood). The other requests on
   that label (`GATE REQ`, `LDG DATA REQ`, `EXP TIME`, `DISP MSG`) are not read.
+  Periodic system reports on label `H1` (seen from two US aircraft: `TKON` at take-off, `CRZN` in cruise, `HYDN`, `PNMN`, and a second
+  layout named `PNM` or `CAB`) are read for their header only: the registration, the route (a `CAB` may give only the origin), the phase
+  (`CLMB`, `CRS`, `DESC` and others) and, on all but `HYDN` and the long `PNMN`, the day and time. The columns of numbers after it are not understood and stay in the message text; the names `HYDN` and `PNMN` look like
+  hydraulic and pneumatic systems, which is a guess, so the summary uses the four letters.
   Messages with a flight and route count as route evidence. The crew list and the release verification (names and employee numbers),
   and messages between pilot and dispatcher (free text) are not read. Read from one week of one airline's traffic: a value whose
   meaning is not given in the message (the units of the waypoint fuel column, what the two times beside the departure airport mean) is not shown.
