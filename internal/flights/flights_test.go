@@ -518,6 +518,11 @@ func (r *rig) air(t time.Time, callsign string, lat, lon, alt float64, ground bo
 	r.st.AddPosition(store.Position{Hex: hex, T: t, Lat: lat, Lon: lon, AltFt: &alt, OnGround: ground, Callsign: callsign, Source: "x"})
 }
 
+// a position whose source gave no altitude
+func (r *rig) airNoAlt(t time.Time, callsign string, lat, lon float64) {
+	r.st.AddPosition(store.Position{Hex: hex, T: t, Lat: lat, Lon: lon, Callsign: callsign, Source: "x"})
+}
+
 // a position carried by a message (ADS-C), with the flight number the aircraft gave
 func (r *rig) adscAt(t time.Time, flight string, lat, lon, alt float64) {
 	pt := t
@@ -1132,5 +1137,52 @@ func TestAFTagIsNotUsedWhenADSBCallsItSomethingElse(t *testing.T) {
 	}
 	if !strings.Contains(rules(ex.Segments[0].Why), "tag-contradicted") {
 		t.Errorf("Explain should say the tag was set aside: %s", rules(ex.Segments[0].Why))
+	}
+}
+
+// B-LRD's CX174 into Hong Kong: ADS-B lost it on final (the last fix 4 nm out, descending, with no altitude), and the next flight was heard
+// three and a half hours later, already at 8,000 ft and 10 nm away. No message gave a destination, and it never reached the ground in
+// ADS-B, but it landed there.
+func TestAnApproachThatWentSilentLandedAtThatAirport(t *testing.T) {
+	build := func(silence time.Duration, lastAlt *float64) Segment {
+		r := newRig(t)
+		r.said(at(0, 1, 40), "CX174")
+		r.air(at(0, 8, 0), "CPA174", 14.8, 118.1, 43000, false)
+		for _, p := range []struct {
+			m        int
+			lat, lon float64
+			alt      float64
+		}{{51, 22.22, 113.72, 2525}, {52, 22.25, 113.73, 1950}, {53, 22.2855, 113.7707, 1700}, {54, 22.2957, 113.8022, 1300}, {55, 22.3067, 113.836, 650}} {
+			r.air(at(0, 9, p.m), "CPA174", p.lat, p.lon, p.alt, false)
+		}
+		if lastAlt == nil {
+			r.airNoAlt(at(0, 9, 55).Add(9*time.Second), "CPA174", 22.3084, 113.8414)
+		} else {
+			r.air(at(0, 9, 55).Add(9*time.Second), "CPA174", 22.3084, 113.8414, *lastAlt, false)
+		}
+		r.said(at(0, 13, 25), "CX679")
+		r.air(at(0, 9, 55).Add(silence), "CPA679", 22.22, 114.086, 8050, false)
+		r.air(at(0, 9, 57).Add(silence), "CPA679", 22.0, 114.163, 12650, false)
+		segs := r.segments()
+		if len(segs) == 0 {
+			t.Fatalf("no flights")
+		}
+		for _, sg := range segs {
+			if sg.Flight == "CX174" {
+				return sg
+			}
+		}
+		t.Fatalf("no CX174: %+v", segs)
+		return Segment{}
+	}
+	if sg := build(212*time.Minute, nil); sg.To != "VHHH" || !sg.ToSeen {
+		t.Errorf("landed at Hong Kong, the last altitude missing: %+v", sg)
+	}
+	high := 9000.0
+	if sg := build(212*time.Minute, &high); sg.To != "" {
+		t.Errorf("9,000 ft is not an approach: %+v", sg)
+	}
+	if sg := build(40*time.Minute, nil); sg.To != "" {
+		t.Errorf("a fix 40 minutes later: it may have gone around, and the silence proves nothing: %+v", sg)
 	}
 }

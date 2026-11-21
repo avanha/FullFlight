@@ -1236,17 +1236,44 @@ func leftFrom(fixes []store.AirFix, from, to time.Time) (string, bool) {
 	return "", false
 }
 
-// landedAt is the airport the flight ended at, if ADS-B's last fix in the span is on the ground next to one.
+// landedAt is the airport the flight ended at, if ADS-B's last fix in the span is on the ground next to one, or was an approach to one
+// (see approach) and nothing was heard for unseenApproachGap after it: many arrivals drop out of coverage on final (CPA174 into Hong
+// Kong, last heard 4 nm out at 650 ft, descending, and then nothing for three and a half hours). The newest flight has no later fix to
+// show the silence, and is left to the server's landing inference.
 func landedAt(fixes []store.AirFix, from, to time.Time) (string, bool) {
 	var last *store.AirFix
+	lastK := -1
 	flew := false // a flight still at its gate has only ground fixes, and is leaving from there
 	for k := range fixes {
 		if f := &fixes[k]; !f.T.Before(from) && !f.T.After(to) {
-			last = f
+			last, lastK = f, k
 			flew = flew || !f.OnGround
 		}
 	}
-	if last == nil || !last.OnGround || !flew {
+	if last == nil || !flew {
+		return "", false
+	}
+	if !last.OnGround {
+		if lastK+1 >= len(fixes) || fixes[lastK+1].T.Sub(last.T) < unseenApproachGap {
+			return "", false
+		}
+		hits := airports.Near(last.Lat, last.Lon, unseenApproachNM)
+		if len(hits) == 0 {
+			return "", false
+		}
+		// a fix that came without an altitude (adsb.fi leaves it out now and then) has the one of the fix just before it
+		upto := append([]store.AirFix(nil), fixes[:lastK+1]...)
+		if upto[lastK].AltFt == nil {
+			for j := lastK - 1; j >= 0 && last.T.Sub(upto[j].T) <= time.Minute; j-- {
+				if upto[j].AltFt != nil {
+					upto[lastK].AltFt = upto[j].AltFt
+					break
+				}
+			}
+		}
+		if approach(upto, lastK, geo.DistNM(last.Lat, last.Lon, hits[0].Lat, hits[0].Lon)) {
+			return hits[0].ICAO, true
+		}
 		return "", false
 	}
 	if hits := airports.Near(last.Lat, last.Lon, departedNM); len(hits) > 0 {

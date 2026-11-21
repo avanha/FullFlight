@@ -525,7 +525,11 @@ the ground away from any airport, or only ever on the ground, gets none.
 ### Seen landing
 
 A flight whose messages gave no destination, whose last fix is ADS-B on the ground within 4 nm of an airport after being seen in
-the air, ended there; failing that, a flight followed by another leg after a stop went to where that leg began. The route shows
+the air, ended there. So did one whose last fix was an approach (in the air within 8 nm of an airport, low, and lower than a fix in
+the ten minutes before, or below 3,000 ft within 3 nm) with nothing heard for the hour after it: many arrivals drop out of coverage on
+final (CX174 into Hong Kong, last heard 4 nm out at 650 ft, then nothing for three and a half hours). A last fix that came without an
+altitude takes the one before it, if that is within a minute. The newest flight has no later fix to show the silence, and is left to
+the landing inference below. Failing both, a flight followed by another leg after a stop went to where that leg began. The route shows
 it with a tilde (`KDEN~`). This is how the first leg of a flight number reused on the way back (AS421 Seattle to Denver, then
 Denver to Seattle) gets its destination. A route entered by hand replaces it, and a message that names a destination wins.
 
