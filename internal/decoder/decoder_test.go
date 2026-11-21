@@ -241,6 +241,19 @@ func TestAFN(t *testing.T) {
 	}
 }
 
+// A contact advisory written FCP instead of FCA (Toronto to a United aircraft, Oakland to Korean Air) names its station the same way.
+func TestAFNContactAdvisoryP(t *testing.T) {
+	for _, c := range []struct{ text, station, form string }{
+		{"/YYZE2YA.AFN/FMHUAL1356,.N14520,,033815/FCPUSADCXA,0CB66", "USADCXA", "P"},
+		{"/OAKODYA.AFN/FMHKAL035,.HL8009,,102229/FCAUSADCXA,053DA", "USADCXA", "A"},
+	} {
+		r, _ := Decode(Message{Label: "A0", Text: c.text})
+		if r.Kind != KindAFN || r.Fields["afn"] != "contact_advisory" || r.Fields["contact_station"] != c.station || r.Fields["advisory_form"] != c.form || r.Summary != "AFN contact advisory: log on to "+c.station+", "+r.Identity.Callsign {
+			t.Errorf("%q: %v %v %q", c.text, r.Kind, r.Fields, r.Summary)
+		}
+	}
+}
+
 // The reply to a logon: FAK names the facility, FAR each application with its version and ground address.
 func TestAFNAcknowledgement(t *testing.T) {
 	r, err := Decode(Message{Label: "A0", Text: "/FUKJJYA.AFN/FMHACA025,.C-FNOH,C023C8,013352/FAK0,RJJJ/FARADS,0/FARATC,0,FUKJJYA9971"})

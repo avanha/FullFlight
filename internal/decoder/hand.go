@@ -45,7 +45,7 @@ func (a AFNApp) Label() string {
 }
 
 // parseAFN handles the AFN segments we have seen: FMH (flight/tail/time) and
-// FCA (contact advisory naming the next ground station), FAK (the logon
+// FCA and FCP (contact advisories naming the next ground station), FAK (the logon
 // acknowledgement, with the facility it answers for) and FAR (the applications
 // the ground station will use, each with a version and sometimes an address).
 // libacars does not decode AFN here.
@@ -67,9 +67,10 @@ func parseAFN(body string, r *Result) {
 			if len(f) > 3 && len(f[3]) == 6 {
 				r.Fields["time_hhmmss"] = f[3]
 			}
-		case strings.HasPrefix(seg, "FCA") && len(seg) >= 10:
+		case (strings.HasPrefix(seg, "FCA") || strings.HasPrefix(seg, "FCP")) && len(seg) >= 10:
 			r.Fields["afn"] = "contact_advisory"
 			r.Fields["contact_station"] = seg[3:10]
+			r.Fields["advisory_form"] = seg[2:3] // A or P: both name the station to log on to; what tells them apart is not known
 		case strings.HasPrefix(seg, "FAK"):
 			f := strings.Split(seg[3:], ",")
 			r.Fields["afn"] = "acknowledgement"
