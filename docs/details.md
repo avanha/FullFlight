@@ -910,13 +910,16 @@ times in them join the evidence for a flight's route and departure.
   fuel weights, the centre of gravity, the people on board, the passengers and the crew), `GATE ASSIGN` (the gate, the ramp and
   operations frequencies, ground power, the planned ground time and the next flight), `TURB SIGMET` (the severity, type, altitudes, the
   time the flight enters the area and how long it is valid), and `FLIGHT STATUS` and `CABIN FAULT RPT` by their flight and one fact.
-  The aircraft's request for a howgozit (label `5Z`, down: `/R3 HOWGOZIT REQ / EGLL KDEN 17 121020 0026 17 EGLL`) gives the route, the
-  day and time it was asked, and the flight number (zero-padded; a letter after it, as in `001D`, is not understood). The other requests on
-  that label (`GATE REQ`, `LDG DATA REQ`, `EXP TIME`, `DISP MSG`) are not read.
-  Periodic system reports on label `H1` (seen from two US aircraft: `TKON` at take-off, `CRZN` in cruise, `HYDN`, `PNMN`, and a second
-  layout named `PNM` or `CAB`) are read for their header only: the registration, the route (a `CAB` may give only the origin), the phase
-  (`CLMB`, `CRS`, `DESC` and others) and, on all but `HYDN` and the long `PNMN`, the day and time. The columns of numbers after it are not understood and stay in the message text; the names `HYDN` and `PNMN` look like
-  hydraulic and pneumatic systems, which is a guess, so the summary uses the four letters.
+  The aircraft's requests (label `5Z`, down) all open `/XX NAME / ORIG DEST DD HHMMSS`: the route, the flight's date (not the day it was
+  sent: an evening departure in America asks on the next UTC day, still dated for the day it left) and the UTC time of day. A message is
+  placed by that time of day, as the latest such time not after it arrived, so one held more than a day is not placed by it and does not
+  count as route evidence. The howgozit request (`/R3 HOWGOZIT REQ / EGLL KDEN 17 121020 0026 17 EGLL`) adds the flight number
+  (zero-padded; a letter after it, as in `001D`, is not understood). The estimate of time on (`/ET EXP TIME ... /EON 2338 AUTO`) is the
+  aircraft's own landing time, within a few minutes of the landing in the two flights checked. The landing and take-off data requests
+  (`/B6 LDG DATA REQ`, `/B3 TO DATA REQ`) name a runway: a crew asks about several as the runway in use changes, so it is the runway asked
+  about, not the one used. The gate request (`/C3 GATE REQ`) gives the flight number. The letters after a runway, the `G` group and the
+  dashes are not understood. Each of these gives the route. The free-text requests (`C4 DISP MSG`, `C4 EOK MSG`, `71 FRM ENTRY`,
+  `C6 STA MSG`), the crew list, `W1 METAR` and the short `OS ... /IR` codes stay as the messages they are.
   Messages with a flight and route count as route evidence. The crew list and the release verification (names and employee numbers),
   and messages between pilot and dispatcher (free text) are not read. Read from one week of one airline's traffic: a value whose
   meaning is not given in the message (the units of the waypoint fuel column, what the two times beside the departure airport mean) is not shown.

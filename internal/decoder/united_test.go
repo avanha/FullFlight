@@ -104,9 +104,9 @@ func TestPerformanceReportNumbers(t *testing.T) {
 
 func TestUnitedHowgozitRequest(t *testing.T) {
 	for _, c := range []struct{ text, flight, summary, suffix string }{
-		{"/R3 HOWGOZIT REQ   / EGLL KDEN 17 121020 0026 17 EGLL", "UA26", "United 26 howgozit request EGLL→KDEN, asked at 12:10Z on day 17", ""},
-		{"/R3 HOWGOZIT REQ   / KEWR EGLL 16 023005 0904 16 KEWR", "UA904", "United 904 howgozit request KEWR→EGLL, asked at 02:30Z on day 16", ""},
-		{"/R3 HOWGOZIT REQ   / KSFO WSSS 15 200727 001D 15 KSFO", "UA1", "United 1 howgozit request KSFO→WSSS, asked at 20:07Z on day 15", "D"},
+		{"/R3 HOWGOZIT REQ   / EGLL KDEN 17 121020 0026 17 EGLL", "UA26", "United 26 howgozit request EGLL→KDEN, asked at 12:10Z (flight of the 17)", ""},
+		{"/R3 HOWGOZIT REQ   / KEWR EGLL 16 023005 0904 16 KEWR", "UA904", "United 904 howgozit request KEWR→EGLL, asked at 02:30Z (flight of the 16)", ""},
+		{"/R3 HOWGOZIT REQ   / KSFO WSSS 15 200727 001D 15 KSFO", "UA1", "United 1 howgozit request KSFO→WSSS, asked at 20:07Z (flight of the 15)", "D"},
 	} {
 		r, err := Decode(Message{Label: "5Z", Text: c.text})
 		o, _ := r.Fields["ops"].(OpsReport)
@@ -116,5 +116,36 @@ func TestUnitedHowgozitRequest(t *testing.T) {
 	}
 	if r, _ := Decode(Message{Label: "5Z", Text: "/R3 HOWGOZIT REQ   / KEWR EGLL 16 023005"}); r.Kind == KindOps {
 		t.Errorf("a request cut short was read: %q", r.Summary)
+	}
+}
+
+func TestUnitedRequests(t *testing.T) {
+	for _, c := range []struct{ text, summary, flight, runway string }{
+		{"/ET EXP TIME       / MMSD KDEN 19 234104/EON 0016 AUTO", "United estimated landing time MMSD→KDEN: 00:16Z (sent automatically)", "", ""},
+		{"/ET EXP TIME       / KLAX KORD 17 092804/EON 1055", "United estimated landing time KLAX→KORD: 10:55Z", "", ""},
+		{"/B6 LDG DATA REQ   / KDEN EDDM 19 120422 EDDM R26R/---- G3688", "United landing data request KDEN→EDDM, runway 26R", "", "26R"},
+		{"/B6 LDG DATA REQ   / KLAX KEWR 16 204046 KEWR R4R /---- G4045", "United landing data request KLAX→KEWR, runway 4R", "", "4R"},
+		{"/B6 LDG DATA REQ   / KDEN KPHX 20 192902 KPHX R26 /----", "United landing data request KDEN→KPHX, runway 26", "", "26"},
+		{"/B3 TO DATA REQ    / KLAX KORD 17 070747 R25R/F   BON /OFF C0.000/0 G4255", "United take-off data request KLAX→KORD, runway 25R", "", "25R"},
+		{"/B3 TO DATA REQ    / KIAD KDEN 03 220659 R19L/K1 BOPT/OFF C0.000/0 LNO  G1865", "United take-off data request KIAD→KDEN, runway 19L", "", "19L"},
+		{"/C3 GATE REQ AUTO  / KDEN KBOS 20 013108 1356        ", "United gate request 1356 KDEN→KBOS", "UA1356", ""},
+		{"/C3 GATE REQ       / KSEA KORD 30 084512 2614 ---- ---- ---- ----", "United gate request 2614 KSEA→KORD", "UA2614", ""},
+	} {
+		r, err := Decode(Message{Label: "5Z", Text: c.text})
+		o, _ := r.Fields["ops"].(OpsReport)
+		if err != nil || r.Kind != KindOps || r.Dir != Downlink || r.Summary != c.summary || o.Flight != c.flight || o.Info["runway"] != c.runway {
+			t.Errorf("%q: %v %+v %q", c.text, r.Kind, o, r.Summary)
+		}
+	}
+	// the arrival time is kept, and the date is the flight's: neither is a day to place the message by
+	r, _ := Decode(Message{Label: "5Z", Text: "/ET EXP TIME       / MMSD KDEN 19 234104/EON 0016 AUTO"})
+	o, _ := r.Fields["ops"].(OpsReport)
+	if o.ETA != "0016" || o.Origin != "MMSD" || o.Dest != "KDEN" || o.Info["day"] != "" || o.Info["date"] != "19" || o.Info["time"] != "23:41Z" {
+		t.Errorf("%+v", o)
+	}
+	for _, text := range []string{"/ET EXP TIME       / KDEN KDEN 19 234104/EON 0016", "/ET EXP TIME       / KDEN KPHX 19 234104", "/B6 LDG DATA REQ   / KDEN KPHX 20 192902 KORD R26 /----", "/C3 GATE REQ       / KDEN KBOS 20 013108"} {
+		if r, _ := Decode(Message{Label: "5Z", Text: text}); r.Kind == KindOps {
+			t.Errorf("read %q: %q", text, r.Summary)
+		}
 	}
 }

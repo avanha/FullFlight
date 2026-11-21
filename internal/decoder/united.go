@@ -32,8 +32,9 @@ var (
 //
 //	/R3 HOWGOZIT REQ   / EGLL KDEN 17 121020 0026 17 EGLL
 //
-// the route, the day and time (HHMMSS) it was asked, the flight number (zero-padded, sometimes with a letter after it) and the day
-// and origin again. Read from United's traffic: the flight numbers agree with the routes (UA26 London to Denver, UA904 Newark to London);
+// the route, the flight's date and the time of day (HHMMSS, UTC) it was asked, the flight number (zero-padded, sometimes with a letter
+// after it) and the date and origin again. The date is the flight's, not the day the message was sent: a flight that leaves in the evening
+// in America asks on the next UTC day, still dated for the day it left. Read from United's traffic: the flight numbers agree with the routes (UA26 London to Denver, UA904 Newark to London);
 // the letter that follows one (001D) is not understood. Dispatch answers with the howgozit above.
 var unitedHowReqRe = regexp.MustCompile(`^/R3 HOWGOZIT REQ\s*/ ([A-Z]{4}) ([A-Z]{4}) (\d\d) (\d{6}) (\d{3})([0-9A-Z]) (\d\d) ([A-Z]{4})\s*$`)
 
@@ -42,7 +43,7 @@ func parseUnitedHowgozitRequest(text string) (opsParsed, bool) {
 	if m == nil || m[2] == m[1] {
 		return opsParsed{}, false
 	}
-	o := OpsReport{Airline: "United", Event: "howgozit request", Origin: m[1], Dest: m[2], Info: map[string]string{"day": m[3], "time": hmZ(m[4][:4])}}
+	o := OpsReport{Airline: "United", Event: "howgozit request", Origin: m[1], Dest: m[2], Info: map[string]string{"date": m[3], "time": hmZ(m[4][:4])}}
 	if m[6] >= "0" && m[6] <= "9" {
 		o.Callsign, o.Flight = opsFlight("UAL", m[5]+m[6])
 	} else {
@@ -53,7 +54,7 @@ func parseUnitedHowgozitRequest(text string) (opsParsed, bool) {
 	if o.Flight != "" {
 		s += " " + strings.TrimPrefix(o.Flight, "UA")
 	}
-	return opsParsed{rep: o, summary: fmt.Sprintf("%s howgozit request %s, asked at %s on day %s", s, route(o.Origin, o.Dest), o.Info["time"], m[3])}, true
+	return opsParsed{rep: o, summary: fmt.Sprintf("%s howgozit request %s, asked at %s (flight of the %s)", s, route(o.Origin, o.Dest), o.Info["time"], m[3])}, true
 }
 
 func parseUnited(text string) (opsParsed, bool) {
@@ -436,4 +437,76 @@ func unitedTurb(t string, o *OpsReport) (lines []string) {
 		lines = append(lines, fmt.Sprintf("Valid %s to %s", m[1], m[2]))
 	}
 	return lines
+}
+
+// United's other requests from the aircraft (label 5Z, down) share the howgozit request's opening: `/XX NAME / ORIG DEST DD HHMMSS`, then
+// what the request is about. The date is the flight's and the time is the time of day it was sent (see above). Read from United's traffic:
+//
+//	/ET EXP TIME       / KORD KLAX 20 231936/EON 2338 AUTO     the estimated time on the runway (the aircraft landed about 23:39), AUTO when it was sent by itself
+//	/B6 LDG DATA REQ   / KDEN EDDM 19 120422 EDDM R26R/---- G3688    landing data for a runway: a crew asks about several as the runway in use changes
+//	/B3 TO DATA REQ    / KLAX KORD 17 070747 R25R/F   BON /OFF C0.000/0 G4255   take-off data for a runway
+//	/C3 GATE REQ AUTO  / KDEN KBOS 20 013108 1356              a gate request, with the flight number
+//
+// The letters after the runway (F25, K1, BON), the G group and the trailing dashes are not understood. The free-text requests (C4, 71, C6)
+// are shown as the messages they are.
+var (
+	unitedReqRe        = regexp.MustCompile(`^/([A-Z0-9]{2}) ([A-Z ]*?)\s*/ ([A-Z]{4}) ([A-Z]{4}) (\d\d) (\d{6})(.*)$`)
+	unitedEONRe        = regexp.MustCompile(`^/EON (\d{4})( AUTO)?\s*$`)
+	unitedLdgRe        = regexp.MustCompile(`^ ([A-Z]{4}) R(\d{1,2}[LRC]?)\b`)
+	unitedTakeoffReqRe = regexp.MustCompile(`^ R(\d{1,2}[LRC]?)\b`)
+	unitedGateNumRe    = regexp.MustCompile(`^ (\d{4})\b`)
+)
+
+func parseUnitedRequest(text string) (opsParsed, bool) {
+	m := unitedReqRe.FindStringSubmatch(strings.TrimSpace(strings.ReplaceAll(text, "\r", "")))
+	if m == nil || m[3] == m[4] {
+		return opsParsed{}, false
+	}
+	code, name, body := m[1], m[2], strings.SplitN(m[7], "\n", 2)[0]
+	o := OpsReport{Airline: "United", Origin: m[3], Dest: m[4], Info: map[string]string{"date": m[5], "time": hmZ(m[6][:4])}}
+	s := "United "
+	switch {
+	case code == "ET":
+		e := unitedEONRe.FindStringSubmatch(body)
+		if e == nil {
+			return opsParsed{}, false
+		}
+		o.Event, o.ETA = "estimated time on", e[1]
+		if e[2] != "" {
+			o.Info["auto"] = "yes"
+		}
+		s += fmt.Sprintf("estimated landing time %s: %s", route(o.Origin, o.Dest), hmZ(e[1]))
+		if e[2] != "" {
+			s += " (sent automatically)"
+		}
+	case code == "B6":
+		e := unitedLdgRe.FindStringSubmatch(body)
+		if e == nil || e[1] != o.Dest {
+			return opsParsed{}, false
+		}
+		o.Event, o.Info["runway"] = "landing data request", e[2]
+		s += fmt.Sprintf("landing data request %s, runway %s", route(o.Origin, o.Dest), e[2])
+	case code == "B3":
+		e := unitedTakeoffReqRe.FindStringSubmatch(body)
+		if e == nil {
+			return opsParsed{}, false
+		}
+		o.Event, o.Info["runway"] = "take-off data request", e[1]
+		s += fmt.Sprintf("take-off data request %s, runway %s", route(o.Origin, o.Dest), e[1])
+	case code == "C3" && strings.HasPrefix(name, "GATE REQ"):
+		e := unitedGateNumRe.FindStringSubmatch(body)
+		if e == nil {
+			return opsParsed{}, false
+		}
+		o.Event = "gate request"
+		o.Callsign, o.Flight = opsFlight("UAL", e[1])
+		s += "gate request"
+		if o.Flight != "" {
+			s += " " + strings.TrimPrefix(o.Flight, "UA")
+		}
+		s += " " + route(o.Origin, o.Dest)
+	default:
+		return opsParsed{}, false
+	}
+	return opsParsed{rep: o, summary: s}, true
 }

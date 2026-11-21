@@ -76,6 +76,9 @@ func EventTime(rx time.Time, kind string, posT *time.Time, decoded string) (time
 		if t, ok := dayTime(rx, fd.Ops.Info["day"], fd.Ops.Info["time"]); ok {
 			return t, AtEvent
 		}
+		if t, ok := timeOfDay(rx, fd.Ops.Info["time"]); ok && fd.Ops.Info["day"] == "" {
+			return t, AtEvent
+		}
 	}
 	if fd.PDC != nil {
 		if t, ok := dayTime(rx, fd.PDC.Day, fd.PDC.Time); ok {
@@ -123,6 +126,20 @@ func dayTime(rx time.Time, day, tod string) (time.Time, bool) {
 		return this, true
 	}
 	return in(rx.Month() - 1), true
+}
+
+// timeOfDay places a time of day ("11:58Z") sent in a message received at rx: the latest such time not after it (a few minutes of
+// slack for clocks that disagree). A message held more than a day cannot be placed this way, and callers that need the day leave it out.
+func timeOfDay(rx time.Time, tod string) (time.Time, bool) {
+	if len(tod) < 5 || tod[2] != ':' {
+		return time.Time{}, false
+	}
+	rx = rx.UTC()
+	t := time.Date(rx.Year(), rx.Month(), rx.Day(), leadingInt(tod[:2]), leadingInt(tod[3:5]), 0, 0, time.UTC)
+	if t.After(rx.Add(5 * time.Minute)) {
+		t = t.AddDate(0, 0, -1)
+	}
+	return t, true
 }
 
 // leadingInt reads the digits a string starts with, 0 if there are none.

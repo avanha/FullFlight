@@ -1395,7 +1395,7 @@ func TestDescribeWhatWeCannotDecode(t *testing.T) {
 		{"4R", "down", "C32APO         1APUON 833 1524Z 25/0074/P11", "unknown", "Air Canada aircraft event message (label 4R, not decoded)"},
 		{"37", "up", "NNSDFXY5X  OPTICLIMB\n\t***OPTICLIMB PROFILE***\n\tN575UP  UPS81  PVG-ANC\n\t   DATE: 2026-10-29\n\t\n\t   THIS FLIGHT IS NOT\n\t   SELECTED FOR AN\n\t   OPTICLIMB PROFILE.", "text_message", "Message to the aircraft: NNSDFXY5X OPTICLIMB / ***OPTICLIMB PROFILE*** / N575UP UPS81 PVG-ANC / DATE: 2026-10-29 / THIS FLIGHT IS NOT /…"},
 		{"25", "down", "42 PLND PUSH UPDATE\r\nDL2947/24 PDX-LAX\r\nSHIP-3723\r\nSKD PUSH  - 0705L/1405Z\r\nPLND PUSH - 0700L/1400Z\r\nSKD ETA   - 0935L/1635Z\r\nPLND ETA  - 0922L/1622Z", "text_message", "Push update: 42 PLND PUSH UPDATE / DL2947/24 PDX-LAX / SHIP-3723 / SKD PUSH - 0705L/1405Z / PLND PUSH - 0700L/1400Z / SKD E…"},
-		{"5Z", "down", "/B6 LDG DATA REQ   / KLAX KEWR 25 073253 KEWR R22L G4486", "text_message", "Message from the aircraft: /B6 LDG DATA REQ / KLAX KEWR 25 073253 KEWR R22L G4486"},
+		{"5Z", "down", "/C4 EOK MSG        / EGLL KDEN 18 122001 ETOPS OK\r\nTHANKS", "text_message", "Message from the aircraft: /C4 EOK MSG / EGLL KDEN 18 122001 ETOPS OK / THANKS"},
 		{"VA", "up", "FT1131550XS", "unknown", "Data message (label VA, 11 characters, not decoded)"},
 		{"25", "down", "42 PLND PUSH UPDATE\r\nDL2947/24 PDX-LAX\r\nSHIP-3723\r\nSKD PUSH  - 0705L/1405Z", "text_message", "Push update: 42 PLND PUSH UPDATE / DL2947/24 PDX-LAX / SHIP-3723 / SKD PUSH - 0705L/1405Z"},
 	} {
